@@ -308,6 +308,121 @@ class RealMarketProvider(
                 )
         return rows
 
+    def get_market_review_snapshot(self, trade_date: date) -> dict:
+        subject_payload = self._safe_json(
+            "https://www.cls.cn/api/subject/recommend/article"
+            "?app=CailianpressWeb&os=web&sv=8.4.6&sign=9f8797a1f4de66c2370f7a03990d2737",
+            referer="https://www.cls.cn/",
+        )
+        topic_payload = self._safe_json(
+            "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/topic?page=1&page_size=10",
+            referer="https://dq.10jqka.com.cn/",
+        )
+        plate_payload = self._safe_json(
+            "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/plate?type=concept",
+            referer="https://dq.10jqka.com.cn/",
+        )
+        fund_payload = self._safe_json(
+            "https://x-quote.cls.cn/web_quote/plate/plate_list"
+            "?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=industry&way=change"
+            "&sign=ef1ec7886be706a0b722d7e7bf3c0054",
+            referer="https://www.cls.cn/",
+        )
+        return {
+            "trade_date": trade_date,
+            "review_text": "真实复盘信息采集，仅作为交易辅助。",
+            "concept": "",
+            "chance": self._format_subject_items(subject_payload.get("today_chances", []), "stock_list", "article_name"),
+            "tuyere": self._format_subject_items(subject_payload.get("today_tuyeres", []), "stocks", "driver"),
+            "topic": self._format_topic_items(topic_payload.get("topic_list", [])),
+            "subject": self._format_plate_items(plate_payload.get("plate_list", [])),
+            "fund": self._format_fund_snapshot(fund_payload),
+            "latent": self._format_latent_items(subject_payload.get("short_latents", [])),
+            "raw_snapshot": {
+                "subject": subject_payload,
+                "topic": topic_payload,
+                "plate": plate_payload,
+                "fund": fund_payload,
+            },
+        }
+
+    def _safe_json(self, url: str, data_key: str = "data", referer: str | None = None) -> dict:
+        try:
+            payload = self._get_json(url, data_key=data_key, referer=referer)
+            return payload if isinstance(payload, dict) else {"items": payload}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    @staticmethod
+    def _format_stock_refs(stocks: list[dict]) -> list[dict]:
+        refs = []
+        for stock in stocks[:5]:
+            raw_code = stock.get("StockID") or stock.get("code") or stock.get("secu_code") or ""
+            try:
+                code = RealMarketProvider._to_code(raw_code)
+            except Exception:
+                code = raw_code
+            refs.append(
+                {
+                    "stock_code": code,
+                    "stock_name": stock.get("name") or stock.get("secu_name") or "",
+                    "last": stock.get("last") or stock.get("last_px"),
+                    "change": stock.get("RiseRange") or stock.get("change"),
+                }
+            )
+        return refs
+
+    @staticmethod
+    def _format_subject_items(items: list[dict], stocks_key: str, detail_key: str) -> list[dict]:
+        return [
+            {
+                "name": item.get("subject_name", ""),
+                "description": item.get(detail_key, ""),
+                "stocks": RealMarketProvider._format_stock_refs(item.get(stocks_key, []) or []),
+            }
+            for item in items[:5]
+        ]
+
+    @staticmethod
+    def _format_topic_items(items: list[dict]) -> list[dict]:
+        return [
+            {
+                "title": item.get("title", ""),
+                "description": item.get("description", ""),
+                "heat": item.get("heat") or item.get("hot_value"),
+            }
+            for item in items[:8]
+        ]
+
+    @staticmethod
+    def _format_plate_items(items: list[dict]) -> list[dict]:
+        return [
+            {
+                "name": item.get("name", ""),
+                "tag": item.get("hot_tag") or item.get("tag") or "",
+                "description": item.get("description", ""),
+            }
+            for item in items[:8]
+        ]
+
+    @staticmethod
+    def _format_latent_items(items: list[dict]) -> list[dict]:
+        return [
+            {
+                "name": item.get("subject_name", ""),
+                "description": item.get("subject_description", ""),
+            }
+            for item in items[:5]
+        ]
+
+    @staticmethod
+    def _format_fund_snapshot(payload: dict) -> dict:
+        main_fund = payload.get("main_fund_diff", {}) if isinstance(payload, dict) else {}
+        return {
+            "top_inflow": main_fund.get("top_main_fund_diff", [])[:5],
+            "top_outflow": main_fund.get("last_main_fund_diff", [])[:5],
+        }
+
     def get_daily_kline(self, stock_code: str, start_date: date, end_date: date) -> list[dict]:
         secid = self._eastmoney_secid(stock_code)
         payload = self._get_json(

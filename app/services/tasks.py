@@ -8,6 +8,7 @@ from app.models import SystemTaskLog
 from app.services.hot_stock import HotStockService
 from app.services.limit_up import LimitUpService
 from app.services.market import MarketService
+from app.services.market_review import MarketReviewService
 from app.services.review import ReviewService
 from app.services.sector import SectorService
 from app.services.signal_engine import SignalEngine
@@ -61,6 +62,9 @@ class TaskService:
             lambda: [
                 MarketService(self.db).collect_market_daily(trade_date),
                 *SectorService(self.db).collect_sector_daily(trade_date),
+                *HotStockService(self.db).collect_hot_stock_rank(trade_date),
+                *LimitUpService(self.db).collect_limit_up_daily(trade_date),
+                MarketReviewService(self.db).collect_market_review(trade_date),
             ],
         )
 

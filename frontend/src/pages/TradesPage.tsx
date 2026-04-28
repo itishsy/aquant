@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, ErrorBlock, Form, Input, Popup, Selector, SpinLoading, TextArea, Toast } from "antd-mobile";
 import { apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
-import { TRADE_DATES, shiftTradeDate } from "../lib/tradeDates";
+import { shiftTradeDate, todayString } from "../lib/tradeDates";
 
 type TradeRecord = {
   id: number;
@@ -23,7 +23,7 @@ type TradeRecord = {
 };
 
 export function TradesPage() {
-  const [tradeDate, setTradeDate] = useState<string>(TRADE_DATES[TRADE_DATES.length - 1]);
+  const [tradeDate, setTradeDate] = useState<string>(todayString());
   const [tab, setTab] = useState("open");
   const [items, setItems] = useState<TradeRecord[]>([]);
   const [error, setError] = useState("");

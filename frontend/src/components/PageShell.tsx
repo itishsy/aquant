@@ -9,6 +9,7 @@ type Segment = {
 export function PageShell(props: {
   title: string;
   dateText?: string;
+  onDateClick?: () => void;
   onPrevDate?: () => void;
   onNextDate?: () => void;
   segments?: Segment[];
@@ -21,7 +22,9 @@ export function PageShell(props: {
         <button className="nav-chip" aria-label="previous" onClick={props.onPrevDate}>
           {"<"}
         </button>
-        <div className="date-pill">{props.dateText || props.title}</div>
+        <button className="date-pill" type="button" onClick={props.onDateClick}>
+          {props.dateText || props.title}
+        </button>
         <button className="nav-chip" aria-label="next" onClick={props.onNextDate}>
           {">"}
         </button>

@@ -50,6 +50,22 @@ class MarketDaily(TimestampMixin, SystemBase):
     market_comment: Mapped[str] = mapped_column(Text, default="")
 
 
+class MarketReviewDaily(TimestampMixin, SystemBase):
+    __tablename__ = "market_review_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True, unique=True)
+    review_text: Mapped[str] = mapped_column(Text, default="")
+    concept: Mapped[str] = mapped_column(Text, default="")
+    chance: Mapped[list] = mapped_column(JSON, default=list)
+    tuyere: Mapped[list] = mapped_column(JSON, default=list)
+    topic: Mapped[list] = mapped_column(JSON, default=list)
+    subject: Mapped[list] = mapped_column(JSON, default=list)
+    fund: Mapped[dict] = mapped_column(JSON, default=dict)
+    latent: Mapped[list] = mapped_column(JSON, default=list)
+    raw_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class SectorDaily(TimestampMixin, SystemBase):
     __tablename__ = "sector_daily"
     __table_args__ = (

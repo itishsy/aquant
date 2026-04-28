@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.services.market import MarketService
+from app.services.market_review import MarketReviewService
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -22,3 +23,10 @@ def get_market_summary(db: Session = Depends(get_db)):
     if not service.get_market_daily(date.today()):
         service.collect_market_daily(date.today())
     return service.get_market_summary()
+
+
+@router.get("/review")
+def get_market_review(trade_date: date, db: Session = Depends(get_db)):
+    service = MarketReviewService(db)
+    data = service.get_market_review(trade_date) or service.collect_market_review(trade_date)
+    return data
