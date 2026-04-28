@@ -96,6 +96,25 @@
 - Local frontend route check: `http://127.0.0.1:5173/reviews` -> `200`
 - Local backend health check: `http://127.0.0.1:8000/api/health` -> success
 
+## 2026-04-29 Real Data Provider Update
+
+- Added `app/providers/real_provider.py` based on the public JSON portions of `D:/Huangsy/sourcecode/aquant_engine/engines/fupan.py`.
+- Added `DATA_PROVIDER_MODE=real` support in `ProviderFactory`.
+- Real mode supports:
+  - market snapshot
+  - sector ranking
+  - hot stock ranks
+  - limit-up list
+  - daily K-line
+  - 15-minute K-line
+- Excluded browser automation, account login, private credentials, broker interfaces, and anti-crawler bypass behavior.
+- Executed real collection against the remote MySQL-backed local API:
+  - `collect_market_daily_task` -> success, affected rows `1`
+  - `collect_sector_daily_task` -> success, affected rows `20`
+  - `collect_hot_stock_rank_task` -> success, affected rows `60`
+  - `collect_limit_up_daily_task` -> success, affected rows `59`
+- Fixed real limit-up board-count parsing for values such as `4天3板`.
+
 ## Known Follow-ups
 
 - Current code still has deprecation warnings from `datetime.utcnow()` and FastAPI `on_event`.
