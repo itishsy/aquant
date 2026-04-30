@@ -137,6 +137,7 @@ export function ReviewsPage() {
   return (
     <PageShell
       title="复盘"
+      hideHero
       segments={[
         { key: "daily", label: "每日计划", onClick: () => setTab("daily") },
         { key: "weekly", label: "周复盘", onClick: () => setTab("weekly") },

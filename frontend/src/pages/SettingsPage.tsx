@@ -2,7 +2,7 @@ import { PageShell } from "../components/PageShell";
 
 export function SettingsPage() {
   return (
-    <PageShell title="设置">
+    <PageShell title="设置" hideHero>
       <article className="feature-card">
         <div className="card-head">
           <div className="card-headline">

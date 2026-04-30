@@ -14,21 +14,24 @@ export function PageShell(props: {
   onNextDate?: () => void;
   segments?: Segment[];
   activeSegment?: string;
+  hideHero?: boolean;
   children: ReactNode;
 }) {
   return (
     <section className="page-shell">
-      <header className="top-hero">
-        <button className="nav-chip" aria-label="previous" onClick={props.onPrevDate}>
-          {"<"}
-        </button>
-        <button className="date-pill" type="button" onClick={props.onDateClick}>
-          {props.dateText || props.title}
-        </button>
-        <button className="nav-chip" aria-label="next" onClick={props.onNextDate}>
-          {">"}
-        </button>
-      </header>
+      {!props.hideHero ? (
+        <header className="top-hero">
+          <button className="nav-chip" aria-label="previous" onClick={props.onPrevDate}>
+            {"<"}
+          </button>
+          <button className="date-pill" type="button" onClick={props.onDateClick}>
+            {props.dateText || props.title}
+          </button>
+          <button className="nav-chip" aria-label="next" onClick={props.onNextDate}>
+            {">"}
+          </button>
+        </header>
+      ) : null}
 
       {props.segments?.length ? (
         <div className="segment-row">

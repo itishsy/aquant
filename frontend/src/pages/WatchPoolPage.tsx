@@ -31,6 +31,7 @@ export function WatchPoolPage() {
   return (
     <PageShell
       title="自选"
+      hideHero
       segments={[
         { key: "watch", label: "自选", onClick: () => setTab("watch") },
         { key: "signal", label: "信号", onClick: () => setTab("signal") },
