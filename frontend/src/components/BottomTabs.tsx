@@ -2,9 +2,10 @@ import { TabBar } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
 
 const tabs = [
-  { key: "/market", title: "市场", icon: "▟" },
-  { key: "/reviews", title: "复盘", icon: "▤" },
+  { key: "/market", title: "市场", icon: "▰" },
+  { key: "/daily-plan", title: "计划", icon: "▣" },
   { key: "/watch-pool", title: "自选", icon: "★" },
+  { key: "/reviews", title: "复盘", icon: "◆" },
   { key: "/settings", title: "设置", icon: "⚙" },
 ];
 

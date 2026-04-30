@@ -152,6 +152,17 @@ class WatchPool(TimestampMixin, SystemBase):
     last_signal_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     added_trade_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(32), default="watching", index=True)
+    pool_layer: Mapped[str] = mapped_column(String(32), default="L2_watch", index=True)
+    entry_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sector_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    observe_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    max_observe_days: Mapped[int] = mapped_column(Integer, default=30)
+    next_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archive_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class StockKlineDaily(TimestampMixin, CandleBase):
@@ -218,6 +229,10 @@ class SignalRecord(TimestampMixin, SystemBase):
     valid: Mapped[bool] = mapped_column(Boolean, default=True)
     handled_status: Mapped[str] = mapped_column(String(16), default="new")
     raw_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    plan_item_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    checklist_required: Mapped[bool] = mapped_column(Boolean, default=True)
+    signal_invalidated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class StrategyConfig(TimestampMixin, SystemBase):
@@ -249,6 +264,12 @@ class TradeRecord(TimestampMixin, SystemBase):
     sell_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     sell_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    plan_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    plan_item_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    is_unplanned: Mapped[bool] = mapped_column(Boolean, default=False)
+    discipline_flags: Mapped[dict] = mapped_column(JSON, default=dict)
+    review_status: Mapped[str] = mapped_column(String(32), default="pending")
+    trade_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class TradeReview(TimestampMixin, SystemBase):
@@ -286,3 +307,264 @@ class SystemTaskLog(TimestampMixin, SystemBase):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     affected_rows: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class WatchPoolLifecycle(SystemBase):
+    __tablename__ = "watch_pool_lifecycle"
+    __table_args__ = (
+        Index("ix_watch_pool_lifecycle_stock_created", "stock_code", "created_at"),
+    )
+
+    lifecycle_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    stock_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(32), index=True)
+    action_type: Mapped[str] = mapped_column(String(32))
+    action_reason: Mapped[str] = mapped_column(Text, default="")
+    operator_type: Mapped[str] = mapped_column(String(16), default="system")
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class WatchPoolScore(SystemBase):
+    __tablename__ = "watch_pool_score"
+    __table_args__ = (
+        Index("ix_watch_pool_score_stock_trade_date", "stock_code", "trade_date"),
+    )
+
+    score_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
+    market_score: Mapped[float] = mapped_column(Float, default=0.0)
+    sector_score: Mapped[float] = mapped_column(Float, default=0.0)
+    hot_score: Mapped[float] = mapped_column(Float, default=0.0)
+    technical_score: Mapped[float] = mapped_column(Float, default=0.0)
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    liquidity_score: Mapped[float] = mapped_column(Float, default=0.0)
+    total_score: Mapped[float] = mapped_column(Float, default=0.0)
+    entry_level: Mapped[str] = mapped_column(String(32), index=True)
+    score_detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DailyTradePlan(TimestampMixin, SystemBase):
+    __tablename__ = "daily_trade_plan"
+
+    plan_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_date: Mapped[date] = mapped_column(Date, unique=True, index=True)
+    market_score: Mapped[float] = mapped_column(Float, default=0.0)
+    market_state: Mapped[str] = mapped_column(String(32), default="震荡")
+    trade_permission: Mapped[str] = mapped_column(String(32), default="cautious")
+    max_total_position: Mapped[float] = mapped_column(Float, default=0.5)
+    max_single_position: Mapped[float] = mapped_column(Float, default=0.2)
+    key_sectors: Mapped[list] = mapped_column(JSON, default=list)
+    risk_summary: Mapped[str] = mapped_column(Text, default="")
+    discipline_note: Mapped[str] = mapped_column(
+        Text, default="仅作为交易辅助，请结合个人交易计划确认。"
+    )
+    plan_status: Mapped[str] = mapped_column(String(32), default="draft")
+    execution_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class DailyTradePlanItem(TimestampMixin, SystemBase):
+    __tablename__ = "daily_trade_plan_item"
+
+    item_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(Integer, index=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    stock_name: Mapped[str] = mapped_column(String(64), default="")
+    action_type: Mapped[str] = mapped_column(String(32), default="buy_watch")
+    trigger_condition: Mapped[str] = mapped_column(Text, default="")
+    expected_price_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_price_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    position_ratio: Mapped[float] = mapped_column(Float, default=0.1)
+    invalid_condition: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    source_type: Mapped[str] = mapped_column(String(32), default="watch_pool")
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    risk_reward_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    user_note: Mapped[str] = mapped_column(Text, default="")
+
+
+class TradeExecutionChecklist(SystemBase):
+    __tablename__ = "trade_execution_checklist"
+
+    checklist_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    plan_item_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    trade_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
+    market_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    sector_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    position_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    signal_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    stop_loss_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    target_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    position_size_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    risk_reward_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    daily_trade_count_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    emotion_check: Mapped[bool] = mapped_column(Boolean, default=True)
+    all_passed: Mapped[bool] = mapped_column(Boolean, default=True)
+    failed_items: Mapped[list] = mapped_column(JSON, default=list)
+    user_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SellPlan(TimestampMixin, SystemBase):
+    __tablename__ = "sell_plan"
+
+    sell_plan_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_id: Mapped[int] = mapped_column(Integer, index=True)
+    sell_signal_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    sell_type: Mapped[str] = mapped_column(String(32), default="manual")
+    planned_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sell_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_reason: Mapped[str] = mapped_column(Text, default="")
+    system_suggested: Mapped[bool] = mapped_column(Boolean, default=True)
+    user_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    pnl_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pnl_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_comment: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+
+
+class TradeErrorTag(SystemBase):
+    __tablename__ = "trade_error_tag"
+
+    tag_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tag_name: Mapped[str] = mapped_column(String(64), unique=True)
+    tag_type: Mapped[str] = mapped_column(String(32), default="discipline")
+    description: Mapped[str] = mapped_column(Text, default="")
+    is_system: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TradeReviewDetail(TimestampMixin, SystemBase):
+    __tablename__ = "trade_review_detail"
+
+    detail_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    buy_signal_valid: Mapped[bool] = mapped_column(Boolean, default=True)
+    buy_plan_valid: Mapped[bool] = mapped_column(Boolean, default=True)
+    market_state_at_buy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sector_state_at_buy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    entry_quality_score: Mapped[float] = mapped_column(Float, default=0.0)
+    exit_quality_score: Mapped[float] = mapped_column(Float, default=0.0)
+    max_profit_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    max_loss_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    final_pnl_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    holding_days: Mapped[int] = mapped_column(Integer, default=0)
+    risk_reward_actual: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss_triggered: Mapped[bool] = mapped_column(Boolean, default=False)
+    stop_loss_executed: Mapped[bool] = mapped_column(Boolean, default=False)
+    target_triggered: Mapped[bool] = mapped_column(Boolean, default=False)
+    target_executed: Mapped[bool] = mapped_column(Boolean, default=False)
+    plan_execution_result: Mapped[str] = mapped_column(String(64), default="")
+    user_answers: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_tags: Mapped[list] = mapped_column(JSON, default=list)
+    improvement_action: Mapped[str] = mapped_column(Text, default="")
+    trade_score: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class WeeklyReview(TimestampMixin, SystemBase):
+    __tablename__ = "weekly_review"
+    __table_args__ = (Index("ix_weekly_review_range", "week_start", "week_end"),)
+
+    weekly_review_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    week_start: Mapped[date] = mapped_column(Date, index=True)
+    week_end: Mapped[date] = mapped_column(Date, index=True)
+    market_summary: Mapped[str] = mapped_column(Text, default="")
+    sector_summary: Mapped[str] = mapped_column(Text, default="")
+    watch_pool_summary: Mapped[str] = mapped_column(Text, default="")
+    total_trades: Mapped[int] = mapped_column(Integer, default=0)
+    win_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    profit_loss_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    expectancy: Mapped[float] = mapped_column(Float, default=0.0)
+    total_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    max_drawdown: Mapped[float] = mapped_column(Float, default=0.0)
+    avg_holding_days: Mapped[float] = mapped_column(Float, default=0.0)
+    plan_execution_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    unplanned_trade_count: Mapped[int] = mapped_column(Integer, default=0)
+    stop_loss_execution_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    take_profit_execution_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    signal_trade_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    emotion_trade_count: Mapped[int] = mapped_column(Integer, default=0)
+    best_trade_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    worst_trade_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_stats: Mapped[dict] = mapped_column(JSON, default=dict)
+    next_week_focus: Mapped[str] = mapped_column(Text, default="")
+    next_week_discipline: Mapped[str] = mapped_column(
+        Text, default="仅作为交易辅助，请结合个人交易计划确认。"
+    )
+    user_summary: Mapped[str] = mapped_column(Text, default="")
+
+
+class MonthlyReview(TimestampMixin, SystemBase):
+    __tablename__ = "monthly_review"
+
+    monthly_review_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    month: Mapped[str] = mapped_column(String(7), unique=True, index=True)
+    monthly_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    monthly_return: Mapped[float] = mapped_column(Float, default=0.0)
+    max_drawdown: Mapped[float] = mapped_column(Float, default=0.0)
+    total_trades: Mapped[int] = mapped_column(Integer, default=0)
+    win_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    profit_loss_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    expectancy: Mapped[float] = mapped_column(Float, default=0.0)
+    best_strategy: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    worst_strategy: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    best_sector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    worst_sector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    plan_execution_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    discipline_score: Mapped[float] = mapped_column(Float, default=0.0)
+    review_completion_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    ability_score: Mapped[dict] = mapped_column(JSON, default=dict)
+    top_errors: Mapped[list] = mapped_column(JSON, default=list)
+    next_month_goals: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class DisciplineRule(TimestampMixin, SystemBase):
+    __tablename__ = "discipline_rule"
+
+    rule_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    rule_type: Mapped[str] = mapped_column(String(32), default="risk")
+    rule_value: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    strict_mode_required: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class UserTradingScore(SystemBase):
+    __tablename__ = "user_trading_score"
+
+    score_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period_type: Mapped[str] = mapped_column(String(16), index=True)
+    period_key: Mapped[str] = mapped_column(String(16), index=True)
+    stock_selection_score: Mapped[float] = mapped_column(Float, default=0.0)
+    entry_score: Mapped[float] = mapped_column(Float, default=0.0)
+    exit_score: Mapped[float] = mapped_column(Float, default=0.0)
+    position_score: Mapped[float] = mapped_column(Float, default=0.0)
+    risk_control_score: Mapped[float] = mapped_column(Float, default=0.0)
+    execution_score: Mapped[float] = mapped_column(Float, default=0.0)
+    review_score: Mapped[float] = mapped_column(Float, default=0.0)
+    total_score: Mapped[float] = mapped_column(Float, default=0.0)
+    score_detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class NotificationRecord(SystemBase):
+    __tablename__ = "notification_record"
+
+    notification_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    notification_type: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(128), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

@@ -28,8 +28,13 @@ class TradeService:
             stop_loss_price=payload.get("stop_loss_price"),
             target_price=payload.get("target_price"),
             trade_plan=payload.get("trade_plan", ""),
+            plan_id=payload.get("plan_id"),
+            plan_item_id=payload.get("plan_item_id"),
+            is_unplanned=payload.get("plan_item_id") is None,
+            discipline_flags=payload.get("discipline_flags", {}),
         )
         signal.handled_status = "confirmed"
+        signal.plan_item_id = payload.get("plan_item_id")
         self.db.add(trade)
         self.db.commit()
         self.db.refresh(trade)
@@ -61,12 +66,15 @@ class TradeService:
         trade = self.db.query(TradeRecord).filter(TradeRecord.id == trade_id).first()
         if not trade:
             raise ValueError("trade not found")
+        sell_quantity = payload["quantity"]
         trade.sell_price = payload["price"]
-        trade.sell_quantity = payload["quantity"]
+        trade.sell_quantity = (trade.sell_quantity or 0) + sell_quantity
         trade.sell_reason = payload["reason"]
         trade.sell_time = datetime.utcnow()
-        trade.status = "closed"
+        trade.status = "closed" if trade.sell_quantity >= trade.quantity else "partial_sold"
         trade.realized_pnl = self.calculate_pnl(trade)
+        if trade.status == "closed":
+            trade.review_status = "pending"
         self.db.commit()
         self.db.refresh(trade)
         return trade
