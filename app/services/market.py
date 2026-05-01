@@ -42,6 +42,7 @@ class MarketService:
 
     def collect_market_daily(self, trade_date: date) -> MarketDaily:
         payload = self.provider.get_market_snapshot(trade_date)
+        payload["trade_date"] = trade_date
         score, status = self.calculate_market_score(payload)
         existing = self.db.query(MarketDaily).filter(MarketDaily.trade_date == trade_date).first()
         target = existing or MarketDaily(trade_date=trade_date)

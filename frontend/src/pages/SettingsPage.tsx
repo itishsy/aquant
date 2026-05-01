@@ -11,6 +11,7 @@ export function SettingsPage() {
           </div>
           <span className="soft-tag">v1.1</span>
         </div>
+
         <div className="stack-list">
           <div className="row-card">
             <div>
@@ -18,12 +19,14 @@ export function SettingsPage() {
               <p>当前支持 mock provider 与已授权真实数据落库配置。</p>
             </div>
           </div>
+
           <div className="row-card">
             <div>
               <strong>合规边界</strong>
               <p>仅提供行情监测、辅助分析、信号提醒与人工确认，不提供自动化委托行为。</p>
             </div>
           </div>
+
           <div className="row-card">
             <div>
               <strong>严格模式</strong>

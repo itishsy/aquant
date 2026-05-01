@@ -39,6 +39,7 @@ class SectorService:
     def collect_sector_daily(self, trade_date: date) -> list[SectorDaily]:
         rows = []
         for payload in self.provider.get_sector_daily(trade_date):
+            payload["trade_date"] = trade_date
             score, sector_type, reason, risk = self.calculate_sector_score(payload)
             entity = (
                 self.db.query(SectorDaily)

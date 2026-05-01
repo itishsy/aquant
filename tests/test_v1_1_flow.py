@@ -1,6 +1,8 @@
 from datetime import date
 
 from app.models import MarketDaily, SectorDaily, TradeRecord, WatchPool
+from app.services.market import MarketService
+from app.services.tasks import TaskService
 from app.services.v1_1 import (
     ASSISTANT_NOTE,
     DailyTradePlanService,
@@ -185,3 +187,62 @@ def test_v1_1_strict_mode_blocks_unplanned_and_unplanned_stats(db_session):
     UnplannedTradeService(db_session).mark_unplanned_trade(trade.id, "手动临时记录")
     stats = UnplannedTradeService(db_session).calculate_unplanned_trade_stats(None, None)
     assert stats["unplanned_trade_count"] == 1
+
+
+def test_collection_forces_requested_trade_date_and_cleans_future_rows(db_session):
+    requested = date(2026, 5, 1)
+    wrong_future = date(2026, 5, 2)
+    service = MarketService(db_session)
+    service.provider = type(
+        "WrongDateProvider",
+        (),
+        {
+            "get_market_snapshot": lambda self, trade_date: {
+                "trade_date": wrong_future,
+                "sh_index": 3100,
+                "sz_index": 10000,
+                "cyb_index": 2000,
+                "total_amount": 12000,
+                "up_count": 3000,
+                "down_count": 1800,
+                "flat_count": 100,
+                "up_ratio": 0.62,
+                "limit_up_count": 80,
+                "limit_down_count": 5,
+                "broken_limit_count": 12,
+                "broken_limit_ratio": 0.15,
+                "max_continue_board": 5,
+                "yesterday_limit_avg_return": 0,
+                "north_money": 0,
+                "market_comment": "wrong date payload",
+            }
+        },
+    )()
+
+    row = service.collect_market_daily(requested)
+    assert row.trade_date == requested
+    assert db_session.query(MarketDaily).filter(MarketDaily.trade_date == wrong_future).count() == 0
+
+    db_session.add(
+        MarketDaily(
+            trade_date=wrong_future,
+            sh_index=1,
+            sz_index=1,
+            cyb_index=1,
+            total_amount=1,
+            up_count=1,
+            down_count=1,
+            flat_count=0,
+            up_ratio=0.5,
+            limit_up_count=1,
+            limit_down_count=0,
+            broken_limit_count=0,
+            broken_limit_ratio=0,
+            max_continue_board=1,
+        )
+    )
+    db_session.commit()
+
+    removed = TaskService(db_session).remove_future_snapshot_data(requested)
+    assert removed == 1
+    assert db_session.query(MarketDaily).filter(MarketDaily.trade_date > requested).count() == 0

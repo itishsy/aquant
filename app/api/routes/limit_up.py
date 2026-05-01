@@ -22,5 +22,7 @@ def get_limit_up_list(trade_date: date, db: Session = Depends(get_db)):
 @router.get("/summary")
 def get_limit_up_summary(trade_date: date, db: Session = Depends(get_db)):
     service = LimitUpService(db)
-    service.collect_limit_up_daily(trade_date)
+    existing = db.query(LimitUpDaily).filter(LimitUpDaily.trade_date == trade_date).first()
+    if not existing:
+        service.collect_limit_up_daily(trade_date)
     return service.generate_limit_up_summary(trade_date)

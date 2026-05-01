@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_aquant.db"
 os.environ["CANDLE_DATABASE_URL"] = "sqlite:///./test_a_candle.db"
+os.environ["DATA_PROVIDER_MODE"] = "mock"
 
 from app.core.database import CandleBase, SystemBase, get_candle_db, get_db  # noqa: E402
 from app.main import app  # noqa: E402

@@ -18,6 +18,7 @@ class MarketReviewService:
             payload = self._empty_payload(trade_date)
         else:
             payload = self.provider.get_market_review_snapshot(trade_date)
+        payload["trade_date"] = trade_date
         existing = self.db.query(MarketReviewDaily).filter(MarketReviewDaily.trade_date == trade_date).first()
         target = existing or MarketReviewDaily(trade_date=trade_date)
         for key, value in payload.items():

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { DatePicker, ErrorBlock, SpinLoading } from "antd-mobile";
+import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet } from "../api/client";
 import { PageShell } from "../components/PageShell";
 import { dateToString, shiftTradeDate, stringToDate, todayString } from "../lib/tradeDates";
@@ -16,7 +17,12 @@ type MarketSummary = {
 };
 
 export function MarketPage() {
-  const [tradeDate, setTradeDate] = useState<string>(todayString());
+  const location = useLocation();
+  const navigate = useNavigate();
+  const searchParams = new URLSearchParams(location.search);
+  const queryDate = searchParams.get("trade_date");
+  const refreshKey = searchParams.get("refresh");
+  const [tradeDate, setTradeDate] = useState<string>(queryDate || todayString());
   const [pickerVisible, setPickerVisible] = useState(false);
   const [tab, setTab] = useState("overview");
   const [data, setData] = useState<MarketSummary | null>(null);
@@ -49,7 +55,19 @@ export function MarketPage() {
         setError(String(err));
       })
       .finally(() => setLoading(false));
-  }, [tradeDate]);
+  }, [tradeDate, refreshKey]);
+
+  useEffect(() => {
+    const nextDate = new URLSearchParams(location.search).get("trade_date");
+    if (nextDate && nextDate !== tradeDate) {
+      setTradeDate(nextDate);
+    }
+  }, [location.search, tradeDate]);
+
+  function changeTradeDate(nextDate: string) {
+    setTradeDate(nextDate);
+    navigate(`/market?trade_date=${nextDate}`);
+  }
 
   const heatBars = data
     ? [
@@ -65,8 +83,8 @@ export function MarketPage() {
       title="市场"
       dateText={tradeDate}
       onDateClick={() => setPickerVisible(true)}
-      onPrevDate={() => setTradeDate((current) => shiftTradeDate(current, -1))}
-      onNextDate={() => setTradeDate((current) => shiftTradeDate(current, 1))}
+      onPrevDate={() => changeTradeDate(shiftTradeDate(tradeDate, -1))}
+      onNextDate={() => changeTradeDate(shiftTradeDate(tradeDate, 1))}
       segments={[
         { key: "overview", label: "大盘", onClick: () => setTab("overview") },
         { key: "hot", label: "热榜", onClick: () => setTab("hot") },
@@ -81,7 +99,7 @@ export function MarketPage() {
         value={stringToDate(tradeDate)}
         max={new Date()}
         onClose={() => setPickerVisible(false)}
-        onConfirm={(value) => setTradeDate(dateToString(value))}
+        onConfirm={(value) => changeTradeDate(dateToString(value))}
       />
 
       {loading && <SpinLoading />}

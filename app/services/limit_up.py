@@ -28,6 +28,7 @@ class LimitUpService:
         rows = []
         self.db.query(LimitUpDaily).filter(LimitUpDaily.trade_date == trade_date).delete()
         for payload in self.provider.get_limit_up_list(trade_date):
+            payload["trade_date"] = trade_date
             payload["limit_type"] = self.classify_limit_up_stock(payload)
             entity = LimitUpDaily(**payload)
             self.db.add(entity)

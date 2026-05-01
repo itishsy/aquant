@@ -44,3 +44,10 @@
 - 前端构建：`vite build` 成功。
 - 前端测试：`1 passed`。
 - 合规关键词扫描范围 `app frontend/src docs tests` 无命中。
+
+## 2026-05-01：每日真实数据采集
+
+- 已接入 APScheduler 每日一次 `generate_daily_snapshot_task` 调度。
+- 默认 `ENABLE_SCHEDULER=false`，避免开发环境启动后立即采集；需要每日采集时显式开启。
+- 新增 `DAILY_COLLECTION_HOUR`、`DAILY_COLLECTION_MINUTE`、`TIMEZONE` 配置。
+- 管理任务接口支持 `trade_date=YYYY-MM-DD` 参数，可补采指定日期。
