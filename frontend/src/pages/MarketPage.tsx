@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { DatePicker, ErrorBlock, SpinLoading } from "antd-mobile";
+import { Button, DatePicker, ErrorBlock, SpinLoading } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet } from "../api/client";
 import { PageShell } from "../components/PageShell";
+import { StockLink } from "../components/StockLink";
 import { dateToString, shiftTradeDate, stringToDate, todayString } from "../lib/tradeDates";
 
 type MarketSummary = {
@@ -179,14 +180,15 @@ export function MarketPage() {
               </div>
               {hotStocks.length ? (
                 <div className="stack-list">
-                  {hotStocks.slice(0, 10).map((item, index) => (
+                  {hotStocks.slice(0, 10).map((item) => (
                     <div key={item.stock_code} className="row-card">
                       <div>
                         <strong>
-                          {index + 1}. {item.stock_name}
+                          <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
                         </strong>
+                        <p>得分：{item.total_score}</p>
                         <p>
-                          {item.stock_code} / {item.sector_name}
+                          {item.sector_name}
                         </p>
                         <p>
                           平台：{Object.entries(item.platform_ranks || {})
@@ -194,7 +196,9 @@ export function MarketPage() {
                             .join(" / ")}
                         </p>
                       </div>
-                      <span className="score-badge">{item.total_score}</span>
+                      <Button size="small" color="primary" fill="solid" onClick={() => {}}>
+                        加自选
+                      </Button>
                     </div>
                   ))}
                 </div>
@@ -238,9 +242,11 @@ export function MarketPage() {
                       {limitRows.slice(0, 20).map((item) => (
                         <div key={item.stock_code} className="row-card row-card-action">
                           <div>
-                            <strong>{item.stock_name}</strong>
+                            <strong>
+                              <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
+                            </strong>
                             <p>
-                              {item.stock_code} / {item.concept || "未分类"} / {item.limit_type}
+                              {item.concept || "未分类"} / {item.limit_type}
                             </p>
                             <p>
                               封板：{item.limit_time} / 连板：{item.board_count} / 换手：{item.turnover_rate}%

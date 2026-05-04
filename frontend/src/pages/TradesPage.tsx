@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, ErrorBlock, Form, Input, Popup, Selector, SpinLoading, TextArea, Toast } from "antd-mobile";
 import { apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
+import { StockLink } from "../components/StockLink";
 import { shiftTradeDate, todayString } from "../lib/tradeDates";
 
 type TradeRecord = {
@@ -140,7 +141,9 @@ export function TradesPage() {
               <div className="card-head">
                 <div className="card-headline">
                   <span className="icon-badge">交</span>
-                  <h2>{item.stock_name}</h2>
+                  <h2>
+                    <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
+                  </h2>
                 </div>
                 <span className="soft-tag">{item.status === "open" ? "持仓中" : "已完成"}</span>
               </div>
@@ -213,7 +216,7 @@ export function TradesPage() {
             <div className="sheet-head">
               <h3>记录卖出</h3>
               <p>
-                {sellTarget.stock_name} / {sellTarget.stock_code}
+                <StockLink stockName={sellTarget.stock_name} stockCode={sellTarget.stock_code} />
               </p>
             </div>
             <Form

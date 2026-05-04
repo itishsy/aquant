@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ErrorBlock, SpinLoading } from "antd-mobile";
 import { apiGet } from "../api/client";
 import { PageShell } from "../components/PageShell";
+import { StockLink } from "../components/StockLink";
 
 export function SectorsPage() {
   const [items, setItems] = useState<any[]>([]);
@@ -28,7 +29,9 @@ export function SectorsPage() {
             </div>
             <p className="card-note">类型：{item.sector_type}</p>
             <p className="card-note">涨停数量：{item.limit_up_count}</p>
-            <p className="card-note">龙头股：{item.leader_stock_name}</p>
+            <p className="card-note">
+              龙头股：<StockLink stockName={item.leader_stock_name} stockCode={item.leader_stock_code} />
+            </p>
             <p className="card-note">入榜原因：{item.reason}</p>
             <p className="card-note">风险提示：{item.risk_hint}</p>
           </article>

@@ -5,6 +5,7 @@ import { apiGet } from "../api/client";
 import { LineChart } from "../components/LineChart";
 import { MiniBars } from "../components/MiniBars";
 import { PageShell } from "../components/PageShell";
+import { StockLink } from "../components/StockLink";
 
 export function StockDetailPage() {
   const { stockCode = "603019.SH" } = useParams();
@@ -51,9 +52,7 @@ export function StockDetailPage() {
               <strong>{daily.ma20[daily.ma20.length - 1] ?? "-"}</strong>
             </div>
           </div>
-          <a href={daily.xueqiu_link} target="_blank">
-            跳转雪球
-          </a>
+          <StockLink stockName="雪球" stockCode={stockCode} showCode={false} />
         </article>
       )}
 

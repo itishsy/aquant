@@ -277,6 +277,16 @@ button {
   font-weight: 700;
 }
 
+.stock-link {
+  color: #243763;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.stock-link:hover {
+  color: #4b63ee;
+}
+
 .empty-panel {
   display: flex;
   align-items: center;

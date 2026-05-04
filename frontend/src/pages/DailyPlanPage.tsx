@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, ErrorBlock, Form, Input, Popup, SpinLoading, TextArea, Toast } from "antd-mobile";
 import { apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
+import { StockLink } from "../components/StockLink";
 import { shiftTradeDate, todayString } from "../lib/tradeDates";
 
 type PlanItem = {
@@ -170,7 +171,7 @@ export function DailyPlanPage() {
               <div className="row-card row-card-action" key={item.item_id}>
                 <div>
                   <strong>
-                    {item.stock_name} {item.stock_code}
+                    <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
                   </strong>
                   <p>{item.trigger_condition}</p>
                   <p>止损：{item.stop_loss_price ?? "-"} / 目标：{item.target_price ?? "-"}</p>

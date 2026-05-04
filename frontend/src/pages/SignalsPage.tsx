@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Dialog, ErrorBlock, SpinLoading } from "antd-mobile";
 import { apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
+import { StockLink } from "../components/StockLink";
 
 export function SignalsPage() {
   const [items, setItems] = useState<any[]>([]);
@@ -39,7 +40,7 @@ export function SignalsPage() {
               <span className="score-badge">{item.signal_level}</span>
             </div>
             <p className="card-note">
-              {item.stock_name} · {item.stock_code}
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
             </p>
             <p className="card-note">{item.trigger_reason}</p>
             <p className="card-note">风险提示：{item.risk_desc}</p>

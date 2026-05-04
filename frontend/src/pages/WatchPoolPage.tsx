@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, ErrorBlock, Input, SpinLoading } from "antd-mobile";
 import { apiDelete, apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
+import { StockLink } from "../components/StockLink";
 
 export function WatchPoolPage() {
   const [tab, setTab] = useState("watch");
@@ -75,20 +76,14 @@ export function WatchPoolPage() {
                 <div key={item.id} className="row-card row-card-action">
                   <div>
                     <strong>
-                      {item.stock_name} {item.stock_code}
+                      <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
                     </strong>
                     <p>入池原因：{item.reason}</p>
                     <p>标签：{(item.labels || []).join(" / ") || "暂无标签"}</p>
                     <p>最新信号：{item.last_signal_type || "暂无信号"}</p>
                   </div>
                   <div className="card-actions">
-                    <a
-                      className="text-link"
-                      href={`https://xueqiu.com/S/${item.stock_code.split(".")[1]}${item.stock_code.split(".")[0]}`}
-                      target="_blank"
-                    >
-                      雪球
-                    </a>
+                    <StockLink className="text-link" stockName="雪球" stockCode={item.stock_code} showCode={false} />
                     <Button
                       size="mini"
                       onClick={async () => {
@@ -123,8 +118,9 @@ export function WatchPoolPage() {
                 {buySignals.map((item) => (
                   <div key={item.id} className="row-card">
                     <div>
-                      <strong>{item.stock_name}</strong>
-                      <p>{item.stock_code}</p>
+                      <strong>
+                        <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
+                      </strong>
                       <p>{item.trigger_reason}</p>
                     </div>
                     <span className="score-badge">{item.signal_level}</span>
@@ -149,8 +145,9 @@ export function WatchPoolPage() {
                 {riskSignals.map((item) => (
                   <div key={item.id} className="row-card">
                     <div>
-                      <strong>{item.stock_name}</strong>
-                      <p>{item.stock_code}</p>
+                      <strong>
+                        <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
+                      </strong>
                       <p>{item.risk_desc}</p>
                     </div>
                     <span className="score-badge">{item.signal_level}</span>
