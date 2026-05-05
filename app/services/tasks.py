@@ -52,7 +52,7 @@ class TaskService:
         return self._run("collect_limit_up_daily_task", lambda: self._with_provider(provider_mode, lambda: LimitUpService(self.db).collect_limit_up_daily(trade_date)))
 
     def auto_update_watch_pool_task(self, trade_date: date):
-        return self._run("auto_update_watch_pool_task", lambda: WatchPoolService(self.db).auto_add_candidates(trade_date))
+        return self._run("auto_update_watch_pool_task_deprecated_noop", lambda: [])
 
     def scan_signals_task(self, trade_date: date):
         return self._run("scan_signals_task", lambda: SignalEngine(self.db).scan())

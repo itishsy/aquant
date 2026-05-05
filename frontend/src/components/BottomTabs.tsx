@@ -3,10 +3,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 const tabs = [
   { key: "/market", title: "市场", icon: "▰" },
-  { key: "/daily-plan", title: "计划", icon: "▣" },
   { key: "/watch-pool", title: "自选", icon: "★" },
   { key: "/reviews", title: "复盘", icon: "◆" },
-  { key: "/settings", title: "设置", icon: "⚙" },
+  { key: "/me", title: "我的", icon: "⚙" },
 ];
 
 export function BottomTabs() {
@@ -14,6 +13,7 @@ export function BottomTabs() {
   const navigate = useNavigate();
   const active =
     tabs.find((tab) => location.pathname.startsWith(tab.key))?.key ||
+    (location.pathname.startsWith("/settings") ? "/me" : "") ||
     (location.pathname.startsWith("/signals") ? "/watch-pool" : "/market");
 
   return (

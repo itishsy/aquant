@@ -74,31 +74,10 @@ class WatchPoolService:
         return entity
 
     def auto_add_candidates(self, trade_date: date) -> list[WatchPool]:
-        hot_stocks = HotStockService(self.db).get_top_hot_stocks(trade_date)
-        main_sectors = {
-            row.sector_name
-            for row in self.db.query(SectorDaily)
-            .filter(SectorDaily.trade_date == trade_date, SectorDaily.sector_type == "主线板块")
-            .all()
-        }
-        added = []
-        for item in hot_stocks:
-            if item["sector_name"] not in main_sectors:
-                continue
-            existing = self.db.query(WatchPool).filter(WatchPool.stock_code == item["stock_code"]).first()
-            if existing and existing.is_blacklist:
-                continue
-            entity = self.add_to_watch_pool(
-                item["stock_code"],
-                "热门股与主线板块共振候选",
-                ["auto", "hot", item["sector_name"]],
-                "hot_stock_candidate",
-            )
-            entity.stock_name = item["stock_name"]
-            entity.sector_name = item["sector_name"]
-            added.append(entity)
-        self.db.commit()
-        return added
+        # Deprecated by latest PRD v1.0: every watch-pool item must be added by
+        # explicit user confirmation. Keep the method as a safe no-op for old
+        # callers and scheduled-task compatibility.
+        return []
 
     def auto_remove_invalid(self, trade_date: date) -> int:
         removed = 0

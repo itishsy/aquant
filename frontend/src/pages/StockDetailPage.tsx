@@ -1,84 +1,80 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { ErrorBlock, SpinLoading } from "antd-mobile";
 import { apiGet } from "../api/client";
-import { LineChart } from "../components/LineChart";
-import { MiniBars } from "../components/MiniBars";
 import { PageShell } from "../components/PageShell";
 import { StockLink } from "../components/StockLink";
 
+type StockBrief = {
+  stock_code: string;
+  stock_name: string;
+  sector_name?: string;
+  xueqiu_url: string;
+};
+
 export function StockDetailPage() {
   const { stockCode = "603019.SH" } = useParams();
-  const [daily, setDaily] = useState<any>(null);
-  const [intraday, setIntraday] = useState<any>(null);
+  const [brief, setBrief] = useState<StockBrief | null>(null);
+  const [latestSource, setLatestSource] = useState<any>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.all([apiGet(`/stocks/${stockCode}/kline/daily`), apiGet(`/stocks/${stockCode}/kline/15m`)])
-      .then(([dailyData, intradayData]) => {
-        setDaily(dailyData);
-        setIntraday(intradayData);
+    Promise.all([
+      apiGet<StockBrief>(`/common/stocks/${stockCode}/brief`),
+      apiGet(`/h5/market/stocks/${stockCode}/latest-source`),
+    ])
+      .then(([briefData, sourceData]) => {
+        setBrief(briefData);
+        setLatestSource(sourceData);
         setError("");
       })
       .catch((err) => setError(String(err)));
   }, [stockCode]);
 
-  const dailyCloses = useMemo(() => daily?.items?.map((item: any) => item.close) || [], [daily]);
-  const intradayCloses = useMemo(() => intraday?.items?.map((item: any) => item.close) || [], [intraday]);
-  const intradayHist = useMemo(() => intraday?.macd?.hist?.map((item: number) => Math.abs(item)) || [], [intraday]);
-
   return (
     <PageShell title={`个股详情 ${stockCode}`}>
       {error && <ErrorBlock description="个股详情加载失败" />}
-      {!daily && !error && <SpinLoading />}
+      {!brief && !error && <SpinLoading />}
 
-      {daily && (
+      {brief && (
         <article className="feature-card compact-card">
           <div className="card-head">
             <div className="card-headline">
-              <span className="icon-badge">▥</span>
-              <h2>日 K 与趋势</h2>
+              <span className="icon-badge">股</span>
+              <h2>
+                <StockLink stockName={brief.stock_name} stockCode={brief.stock_code} />
+              </h2>
             </div>
-            <span className="soft-tag">日线</span>
+            <span className="soft-tag">雪球查看 K 线</span>
           </div>
-          <LineChart values={dailyCloses.slice(-30)} />
           <div className="metric-grid">
             <div className="metric-tile">
-              <span>日线数量</span>
-              <strong>{daily.items.length}</strong>
+              <span>股票代码</span>
+              <strong>{brief.stock_code}</strong>
             </div>
             <div className="metric-tile">
-              <span>MA20 最新值</span>
-              <strong>{daily.ma20[daily.ma20.length - 1] ?? "-"}</strong>
+              <span>所属板块</span>
+              <strong>{brief.sector_name || "-"}</strong>
             </div>
           </div>
-          <StockLink stockName="雪球" stockCode={stockCode} showCode={false} />
+          <p className="card-note">
+            系统内 K 线仅用于后台计算、信号触发和复盘统计。查看图形走势请通过雪球链接打开。
+          </p>
         </article>
       )}
 
-      {intraday && (
+      {latestSource && (
         <article className="feature-card compact-card">
           <div className="card-head">
             <div className="card-headline">
-              <span className="icon-badge">≈</span>
-              <h2>15 分钟 MACD</h2>
+              <span className="icon-badge">源</span>
+              <h2>来源摘要</h2>
             </div>
-            <span className="soft-tag">盘中</span>
+            <span className="soft-tag">原始数据</span>
           </div>
-          <LineChart values={intradayCloses} stroke="#5d74ff" fill={false} />
-          <MiniBars values={intradayHist.slice(-10)} />
-          <div className="metric-grid">
-            <div className="metric-tile">
-              <span>15 分钟 K 数量</span>
-              <strong>{intraday.items.length}</strong>
-            </div>
-            <div className="metric-tile">
-              <span>最新 DIF / DEA</span>
-              <strong>
-                {intraday.macd.dif[intraday.macd.dif.length - 1]} / {intraday.macd.dea[intraday.macd.dea.length - 1]}
-              </strong>
-            </div>
-          </div>
+          <p>最近人气来源：{latestSource.latest_hot?.platform || "暂无"}</p>
+          <p>最近涨停来源：{latestSource.latest_limit?.platform || "暂无"}</p>
+          <p className="card-note">仅作为交易辅助，请结合个人交易规则确认。</p>
         </article>
       )}
     </PageShell>

@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
 import { Button, DatePicker, ErrorBlock, SpinLoading } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
-import { apiGet } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
 import { StockLink } from "../components/StockLink";
 import { dateToString, shiftTradeDate, stringToDate, todayString } from "../lib/tradeDates";
 
 type MarketSummary = {
-  market_score: number;
-  market_status: string;
-  market_comment: string;
+  source: string;
   total_amount: number;
-  up_ratio: number;
+  up_count: number;
+  down_count: number;
+  flat_count: number;
   limit_up_count: number;
   limit_down_count: number;
   max_continue_board: number;
+  sh_index?: number;
+  sz_index?: number;
+  cyb_index?: number;
 };
 
 export function MarketPage() {
@@ -37,17 +40,17 @@ export function MarketPage() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      apiGet<MarketSummary>(`/market/daily?trade_date=${tradeDate}`),
+      apiGet<MarketSummary>(`/h5/market/overview?trade_date=${tradeDate}`),
       apiGet<any>(`/market/review?trade_date=${tradeDate}`),
-      apiGet<any[]>(`/hot-stocks/top?trade_date=${tradeDate}`),
-      apiGet<any[]>(`/limit-up/list?trade_date=${tradeDate}`),
+      apiGet<any>(`/h5/market/hot-stocks?trade_date=${tradeDate}&page_size=50`),
+      apiGet<any>(`/h5/market/limit-ups?trade_date=${tradeDate}&page_size=50`),
       apiGet<any>(`/limit-up/summary?trade_date=${tradeDate}`),
     ])
       .then(([summary, reviewData, hot, limitList, limit]) => {
         setData(summary);
         setReview(reviewData);
-        setHotStocks(hot);
-        setLimitRows(limitList);
+        setHotStocks(hot.list || hot);
+        setLimitRows(limitList.list || limitList);
         setLimitSummary(limit);
         setError("");
       })
@@ -70,14 +73,28 @@ export function MarketPage() {
     navigate(`/market?trade_date=${nextDate}`);
   }
 
-  const heatBars = data
-    ? [
-        { label: "温度", value: data.market_score, color: "var(--accent)" },
-        { label: "上涨率", value: Math.round(data.up_ratio * 100), color: "var(--accent-soft)" },
-      ]
-    : [];
-
   const amountText = data ? `${(data.total_amount / 10000).toFixed(2)}万亿` : "-";
+  const totalBreadth = data ? Math.max((data.up_count || 0) + (data.down_count || 0) + (data.flat_count || 0), 1) : 1;
+  const upRatio = data ? Math.round(((data.up_count || 0) / totalBreadth) * 100) : 0;
+
+  function addWatchFromMarket(item: any, sourceType: string) {
+    apiPost("/h5/watch-pool", {
+      stock_code: item.stock_code,
+      stock_name: item.stock_name,
+      sector_name: item.board_name || item.concept,
+      labels: sourceType === "limit_up" ? ["接力"] : ["人气"],
+      operation_strategies: sourceType === "limit_up" ? ["加速接力"] : ["趋势交易"],
+      buy_point_types: ["B15 底背离买点"],
+      source_type: sourceType,
+      source_platform: item.platform,
+      source_rank: item.platform_rank,
+      source_score: item.raw_score,
+      source_reason: item.raw_reason || item.limit_reason,
+      reason: item.raw_reason || item.limit_reason || "市场页手动加入自选",
+    }).catch(() => {
+      setError("添加自选失败，请稍后重试");
+    });
+  }
 
   return (
     <PageShell
@@ -114,7 +131,7 @@ export function MarketPage() {
                   <span className="icon-badge">市</span>
                   <h2>大盘</h2>
                 </div>
-                <span className="soft-tag">{data.market_status}</span>
+                <span className="soft-tag">{data.source || "原始数据"}</span>
               </div>
               <div className="metric-grid">
                 <div className="metric-tile">
@@ -123,7 +140,7 @@ export function MarketPage() {
                 </div>
                 <div className="metric-tile">
                   <span>上涨率</span>
-                  <strong>{Math.round(data.up_ratio * 100)}%</strong>
+                  <strong>{upRatio}%</strong>
                 </div>
                 <div className="metric-tile">
                   <span>涨停 / 跌停</span>
@@ -136,18 +153,21 @@ export function MarketPage() {
                   <strong>{data.max_continue_board}</strong>
                 </div>
               </div>
-              <div className="trend-panel">
-                {heatBars.map((bar) => (
-                  <div key={bar.label} className="trend-row">
-                    <span>{bar.label}</span>
-                    <div className="trend-track">
-                      <div className="trend-fill" style={{ width: `${bar.value}%`, background: bar.color }} />
-                    </div>
-                    <strong>{bar.value}</strong>
-                  </div>
-                ))}
+              <div className="metric-grid">
+                <div className="metric-tile">
+                  <span>上证指数</span>
+                  <strong>{data.sh_index ?? "-"}</strong>
+                </div>
+                <div className="metric-tile">
+                  <span>深成指</span>
+                  <strong>{data.sz_index ?? "-"}</strong>
+                </div>
+                <div className="metric-tile">
+                  <span>创业板指</span>
+                  <strong>{data.cyb_index ?? "-"}</strong>
+                </div>
               </div>
-              <p className="card-note">{data.market_comment}</p>
+              <p className="card-note">市场页仅展示客观原始数据，不作为交易建议。仅作为交易辅助，请结合个人交易规则确认。</p>
               {review ? (
                 <div className="review-note-panel">
                   <strong>复盘信息</strong>
@@ -186,18 +206,16 @@ export function MarketPage() {
                         <strong>
                           <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
                         </strong>
-                        <p>得分：{item.total_score}</p>
+                        <p>原始分数：{item.raw_score ?? "-"}</p>
                         <p>
-                          {item.sector_name}
+                          {item.board_name || "未分类"}
                         </p>
                         <p>
-                          平台：{Object.entries(item.platform_ranks || {})
-                            .map(([platform, rank]) => `${platform}#${rank}`)
-                            .join(" / ")}
+                          平台：{item.platform || "-"} / 原始排名：{item.platform_rank ?? "-"}
                         </p>
                       </div>
-                      <Button size="small" color="primary" fill="solid" onClick={() => {}}>
-                        加自选
+                      <Button size="small" color="primary" fill="solid" onClick={() => addWatchFromMarket(item, "hot_stock")}>
+                        + 自选
                       </Button>
                     </div>
                   ))}
@@ -251,9 +269,11 @@ export function MarketPage() {
                             <p>
                               封板：{item.limit_time} / 连板：{item.board_count} / 换手：{item.turnover_rate}%
                             </p>
-                            <p>{item.reason || "暂无涨停原因"}</p>
+                            <p>{item.limit_reason || "暂无涨停原因"}</p>
                           </div>
-                          <span className="score-badge">{item.board_count}</span>
+                          <Button size="small" color="primary" fill="solid" onClick={() => addWatchFromMarket(item, "limit_up")}>
+                            + 自选
+                          </Button>
                         </div>
                       ))}
                     </div>
