@@ -1,15 +1,4 @@
-from app.api.routes import admin, health, hot_stocks, limit_up, market, reviews, sectors, signals, stocks, trades, watch_pool
+"""PRD v1 API route package.
 
-__all__ = [
-    "admin",
-    "health",
-    "market",
-    "sectors",
-    "hot_stocks",
-    "limit_up",
-    "watch_pool",
-    "stocks",
-    "signals",
-    "trades",
-    "reviews",
-]
+Only /api/common, /api/h5 and /api/admin routers are registered by app.api.router.
+"""

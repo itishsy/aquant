@@ -14,12 +14,12 @@ def build_scheduler() -> BackgroundScheduler:
     settings = get_settings()
     scheduler = BackgroundScheduler(timezone=settings.timezone)
     scheduler.add_job(
-        run_daily_snapshot_job,
+        run_daily_market_job,
         trigger="cron",
         hour=settings.daily_collection_hour,
         minute=settings.daily_collection_minute,
-        id="daily_real_snapshot",
-        name="Daily real market snapshot",
+        id="collect_market_daily",
+        name="Collect market daily",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
@@ -28,9 +28,9 @@ def build_scheduler() -> BackgroundScheduler:
     return scheduler
 
 
-def run_daily_snapshot_job(trade_date: date | None = None) -> None:
+def run_daily_market_job(trade_date: date | None = None) -> None:
     db: Session = SystemSessionLocal()
     try:
-        TaskService(db).generate_daily_snapshot_task(trade_date or date.today())
+        TaskService(db).collect_market_daily(trade_date or date.today())
     finally:
         db.close()

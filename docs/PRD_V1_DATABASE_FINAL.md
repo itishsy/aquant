@@ -1,29 +1,63 @@
-# Aquant PRD v1.0 数据库最终文档
+# Aquant PRD v1.0 Final Database
 
-状态：阶段性交付。已新增模型与 Alembic 迁移 `20260505_0003_prd_v1_alignment.py`。
+Active migration baseline:
 
-原则：
+- `alembic/versions/20260505_0001_prd_v1_baseline.py`
 
-- 新增 PRD 标准表，不删除旧表。
-- 旧 MVP/v1.1 表保留为兼容和迁移来源。
-- 系统数据使用 `a_quant`，K 线计算数据使用 `a_candle`。
+This is a development reset baseline. Rebuild local development databases from this migration.
 
-目标表族：
+## Active Tables
 
-- 市场：`mkt_daily`、`mkt_hot_board`、`mkt_hot_stock`、`mkt_limit_up`。
-- K 线：`mkt_stock_kline_daily`、`mkt_stock_kline_15m`。
-- 自选/信号/交易：`watch_pool`、`watch_signal`、`watch_signal_performance`、`watch_pool_status_log`、`watch_trade`、`watch_trade_execution`。
-- 复盘：`review_form`、`review_weekly`、`review_monthly`、`review_trade`。
-- 我的：`my_user_profile`、`my_user_preference`、`my_notification_setting`。
-- 后台配置：`config_data_source`、`config_task`、`config_task_log`、`config_field_mapping`、`config_dictionary`、`config_strategy`、`config_notification_template`、`config_notification_record`、`config_review_template`、`config_operation_log`。
+### Market Data
 
-本文件会随迁移阶段持续更新。
+- `stock_basic`
+- `mkt_daily`
+- `mkt_hot_board`
+- `mkt_hot_stock`
+- `mkt_limit_up`
+- `mkt_stock_kline_daily`
+- `mkt_stock_kline_15m`
 
-## 已新增迁移
+Market data tables retain source/platform traceability fields such as `source`, `platform`, `source_url`, `source_update_time`, and `collected_at` where applicable.
 
-- `alembic/versions/20260505_0003_prd_v1_alignment.py`
+### Watch, Signals, Trades
 
-## 唯一约束
+- `watch_pool`
+- `watch_pool_status_log`
+- `watch_signal`
+- `watch_signal_performance`
+- `watch_trade`
+- `watch_trade_execution`
+
+Watch-pool records are manually created. Trade records use `watch_trade` as the master table and `watch_trade_execution` as the buy/sell execution ledger.
+
+### Reviews
+
+- `review_form`
+- `review_weekly`
+- `review_monthly`
+- `review_trade`
+
+### My Module
+
+- `my_user_profile`
+- `my_user_preference`
+- `my_notification_setting`
+
+### Admin Configuration
+
+- `config_data_source`
+- `config_task`
+- `config_task_log`
+- `config_field_mapping`
+- `config_dictionary`
+- `config_strategy`
+- `config_notification_template`
+- `config_notification_record`
+- `config_review_template`
+- `config_operation_log`
+
+## Key Unique Constraints
 
 - `mkt_daily`: `trade_date + source`
 - `mkt_hot_board`: `trade_date + platform + board_name`
@@ -36,8 +70,46 @@
 - `review_form`: `review_type + review_period`
 - `config_notification_record`: `push_type + target_type + target_id + channel`
 
-## 旧表兼容说明
+## Removed From Active Schema
 
-- 旧 `market_daily`、`sector_daily`、`hot_stock_rank`、`limit_up_daily` 暂作为 legacy 数据来源，H5 PRD 接口缺少 `mkt_*` 数据时会兼容同步。
-- 旧 `signal_record`、`trade_record`、`trade_review` 暂保留，后续逐步迁移到 `watch_signal`、`watch_trade`、`watch_trade_execution`、`review_form`。
-- 旧 v1.1 表族保留但不作为最新 PRD v1 主线。
+The following old MVP/v1.1 tables are no longer active PRD v1 models:
+
+- `market_daily`
+- `sector_daily`
+- `hot_stock_rank`
+- `limit_up_daily`
+- `stock_kline_daily`
+- `stock_kline_15m`
+- `signal_record`
+- `trade_record`
+- `trade_review`
+- `strategy_config`
+- `system_task_log`
+- `watch_pool_lifecycle`
+- `watch_pool_score`
+- `daily_trade_plan`
+- `daily_trade_plan_item`
+- `trade_execution_checklist`
+- `sell_plan`
+- `trade_error_tag`
+- `trade_review_detail`
+- `weekly_review`
+- `monthly_review`
+- `discipline_rule`
+- `user_trading_score`
+
+Old migration files were archived to `alembic/archive_old/`.
+
+## Local Rebuild
+
+```powershell
+$env:DATABASE_URL='sqlite:///./aquant_prd_v1.db'
+$env:CANDLE_DATABASE_URL='sqlite:///./aquant_candle_prd_v1.db'
+python -m alembic upgrade head
+```
+
+Seed defaults are initialized by common/admin/H5 endpoints that call `SeedService.init_defaults()`. For command-line validation, run:
+
+```powershell
+python -c "from app.core.database import SystemSessionLocal; from app.services.prd_v1 import SeedService; db=SystemSessionLocal(); print(SeedService(db).init_defaults()); db.close()"
+```

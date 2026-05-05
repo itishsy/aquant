@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from app.models import StockKline15m, StockKlineDaily, SystemTaskLog
+from app.models import ConfigTaskLog, MktStockKline15m, MktStockKlineDaily
 
 
 class DataQualityError(ValueError):
@@ -61,8 +61,8 @@ class DataQualityService:
     @staticmethod
     def ensure_no_duplicate_daily(db: Session, stock_code: str, trade_date: date) -> None:
         if (
-            db.query(StockKlineDaily)
-            .filter(StockKlineDaily.stock_code == stock_code, StockKlineDaily.trade_date == trade_date)
+            db.query(MktStockKlineDaily)
+            .filter(MktStockKlineDaily.stock_code == stock_code, MktStockKlineDaily.trade_date == trade_date)
             .first()
         ):
             raise DataQualityError("duplicate daily kline")
@@ -70,8 +70,8 @@ class DataQualityService:
     @staticmethod
     def ensure_no_duplicate_15m(db: Session, stock_code: str, trade_time: datetime) -> None:
         if (
-            db.query(StockKline15m)
-            .filter(StockKline15m.stock_code == stock_code, StockKline15m.trade_time == trade_time)
+            db.query(MktStockKline15m)
+            .filter(MktStockKline15m.stock_code == stock_code, MktStockKline15m.kline_time == trade_time)
             .first()
         ):
             raise DataQualityError("duplicate intraday kline")
@@ -79,9 +79,9 @@ class DataQualityService:
     @staticmethod
     def log_task_error(db: Session, task_name: str, started_at: datetime, error_message: str) -> None:
         db.add(
-            SystemTaskLog(
+            ConfigTaskLog(
                 task_name=task_name,
-                status="failed",
+                run_status="failed",
                 started_at=started_at,
                 finished_at=datetime.utcnow(),
                 error_message=error_message,

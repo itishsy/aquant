@@ -1,9 +1,6 @@
 from datetime import date, datetime
 
-from app.models import ReviewForm, WatchPool, WatchSignal
-from app.services.hot_stock import HotStockService
-from app.services.limit_up import LimitUpService
-from app.services.market import MarketService
+from app.models import MktHotStock, MktLimitUp, ReviewForm, WatchPool, WatchSignal
 
 
 def test_common_xueqiu_url_enveloped(client):
@@ -17,33 +14,60 @@ def test_common_xueqiu_url_enveloped(client):
 
 def test_h5_market_uses_raw_hot_stock_fields(client, db_session):
     trade_date = date(2026, 4, 24)
-    MarketService(db_session).collect_market_daily(trade_date)
-    HotStockService(db_session).collect_hot_stock_rank(trade_date)
-    LimitUpService(db_session).collect_limit_up_daily(trade_date)
+    db_session.add(
+        MktHotStock(
+            trade_date=trade_date,
+            platform="mock",
+            stock_code="603019.SH",
+            stock_name="中科曙光",
+            platform_rank=1,
+            raw_score=98.0,
+            raw_reason="平台原始原因",
+        )
+    )
+    db_session.add(
+        MktLimitUp(
+            trade_date=trade_date,
+            platform="mock",
+            stock_code="603019.SH",
+            stock_name="中科曙光",
+            board_count=1,
+            limit_reason="平台涨停原因",
+        )
+    )
+    db_session.commit()
 
     response = client.get(f"/api/h5/market/hot-stocks?trade_date={trade_date}")
     assert response.status_code == 200
     item = response.json()["data"]["list"][0]
-    assert "platform_rank" in item
-    assert "raw_score" in item
+    assert item["platform_rank"] == 1
+    assert item["raw_score"] == 98.0
     assert "total_score" not in item
 
+    limit_response = client.get(f"/api/h5/market/limit-ups?trade_date={trade_date}")
+    assert limit_response.status_code == 200
+    assert limit_response.json()["data"]["list"][0]["limit_reason"] == "平台涨停原因"
 
-def test_h5_watch_pool_manual_add_only(client):
-    response = client.post(
-        "/api/h5/watch-pool",
-        json={
-            "stock_code": "603019.SH",
-            "stock_name": "中科曙光",
-            "labels": ["人气"],
-            "operation_strategies": ["趋势交易"],
-            "buy_point_types": ["B15 底背离买点"],
-        },
-    )
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["pool_status"] == "观察中"
-    assert data["monitor_enabled"] is True
+
+def test_h5_watch_pool_manual_add_only_and_idempotent(client):
+    payload = {
+        "stock_code": "603019.SH",
+        "stock_name": "中科曙光",
+        "labels": ["人气"],
+        "operation_strategies": ["趋势交易"],
+        "buy_point_types": ["B15 底背离买点"],
+        "source_platform": "mock",
+        "source_rank": 1,
+        "source_score": 98,
+        "source_reason": "平台原始原因",
+    }
+    first = client.post("/api/h5/watch-pool", json=payload)
+    second = client.post("/api/h5/watch-pool", json={**payload, "labels": ["趋势"]})
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["data"]["watch_id"] == second.json()["data"]["watch_id"]
+    assert second.json()["data"]["pool_status"] == "watching"
+    assert second.json()["data"]["monitor_enabled"] is True
 
 
 def test_h5_signal_confirm_buy_creates_watch_trade_and_execution(client, db_session):
@@ -74,10 +98,7 @@ def test_h5_signal_confirm_buy_creates_watch_trade_and_execution(client, db_sess
     assert response.status_code == 200
     trade_id = response.json()["data"]["trade_id"]
 
-    repeat = client.post(
-        f"/api/h5/watch-signals/{signal.signal_id}/confirm-buy",
-        json={"buy_price": 50.0, "amount": 100},
-    )
+    repeat = client.post(f"/api/h5/watch-signals/{signal.signal_id}/confirm-buy", json={"buy_price": 50.0, "amount": 100})
     assert repeat.status_code == 200
     assert repeat.json()["data"]["trade_id"] == trade_id
 

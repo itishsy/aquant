@@ -1,28 +1,22 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 from sqlalchemy.orm import Session
 
 from app.models import (
     ConfigDictionary,
-    ConfigNotificationRecord,
     ConfigNotificationTemplate,
     ConfigOperationLog,
     ConfigReviewTemplate,
     ConfigStrategy,
     ConfigTask,
-    HotStockRank,
-    LimitUpDaily,
-    MarketDaily,
     MktDaily,
     MktHotBoard,
     MktHotStock,
     MktLimitUp,
     MyNotificationSetting,
-    MyUserPreference,
     MyUserProfile,
-    SectorDaily,
     WatchPool,
     WatchPoolStatusLog,
 )
@@ -42,7 +36,18 @@ class SeedService:
         "trade_status": ["持仓中", "部分卖出", "已完成", "已取消", "已失效"],
         "review_status": ["待填写", "填写中", "已完成", "已归档"],
         "issue_tag": ["追高买入", "止损犹豫", "止盈不及时", "仓位过重", "情绪化交易", "非信号交易"],
-        "attribution_type": ["市场问题", "板块问题", "个股问题", "买点问题", "卖点问题", "仓位问题", "纪律问题", "情绪问题", "策略问题", "数据问题"],
+        "attribution_type": [
+            "市场问题",
+            "板块问题",
+            "个股问题",
+            "买点问题",
+            "卖点问题",
+            "仓位问题",
+            "纪律问题",
+            "情绪问题",
+            "策略问题",
+            "数据问题",
+        ],
     }
     TASKS = [
         ("collect_market_daily", "market"),
@@ -51,9 +56,12 @@ class SeedService:
         ("collect_limit_up_daily", "market"),
         ("update_watch_daily_kline", "kline"),
         ("update_watch_15m_kline", "kline"),
+        ("scan_watch_signals", "signal"),
+        ("scan_trade_risk_signals", "signal"),
         ("generate_weekly_review_form", "review"),
         ("generate_monthly_review_form", "review"),
         ("remind_pending_review_form", "review"),
+        ("aggregate_review_metrics", "review"),
     ]
     TEMPLATES = ["买入观察信号", "卖出提醒", "风险提醒", "复盘提醒", "任务异常提醒"]
 
@@ -65,15 +73,29 @@ class SeedService:
         for dict_type, values in self.DICTS.items():
             for order, label in enumerate(values, start=1):
                 if not self.db.query(ConfigDictionary).filter_by(dict_type=dict_type, dict_value=label).first():
-                    self.db.add(ConfigDictionary(dict_type=dict_type, dict_label=label, dict_value=label, sort_order=order))
+                    self.db.add(
+                        ConfigDictionary(
+                            dict_type=dict_type,
+                            dict_label=label,
+                            dict_value=label,
+                            sort_order=order,
+                        )
+                    )
                     created += 1
         for name, owner in self.TASKS:
             if not self.db.query(ConfigTask).filter_by(task_name=name).first():
                 self.db.add(ConfigTask(task_name=name, task_type="scheduled", owner_module=owner, enabled=True))
                 created += 1
-        for name in ["B15 底背离买点", "支撑买点", "平台突破确认买点"]:
+        for name in self.DICTS["buy_point_type"]:
             if not self.db.query(ConfigStrategy).filter_by(strategy_name=name).first():
-                self.db.add(ConfigStrategy(strategy_name=name, strategy_type="buy", buy_point_type=name, enabled=True))
+                self.db.add(
+                    ConfigStrategy(
+                        strategy_name=name,
+                        strategy_type="buy",
+                        buy_point_type=name,
+                        enabled=True,
+                    )
+                )
                 created += 1
         for name in self.TEMPLATES:
             if not self.db.query(ConfigNotificationTemplate).filter_by(push_type=name, channel="site").first():
@@ -82,9 +104,11 @@ class SeedService:
                         push_type=name,
                         channel="site",
                         title_template=name,
-                        content_template=f"{name}：{{content}}\n{ASSISTANT_NOTE}",
+                        content_template=f"{name}: {{content}}\n{ASSISTANT_NOTE}",
                     )
                 )
+                created += 1
+            if not self.db.query(MyNotificationSetting).filter_by(push_type=name, channel="site").first():
                 self.db.add(MyNotificationSetting(push_type=name, channel="site", enabled=True))
                 created += 1
         for review_type in ["weekly", "monthly", "trade"]:
@@ -92,7 +116,7 @@ class SeedService:
                 self.db.add(ConfigReviewTemplate(review_type=review_type, template_name=f"{review_type} 默认模板"))
                 created += 1
         if not self.db.query(MyUserProfile).first():
-            self.db.add(MyUserProfile())
+            self.db.add(MyUserProfile(nickname="Aquant User", bio="单用户交易复盘训练系统"))
             created += 1
         self.db.commit()
         return {"created": created}
@@ -102,33 +126,13 @@ class PrdMarketDataService:
     def __init__(self, db: Session):
         self.db = db
 
-    def sync_legacy_market(self, trade_date: date, source: str = "legacy") -> None:
-        legacy = self.db.query(MarketDaily).filter(MarketDaily.trade_date == trade_date).first()
-        if legacy and not self.db.query(MktDaily).filter_by(trade_date=trade_date, source=source).first():
-            self.db.add(
-                MktDaily(
-                    trade_date=trade_date,
-                    source=source,
-                    sh_index=legacy.sh_index,
-                    sz_index=legacy.sz_index,
-                    cyb_index=legacy.cyb_index,
-                    total_amount=legacy.total_amount,
-                    up_count=legacy.up_count,
-                    down_count=legacy.down_count,
-                    flat_count=legacy.flat_count,
-                    limit_up_count=legacy.limit_up_count,
-                    limit_down_count=legacy.limit_down_count,
-                    broken_limit_count=legacy.broken_limit_count,
-                    max_continue_board=legacy.max_continue_board,
-                    collected_at=datetime.utcnow(),
-                    raw_snapshot={"legacy_id": legacy.id},
-                )
-            )
-        self.db.commit()
-
     def get_market_overview(self, trade_date: date) -> dict:
-        self.sync_legacy_market(trade_date)
-        row = self.db.query(MktDaily).filter(MktDaily.trade_date == trade_date).order_by(MktDaily.collected_at.desc()).first()
+        row = (
+            self.db.query(MktDaily)
+            .filter(MktDaily.trade_date == trade_date)
+            .order_by(MktDaily.collected_at.desc())
+            .first()
+        )
         if not row:
             return {"trade_date": trade_date.isoformat(), "items": [], "note": "当前日期暂无市场数据"}
         return {
@@ -137,6 +141,7 @@ class PrdMarketDataService:
             "sh_index": row.sh_index,
             "sz_index": row.sz_index,
             "cyb_index": row.cyb_index,
+            "index_change_pct": row.index_change_pct,
             "total_amount": row.total_amount,
             "up_count": row.up_count,
             "down_count": row.down_count,
@@ -154,9 +159,6 @@ class PrdMarketDataService:
         query = self.db.query(MktHotBoard)
         if trade_date:
             query = query.filter(MktHotBoard.trade_date == trade_date)
-            if not query.first():
-                self._sync_legacy_boards(trade_date)
-                query = self.db.query(MktHotBoard).filter(MktHotBoard.trade_date == trade_date)
         if platform:
             query = query.filter(MktHotBoard.platform == platform)
         return [self._board_dict(row) for row in query.order_by(MktHotBoard.platform, MktHotBoard.platform_rank).all()]
@@ -165,9 +167,6 @@ class PrdMarketDataService:
         query = self.db.query(MktHotStock)
         if trade_date:
             query = query.filter(MktHotStock.trade_date == trade_date)
-            if not query.first():
-                self._sync_legacy_hot_stocks(trade_date)
-                query = self.db.query(MktHotStock).filter(MktHotStock.trade_date == trade_date)
         if platform:
             query = query.filter(MktHotStock.platform == platform)
         return [self._hot_stock_dict(row) for row in query.order_by(MktHotStock.platform, MktHotStock.platform_rank).all()]
@@ -176,9 +175,6 @@ class PrdMarketDataService:
         query = self.db.query(MktLimitUp)
         if trade_date:
             query = query.filter(MktLimitUp.trade_date == trade_date)
-            if not query.first():
-                self._sync_legacy_limit_ups(trade_date)
-                query = self.db.query(MktLimitUp).filter(MktLimitUp.trade_date == trade_date)
         if platform:
             query = query.filter(MktLimitUp.platform == platform)
         return [self._limit_up_dict(row) for row in query.order_by(MktLimitUp.platform, MktLimitUp.stock_code).all()]
@@ -186,51 +182,96 @@ class PrdMarketDataService:
     def get_stock_source_summary(self, stock_code: str, trade_date: date) -> dict:
         code = normalize_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code, trade_date=trade_date).all()
-        limit = self.db.query(MktLimitUp).filter_by(stock_code=code, trade_date=trade_date).all()
-        return {"stock_code": code, "hot_sources": [self._hot_stock_dict(x) for x in hot], "limit_sources": [self._limit_up_dict(x) for x in limit], "xueqiu_url": xueqiu_link(code)}
+        limit_rows = self.db.query(MktLimitUp).filter_by(stock_code=code, trade_date=trade_date).all()
+        return {
+            "stock_code": code,
+            "hot_sources": [self._hot_stock_dict(item) for item in hot],
+            "limit_sources": [self._limit_up_dict(item) for item in limit_rows],
+            "xueqiu_url": xueqiu_link(code),
+        }
 
     def get_latest_source(self, stock_code: str) -> dict:
         code = normalize_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code).order_by(MktHotStock.trade_date.desc()).first()
-        limit = self.db.query(MktLimitUp).filter_by(stock_code=code).order_by(MktLimitUp.trade_date.desc()).first()
-        return {"stock_code": code, "latest_hot": self._hot_stock_dict(hot) if hot else None, "latest_limit": self._limit_up_dict(limit) if limit else None, "xueqiu_url": xueqiu_link(code)}
-
-    def _sync_legacy_boards(self, trade_date: date) -> None:
-        for idx, row in enumerate(self.db.query(SectorDaily).filter(SectorDaily.trade_date == trade_date).all(), start=1):
-            if self.db.query(MktHotBoard).filter_by(trade_date=trade_date, platform="legacy", board_name=row.sector_name).first():
-                continue
-            self.db.add(MktHotBoard(trade_date=trade_date, platform="legacy", board_name=row.sector_name, platform_rank=idx, raw_score=None, change_pct=row.change_pct, leader_stock_code=row.leader_stock_code, leader_stock_name=row.leader_stock_name, reason=row.reason, raw_payload={"legacy_id": row.id}))
-        self.db.commit()
-
-    def _sync_legacy_hot_stocks(self, trade_date: date) -> None:
-        for row in self.db.query(HotStockRank).filter(HotStockRank.trade_date == trade_date).all():
-            if self.db.query(MktHotStock).filter_by(trade_date=trade_date, platform=row.platform, stock_code=row.stock_code).first():
-                continue
-            self.db.add(MktHotStock(trade_date=trade_date, platform=row.platform, stock_code=row.stock_code, stock_name=row.stock_name, board_name=row.sector_name, platform_rank=row.platform_rank, raw_score=float(row.raw_payload.get("score", row.rank_score)), raw_reason=row.raw_payload.get("reason", ""), raw_payload=row.raw_payload))
-        self.db.commit()
-
-    def _sync_legacy_limit_ups(self, trade_date: date) -> None:
-        for row in self.db.query(LimitUpDaily).filter(LimitUpDaily.trade_date == trade_date).all():
-            if self.db.query(MktLimitUp).filter_by(trade_date=trade_date, platform="legacy", stock_code=row.stock_code).first():
-                continue
-            self.db.add(MktLimitUp(trade_date=trade_date, platform="legacy", stock_code=row.stock_code, stock_name=row.stock_name, limit_time=row.limit_time, open_limit_count=row.open_limit_count, seal_amount=row.seal_amount, seal_volume=row.seal_volume, turnover_rate=row.turnover_rate, amount=row.amount, board_count=row.board_count, concept=row.concept, limit_reason=row.reason, limit_type=row.limit_type, raw_payload={"legacy_id": row.id}))
-        self.db.commit()
+        limit_row = self.db.query(MktLimitUp).filter_by(stock_code=code).order_by(MktLimitUp.trade_date.desc()).first()
+        return {
+            "stock_code": code,
+            "latest_hot": self._hot_stock_dict(hot) if hot else None,
+            "latest_limit": self._limit_up_dict(limit_row) if limit_row else None,
+            "xueqiu_url": xueqiu_link(code),
+        }
 
     @staticmethod
     def _board_dict(row: MktHotBoard) -> dict:
-        return {key: getattr(row, key) for key in ["id", "trade_date", "platform", "board_name", "platform_rank", "raw_score", "change_pct", "leader_stock_code", "leader_stock_name", "reason", "source_url", "source_update_time", "collected_at"]}
+        return {
+            key: getattr(row, key)
+            for key in [
+                "id",
+                "trade_date",
+                "platform",
+                "board_name",
+                "platform_rank",
+                "raw_score",
+                "change_pct",
+                "leader_stock_code",
+                "leader_stock_name",
+                "reason",
+                "source_url",
+                "source_update_time",
+                "collected_at",
+            ]
+        }
 
     @staticmethod
     def _hot_stock_dict(row: MktHotStock) -> dict:
-        return {key: getattr(row, key) for key in ["id", "trade_date", "platform", "stock_code", "stock_name", "board_name", "platform_rank", "raw_score", "raw_reason", "source_url", "source_update_time", "collected_at"]}
+        return {
+            key: getattr(row, key)
+            for key in [
+                "id",
+                "trade_date",
+                "platform",
+                "stock_code",
+                "stock_name",
+                "board_name",
+                "platform_rank",
+                "raw_score",
+                "raw_reason",
+                "source_url",
+                "source_update_time",
+                "collected_at",
+            ]
+        }
 
     @staticmethod
     def _limit_up_dict(row: MktLimitUp) -> dict:
-        return {key: getattr(row, key) for key in ["id", "trade_date", "platform", "stock_code", "stock_name", "limit_time", "last_limit_time", "open_limit_count", "seal_amount", "seal_volume", "turnover_rate", "amount", "board_count", "concept", "limit_reason", "limit_type", "source_url", "source_update_time", "collected_at"]}
+        return {
+            key: getattr(row, key)
+            for key in [
+                "id",
+                "trade_date",
+                "platform",
+                "stock_code",
+                "stock_name",
+                "limit_time",
+                "last_limit_time",
+                "open_limit_count",
+                "seal_amount",
+                "seal_volume",
+                "turnover_rate",
+                "amount",
+                "board_count",
+                "concept",
+                "limit_reason",
+                "limit_type",
+                "source_url",
+                "source_update_time",
+                "collected_at",
+            ]
+        }
 
 
 class PrdWatchPoolService:
-    ACTIVE_STATUSES = ["观察中", "已触发", "持仓中", "不交易"]
+    ACTIVE_STATUSES = ["watching", "triggered", "holding", "not_trade"]
 
     def __init__(self, db: Session):
         self.db = db
@@ -258,13 +299,11 @@ class PrdWatchPoolService:
             sector_name=payload.get("sector_name") or payload.get("board_name"),
             reason=payload.get("reason") or payload.get("source_reason") or "用户手动加入自选",
             labels=payload.get("labels") or [],
-            strategy_type="manual",
-            added_trade_date=date.today(),
-            pool_status="观察中",
+            pool_status="watching",
             monitor_enabled=True,
             operation_strategies=payload.get("operation_strategies") or [],
             buy_point_types=payload.get("buy_point_types") or [],
-            source_type=payload.get("source_type"),
+            source_type=payload.get("source_type") or "manual",
             source_platform=payload.get("source_platform"),
             source_rank=payload.get("source_rank"),
             source_score=payload.get("source_score"),
@@ -272,10 +311,11 @@ class PrdWatchPoolService:
             xueqiu_url=xueqiu_link(code),
             entry_price=payload.get("entry_price"),
             remark=payload.get("remark") or "",
+            added_trade_date=date.today(),
         )
         self.db.add(entity)
         self.db.flush()
-        self._log(entity, None, "观察中", "用户手动加入自选")
+        self._log(entity, None, "watching", "用户手动加入自选")
         self.db.commit()
         self.db.refresh(entity)
         return entity
@@ -297,42 +337,41 @@ class PrdWatchPoolService:
     def remove_watch(self, watch_id: int, reason: str) -> WatchPool:
         entity = self.get_watch(watch_id)
         old = entity.pool_status
-        entity.pool_status = "已剔除"
+        entity.pool_status = "removed"
         entity.active = False
-        entity.removed_at = datetime.utcnow()
         entity.archive_reason = reason
-        self._log(entity, old, "已剔除", reason)
+        self._log(entity, old, "removed", reason)
         self.db.commit()
         return entity
 
     def restore_watch(self, watch_id: int) -> WatchPool:
         entity = self.get_watch(watch_id)
         old = entity.pool_status
-        entity.pool_status = "观察中"
+        entity.pool_status = "watching"
         entity.active = True
         entity.monitor_enabled = True
-        self._log(entity, old, "观察中", "用户恢复观察")
+        self._log(entity, old, "watching", "用户恢复观察")
         self.db.commit()
         return entity
 
     def blacklist_watch(self, watch_id: int, reason: str) -> WatchPool:
         entity = self.get_watch(watch_id)
         old = entity.pool_status
-        entity.pool_status = "黑名单"
+        entity.pool_status = "blacklist"
         entity.is_blacklist = True
         entity.blacklist_reason = reason
         entity.active = False
-        self._log(entity, old, "黑名单", reason)
+        self._log(entity, old, "blacklist", reason)
         self.db.commit()
         return entity
 
     def unblacklist_watch(self, watch_id: int, reason: str) -> WatchPool:
         entity = self.get_watch(watch_id)
         old = entity.pool_status
-        entity.pool_status = "观察中"
+        entity.pool_status = "watching"
         entity.is_blacklist = False
         entity.active = True
-        self._log(entity, old, "观察中", reason)
+        self._log(entity, old, "watching", reason)
         self.db.commit()
         return entity
 
@@ -343,17 +382,44 @@ class PrdWatchPoolService:
         return entity
 
     def summary(self) -> dict:
-        return {
-            status: self.db.query(WatchPool).filter(WatchPool.pool_status == status).count()
-            for status in ["观察中", "已触发", "持仓中", "不交易", "已完成", "已剔除", "黑名单"]
-        }
+        statuses = ["watching", "triggered", "holding", "not_trade", "completed", "removed", "blacklist"]
+        return {status: self.db.query(WatchPool).filter(WatchPool.pool_status == status).count() for status in statuses}
 
     def logs(self, watch_id: int) -> list[WatchPoolStatusLog]:
-        return self.db.query(WatchPoolStatusLog).filter(WatchPoolStatusLog.watch_id == watch_id).order_by(WatchPoolStatusLog.operated_at.desc()).all()
+        return (
+            self.db.query(WatchPoolStatusLog)
+            .filter(WatchPoolStatusLog.watch_id == watch_id)
+            .order_by(WatchPoolStatusLog.operated_at.desc())
+            .all()
+        )
 
     def _log(self, entity: WatchPool, from_status: str | None, to_status: str, reason: str) -> None:
-        self.db.add(WatchPoolStatusLog(watch_id=entity.id, stock_code=entity.stock_code, from_status=from_status, to_status=to_status, change_reason=reason, operator_type="user"))
+        self.db.add(
+            WatchPoolStatusLog(
+                watch_id=entity.id,
+                stock_code=entity.stock_code,
+                from_status=from_status,
+                to_status=to_status,
+                change_reason=reason,
+                operator_type="user",
+            )
+        )
 
 
-def record_operation(db: Session, operation_type: str, target_type: str, target_id: str = "", summary: str = "", payload: dict | None = None) -> None:
-    db.add(ConfigOperationLog(operation_type=operation_type, target_type=target_type, target_id=str(target_id), summary=summary, payload=payload or {}))
+def record_operation(
+    db: Session,
+    operation_type: str,
+    target_type: str,
+    target_id: str = "",
+    summary: str = "",
+    payload: dict | None = None,
+) -> None:
+    db.add(
+        ConfigOperationLog(
+            operation_type=operation_type,
+            target_type=target_type,
+            target_id=str(target_id),
+            summary=summary,
+            payload=payload or {},
+        )
+    )
