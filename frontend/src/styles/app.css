@@ -524,6 +524,95 @@ button {
   background: #f4f7fe;
 }
 
+.admin-frame {
+  min-height: 100vh;
+  background: #f4f6fb;
+}
+
+.admin-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+.admin-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px;
+  color: #ffffff;
+  background: linear-gradient(180deg, #1d274c 0%, #3746a2 100%);
+}
+
+.admin-sidebar h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.admin-sidebar p {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.admin-sidebar button {
+  border: 0;
+  border-radius: 16px;
+  padding: 13px 16px;
+  color: rgba(255, 255, 255, 0.82);
+  text-align: left;
+  background: transparent;
+}
+
+.admin-sidebar button.active,
+.admin-sidebar button:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.admin-content {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 32px;
+}
+
+.admin-card {
+  padding: 22px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 34px rgba(128, 140, 170, 0.12);
+}
+
+.admin-card h2,
+.admin-card h3 {
+  margin: 8px 0;
+  color: #1d2d50;
+}
+
+.admin-card p {
+  color: #657692;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.admin-card b {
+  display: block;
+  margin-top: 10px;
+  color: #4052d2;
+  font-size: 34px;
+}
+
+.admin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 @media (max-width: 520px) {
   .app-frame {
     padding: 18px 16px 110px;
@@ -576,5 +665,17 @@ button {
   .empty-panel {
     min-height: 160px;
     font-size: 18px;
+  }
+
+  .admin-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-sidebar {
+    position: static;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
   }
 }

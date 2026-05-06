@@ -566,7 +566,7 @@ def list_reviews(review_type: str | None = None, db: Session = Depends(get_db), 
 
 @router.get("/reviews/todos")
 def review_todos(db: Session = Depends(get_db), user=Depends(require_login)):
-    rows = db.query(ReviewForm).filter(ReviewForm.status.in_(["pending", "editing"])).all()
+    rows = db.query(ReviewForm).filter(ReviewForm.status.in_(["pending", "editing", "待填写", "填写中"])).all()
     return ok([_review_dict(row) for row in rows])
 
 
@@ -574,8 +574,8 @@ def review_todos(db: Session = Depends(get_db), user=Depends(require_login)):
 def review_summary(db: Session = Depends(get_db), user=Depends(require_login)):
     return ok({
         "total": db.query(ReviewForm).count(),
-        "pending": db.query(ReviewForm).filter(ReviewForm.status == "pending").count(),
-        "completed": db.query(ReviewForm).filter(ReviewForm.status == "completed").count(),
+        "pending": db.query(ReviewForm).filter(ReviewForm.status.in_(["pending", "待填写"])).count(),
+        "completed": db.query(ReviewForm).filter(ReviewForm.status.in_(["completed", "已完成"])).count(),
     })
 
 
