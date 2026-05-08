@@ -39,25 +39,25 @@ export function MarketPage() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([
-      apiGet<MarketSummary>(`/h5/market/overview?trade_date=${tradeDate}`),
-      apiGet<any>(`/market/review?trade_date=${tradeDate}`),
-      apiGet<any>(`/h5/market/hot-stocks?trade_date=${tradeDate}&page_size=50`),
-      apiGet<any>(`/h5/market/limit-ups?trade_date=${tradeDate}&page_size=50`),
-      apiGet<any>(`/limit-up/summary?trade_date=${tradeDate}`),
-    ])
-      .then(([summary, reviewData, hot, limitList, limit]) => {
-        setData(summary);
-        setReview(reviewData);
-        setHotStocks(hot.list || hot);
-        setLimitRows(limitList.list || limitList);
-        setLimitSummary(limit);
-        setError("");
-      })
-      .catch((err) => {
-        setData(null);
-        setError(String(err));
-      })
+    apiGet<MarketSummary>(`/h5/market/overview?trade_date=${tradeDate}`)
+      .then((summary) => { setData(summary); setError(""); })
+      .catch(() => setData(null));
+
+    apiGet<any>(`/market/review?trade_date=${tradeDate}`)
+      .then((r) => setReview(r))
+      .catch(() => setReview(null));
+
+    apiGet<any>(`/h5/market/hot-stocks?trade_date=${tradeDate}&page_size=50`)
+      .then((hot) => setHotStocks(hot.list || hot))
+      .catch(() => setHotStocks([]));
+
+    apiGet<any>(`/h5/market/limit-ups?trade_date=${tradeDate}&page_size=50`)
+      .then((limitList) => setLimitRows(limitList.list || limitList))
+      .catch(() => setLimitRows([]));
+
+    apiGet<any>(`/limit-up/summary?trade_date=${tradeDate}`)
+      .then((limit) => setLimitSummary(limit))
+      .catch(() => setLimitSummary(null))
       .finally(() => setLoading(false));
   }, [tradeDate, refreshKey]);
 
@@ -196,23 +196,25 @@ export function MarketPage() {
                   <span className="icon-badge">热</span>
                   <h2>热榜</h2>
                 </div>
-                <span className="soft-tag">{tradeDate}</span>
+                <span className="soft-tag">三平台素数加权</span>
               </div>
               {hotStocks.length ? (
                 <div className="stack-list">
-                  {hotStocks.slice(0, 10).map((item) => (
+                  {hotStocks.slice(0, 10).map((item, idx) => (
                     <div key={item.stock_code} className="row-card">
-                      <div>
-                        <strong>
-                          <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
-                        </strong>
-                        <p>原始分数：{item.raw_score ?? "-"}</p>
-                        <p>
-                          {item.board_name || "未分类"}
-                        </p>
-                        <p>
-                          平台：{item.platform || "-"} / 原始排名：{item.platform_rank ?? "-"}
-                        </p>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ color: "#4b63ee", fontWeight: 800, fontSize: 20, minWidth: 24 }}>
+                          {idx + 1}
+                        </span>
+                        <div>
+                          <strong>
+                            <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
+                          </strong>
+                          <p>综合得分：{item.total_score} {item.cross_platform ? "多平台共振" : ""}</p>
+                          <p>
+                            {(item.platforms || []).map((p: any) => `${p.platform} #${p.rank}(${p.score})`).join("  ")}
+                          </p>
+                        </div>
                       </div>
                       <Button size="small" color="primary" fill="solid" onClick={() => addWatchFromMarket(item, "hot_stock")}>
                         + 自选
@@ -233,29 +235,9 @@ export function MarketPage() {
                   <span className="icon-badge">停</span>
                   <h2>涨停榜</h2>
                 </div>
-                <span className="soft-tag">统计</span>
+                <span className="soft-tag">按封板时间</span>
               </div>
-              {limitSummary ? (
-                <>
-                  <div className="metric-grid">
-                    <div className="metric-tile">
-                      <span>涨停家数</span>
-                      <strong>{limitSummary.count}</strong>
-                    </div>
-                    <div className="metric-tile">
-                      <span>最高连板</span>
-                      <strong>{limitSummary.max_continue_board}</strong>
-                    </div>
-                    <div className="metric-tile">
-                      <span>首板数量</span>
-                      <strong>{limitSummary.first_board_count}</strong>
-                    </div>
-                    <div className="metric-tile">
-                      <span>连板数量</span>
-                      <strong>{limitSummary.continue_board_count}</strong>
-                    </div>
-                  </div>
-                  {limitRows.length ? (
+              {limitRows.length ? (
                     <div className="stack-list">
                       {limitRows.slice(0, 20).map((item) => (
                         <div key={item.stock_code} className="row-card row-card-action">
@@ -280,10 +262,6 @@ export function MarketPage() {
                   ) : (
                     <div className="empty-panel">当前日期暂无涨停明细</div>
                   )}
-                </>
-              ) : (
-                <div className="empty-panel">当前日期暂无涨停数据</div>
-              )}
             </article>
           )}
         </>

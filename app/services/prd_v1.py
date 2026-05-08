@@ -163,13 +163,45 @@ class PrdMarketDataService:
             query = query.filter(MktHotBoard.platform == platform)
         return [self._board_dict(row) for row in query.order_by(MktHotBoard.platform, MktHotBoard.platform_rank).all()]
 
+    PRIMES = [29, 23, 19, 17, 13, 11, 7, 5, 3, 2]  # rank 1..10 → descending primes
+
     def get_hot_stocks(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
-        query = self.db.query(MktHotStock)
-        if trade_date:
-            query = query.filter(MktHotStock.trade_date == trade_date)
+        # If platform filter requested, return raw platform data
         if platform:
+            query = self.db.query(MktHotStock)
+            if trade_date:
+                query = query.filter(MktHotStock.trade_date == trade_date)
             query = query.filter(MktHotStock.platform == platform)
-        return [self._hot_stock_dict(row) for row in query.order_by(MktHotStock.platform, MktHotStock.platform_rank).all()]
+            return [self._hot_stock_dict(row) for row in query.order_by(MktHotStock.platform_rank).limit(10).all()]
+
+        # Cross-platform prime-score ranking
+        all_rows = self.db.query(MktHotStock).filter(MktHotStock.trade_date == trade_date).all() if trade_date else []
+        platform_stocks: dict[str, list] = {}
+        for row in all_rows:
+            platform_stocks.setdefault(row.platform, []).append(row)
+
+        scores: dict[str, dict] = {}  # stock_code → {total_score, stock_name, platforms}
+        for _, rows in platform_stocks.items():
+            rows.sort(key=lambda r: r.platform_rank or 99)
+            for idx, row in enumerate(rows[:10]):
+                score = self.PRIMES[idx] if idx < len(self.PRIMES) else 1
+                entry = scores.setdefault(row.stock_code, {"total_score": 0, "stock_name": row.stock_name, "platforms": [], "best_rank": 99})
+                entry["total_score"] += score
+                entry["best_rank"] = min(entry["best_rank"], idx + 1)
+                entry["platforms"].append({"platform": row.platform, "rank": idx + 1, "score": score})
+
+        ranked = sorted(scores.items(), key=lambda x: x[1]["total_score"], reverse=True)[:10]
+        return [
+            {
+                "stock_code": code,
+                "stock_name": info["stock_name"],
+                "total_score": info["total_score"],
+                "best_rank": info["best_rank"],
+                "platforms": info["platforms"],
+                "cross_platform": len(info["platforms"]) >= 2,
+            }
+            for code, info in ranked
+        ]
 
     def get_limit_ups(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
         query = self.db.query(MktLimitUp)
@@ -177,7 +209,7 @@ class PrdMarketDataService:
             query = query.filter(MktLimitUp.trade_date == trade_date)
         if platform:
             query = query.filter(MktLimitUp.platform == platform)
-        return [self._limit_up_dict(row) for row in query.order_by(MktLimitUp.platform, MktLimitUp.stock_code).all()]
+        return [self._limit_up_dict(row) for row in query.order_by(MktLimitUp.limit_time, MktLimitUp.stock_code).all()]
 
     def get_stock_source_summary(self, stock_code: str, trade_date: date) -> dict:
         code = normalize_stock_code(stock_code)
@@ -322,7 +354,7 @@ class PrdWatchPoolService:
 
     def update_watch(self, watch_id: int, payload: dict) -> WatchPool:
         entity = self.get_watch(watch_id)
-        for key in ["labels", "operation_strategies", "buy_point_types", "remark", "reason", "entry_price"]:
+        for key in ["labels", "operation_strategies", "buy_point_types", "remark", "reason", "entry_price", "pool_status", "monitor_enabled", "sector_name"]:
             if key in payload:
                 setattr(entity, key, payload[key])
         self.db.commit()

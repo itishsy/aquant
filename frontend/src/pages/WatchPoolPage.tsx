@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, ErrorBlock, Input, SpinLoading, Toast } from "antd-mobile";
-import { apiDelete, apiGet, apiPost } from "../api/client";
+import { Button, ErrorBlock, SpinLoading } from "antd-mobile";
+import { apiDelete, apiGet } from "../api/client";
 import { PageShell } from "../components/PageShell";
 import { StockLink } from "../components/StockLink";
 
@@ -9,21 +9,29 @@ export function WatchPoolPage() {
   const [items, setItems] = useState<any[]>([]);
   const [signals, setSignals] = useState<any[]>([]);
   const [trades, setTrades] = useState<any[]>([]);
-  const [stockCode, setStockCode] = useState("603019.SH");
+  const [watchSummary, setWatchSummary] = useState<any>({});
+  const [signalSummary, setSignalSummary] = useState<any>({});
+  const [tradeSummary, setTradeSummary] = useState<any>({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const [watchItems, signalItems, tradeItems] = await Promise.all([
+      const [watchItems, signalItems, tradeItems, watchSum, signalSum, tradeSum] = await Promise.all([
         apiGet<any[]>("/h5/watch-pool"),
         apiGet<any[]>("/h5/watch-signals/recent"),
         apiGet<any[]>("/h5/watch-trades/recent"),
+        apiGet<any>("/h5/watch-pool/summary"),
+        apiGet<any>("/h5/watch-signals/summary"),
+        apiGet<any>("/h5/watch-trades/summary"),
       ]);
       setItems(watchItems);
       setSignals(signalItems);
       setTrades(tradeItems);
+      setWatchSummary(watchSum);
+      setSignalSummary(signalSum);
+      setTradeSummary(tradeSum);
       setError("");
     } catch (err) {
       setError(String(err));
@@ -39,6 +47,13 @@ export function WatchPoolPage() {
   const buySignals = useMemo(() => signals.filter((item) => item.signal_type === "buy"), [signals]);
   const riskSignals = useMemo(() => signals.filter((item) => item.signal_type !== "buy"), [signals]);
   const monitoringCount = items.filter((item) => item.monitor_enabled).length;
+  const pendingSignals = signals.filter(
+    (s) => s.signal_status === "pending" || s.signal_status === "未处理"
+  ).length;
+  const totalPnl = useMemo(
+    () => trades.reduce((sum, t) => sum + (Number(t.pnl_amount) || 0), 0),
+    [trades]
+  );
 
   return (
     <PageShell
@@ -71,31 +86,21 @@ export function WatchPoolPage() {
               <p>全部由用户手动加入</p>
             </article>
             <article className="summary-card">
-              <span>今日入选</span>
-              <strong>{items.filter((item) => String(item.created_at || "").slice(0, 10) === new Date().toISOString().slice(0, 10)).length}</strong>
-              <p>市场页只提供添加入口</p>
+              <span>观察中</span>
+              <strong>{watchSummary.watching ?? "-"}</strong>
+              <p>状态：watching</p>
+            </article>
+            <article className="summary-card">
+              <span>已触发</span>
+              <strong>{watchSummary.triggered ?? "-"}</strong>
+              <p>触发买入信号</p>
+            </article>
+            <article className="summary-card">
+              <span>已剔除</span>
+              <strong>{watchSummary.removed ?? "-"}</strong>
+              <p>不再关注</p>
             </article>
           </section>
-
-          <div className="action-row">
-            <Input value={stockCode} onChange={setStockCode} placeholder="输入股票代码" />
-            <Button
-              color="primary"
-              onClick={async () => {
-                await apiPost("/h5/watch-pool", {
-                  stock_code: stockCode,
-                  reason: "用户手动加入观察池",
-                  labels: ["手动"],
-                  operation_strategies: ["趋势交易"],
-                  buy_point_types: ["B15 底背离买点"],
-                });
-                Toast.show({ content: "已添加自选，仅作为交易辅助" });
-                load();
-              }}
-            >
-              添加
-            </Button>
-          </div>
 
           {items.length ? (
             <div className="stack-list">
@@ -132,11 +137,43 @@ export function WatchPoolPage() {
       )}
 
       {tab === "signal" && (
-        <div className="stack-list">
+        <>
           <article className="feature-card compact-card">
             <div className="card-head">
               <div className="card-headline">
                 <span className="icon-badge">S</span>
+                <h2>信号汇总</h2>
+              </div>
+            </div>
+            <section className="summary-board">
+              <article className="summary-card">
+                <span>总信号</span>
+                <strong>{signalSummary.total ?? signals.length}</strong>
+                <p>全部信号统计</p>
+              </article>
+              <article className="summary-card">
+                <span>买入信号</span>
+                <strong>{signalSummary.buy ?? buySignals.length}</strong>
+                <p>需人工确认</p>
+              </article>
+              <article className="summary-card">
+                <span>风险/卖出</span>
+                <strong>{signalSummary.sell_or_risk ?? riskSignals.length}</strong>
+                <p>风险提醒</p>
+              </article>
+              <article className="summary-card">
+                <span>待处理</span>
+                <strong>{pendingSignals}</strong>
+                <p>状态：pending</p>
+              </article>
+            </section>
+            <p className="card-note">{signalSummary.assistant_note || "仅作为交易辅助，请结合个人交易规则确认。"}</p>
+          </article>
+
+          <article className="feature-card compact-card">
+            <div className="card-head">
+              <div className="card-headline">
+                <span className="icon-badge">B</span>
                 <h2>买入观察信号</h2>
               </div>
               <span className="soft-tag">{buySignals.length} 条</span>
@@ -188,38 +225,74 @@ export function WatchPoolPage() {
               <div className="empty-panel">暂无风险提醒</div>
             )}
           </article>
-        </div>
+        </>
       )}
 
       {tab === "trade" && (
-        <article className="feature-card compact-card">
-          <div className="card-head">
-            <div className="card-headline">
-              <span className="icon-badge">记</span>
-              <h2>交易记录</h2>
+        <>
+          <article className="feature-card compact-card">
+            <div className="card-head">
+              <div className="card-headline">
+                <span className="icon-badge">$</span>
+                <h2>交易汇总</h2>
+              </div>
             </div>
-            <span className="soft-tag">{trades.length} 条</span>
-          </div>
-          {trades.length ? (
-            <div className="stack-list">
-              {trades.map((item) => (
-                <div key={item.trade_id} className="row-card">
-                  <div>
-                    <strong>
-                      <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
-                    </strong>
-                    <p>状态：{item.trade_status}</p>
-                    <p>剩余：{item.remaining_amount}，盈亏：{item.pnl_amount}</p>
-                    <p>{item.assistant_note}</p>
+            <section className="summary-board">
+              <article className="summary-card">
+                <span>总交易</span>
+                <strong>{tradeSummary.total ?? trades.length}</strong>
+                <p>全部交易记录</p>
+              </article>
+              <article className="summary-card">
+                <span>持仓中</span>
+                <strong>{tradeSummary.open ?? trades.filter((t) => t.trade_status === "open" || t.trade_status === "holding").length}</strong>
+                <p>状态：open / holding</p>
+              </article>
+              <article className="summary-card">
+                <span>已完成</span>
+                <strong>{tradeSummary.completed ?? trades.filter((t) => t.trade_status === "completed").length}</strong>
+                <p>状态：completed</p>
+              </article>
+              <article className="summary-card">
+                <span>总盈亏</span>
+                <strong style={{ color: totalPnl >= 0 ? "#e34d59" : "#00b578" }}>
+                  {totalPnl >= 0 ? "+" : ""}{totalPnl.toFixed(2)}
+                </strong>
+                <p>盈亏合计</p>
+              </article>
+            </section>
+            <p className="card-note">仅作为交易辅助，请结合个人交易规则确认。</p>
+          </article>
+
+          <article className="feature-card compact-card">
+            <div className="card-head">
+              <div className="card-headline">
+                <span className="icon-badge">记</span>
+                <h2>交易记录</h2>
+              </div>
+              <span className="soft-tag">{trades.length} 条</span>
+            </div>
+            {trades.length ? (
+              <div className="stack-list">
+                {trades.map((item) => (
+                  <div key={item.trade_id} className="row-card">
+                    <div>
+                      <strong>
+                        <StockLink stockName={item.stock_name} stockCode={item.stock_code} />
+                      </strong>
+                      <p>状态：{item.trade_status}</p>
+                      <p>剩余：{item.remaining_amount}，盈亏：{item.pnl_amount}</p>
+                      <p>{item.assistant_note}</p>
+                    </div>
+                    <span className="soft-tag">人工确认</span>
                   </div>
-                  <span className="soft-tag">人工确认</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-panel">暂无交易记录</div>
-          )}
-        </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-panel">暂无交易记录</div>
+            )}
+          </article>
+        </>
       )}
     </PageShell>
   );

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_prefix="",
         case_sensitive=False,
+        extra="ignore",
     )
 
 

@@ -19,7 +19,10 @@ from app.models import (
     ConfigTask,
     ConfigTaskLog,
 )
+from datetime import date
+
 from app.services.prd_v1 import SeedService, record_operation
+from app.services.tasks import TaskService
 
 router = APIRouter(prefix="/admin", tags=["admin-prd-v1"])
 
@@ -180,16 +183,26 @@ def run_config_task(task_id: int, db: Session = Depends(get_db), admin=Depends(r
         raise HTTPException(status_code=404, detail="NOT_FOUND")
     if task.running:
         raise HTTPException(status_code=409, detail="TASK_RUNNING")
-    task.running = True
-    log = ConfigTaskLog(task_id=task.task_id, task_name=task.task_name, run_status="running", started_at=datetime.utcnow())
-    db.add(log)
-    db.commit()
-    task.running = False
-    log.run_status = "success"
-    log.finished_at = datetime.utcnow()
-    log.affected_rows = 0
-    db.commit()
-    return ok({"task_name": task.task_name, "run_status": log.run_status, "affected_rows": 0})
+    svc = TaskService(db)
+    fn_map = {
+        "collect_market_daily": svc.collect_market_daily,
+        "collect_hot_sector_rank": svc.collect_hot_sector_rank,
+        "collect_hot_stock_rank": svc.collect_hot_stock_rank,
+        "collect_limit_up_daily": svc.collect_limit_up_daily,
+        "update_watch_daily_kline": svc.update_watch_daily_kline,
+        "update_watch_15m_kline": svc.update_watch_15m_kline,
+        "scan_watch_signals": svc.scan_watch_signals,
+        "scan_trade_risk_signals": svc.scan_trade_risk_signals,
+        "generate_weekly_review_form": svc.generate_weekly_review_form,
+        "generate_monthly_review_form": svc.generate_monthly_review_form,
+        "remind_pending_review_form": svc.remind_pending_review_form,
+        "aggregate_review_metrics": svc.aggregate_review_metrics,
+    }
+    fn = fn_map.get(task.task_name)
+    if fn is None:
+        raise HTTPException(status_code=400, detail=f"UNKNOWN_TASK: {task.task_name}")
+    log = fn(date.today())
+    return ok({"task_name": task.task_name, "run_status": log.run_status, "affected_rows": log.affected_rows})
 
 
 @router.post("/tasks/{task_id}/enable")
