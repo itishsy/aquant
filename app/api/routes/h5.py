@@ -9,11 +9,12 @@ from app.api.deps import require_login
 from app.api.response import ok, page
 from app.core.database import get_db
 from app.models import (
-    ConfigNotificationRecord,
     MktDaily,
+    ConfigNotificationRecord,
     MyNotificationSetting,
     MyUserPreference,
     MyUserProfile,
+    PlanDaily,
     ReviewForm,
     ReviewMonthly,
     ReviewTrade,
@@ -739,7 +740,14 @@ def my_todos(db: Session = Depends(get_db), user=Depends(require_login)):
 
 @router.get("/me/system-summary")
 def my_system_summary(db: Session = Depends(get_db), user=Depends(require_login)):
-    return ok({"mode": "single-user", "assistant_note": ASSISTANT_NOTE, "watch_count": db.query(WatchPool).count()})
+    last_mkt = db.query(MktDaily).order_by(MktDaily.collected_at.desc()).first()
+    last_collect = last_mkt.collected_at.isoformat() if last_mkt else None
+    return ok({
+        "mode": "single-user",
+        "assistant_note": ASSISTANT_NOTE,
+        "watch_count": db.query(WatchPool).count(),
+        "last_collect_time": last_collect,
+    })
 
 
 @router.get("/me/backend-entry")
@@ -779,4 +787,86 @@ def delete_notification(notification_id: int, db: Session = Depends(get_db), use
     if row:
         db.delete(row)
         db.commit()
+    return ok({"deleted": True})
+
+
+@router.post("/me/collect-market")
+def collect_market_now(db: Session = Depends(get_db), user=Depends(require_login)):
+    from app.services.tasks import TaskService
+    svc = TaskService(db)
+    today = date.today()
+    results = {}
+    for task_name, fn in [
+        ("collect_market_daily", svc.collect_market_daily),
+        ("collect_hot_sector_rank", svc.collect_hot_sector_rank),
+        ("collect_hot_stock_rank", svc.collect_hot_stock_rank),
+        ("collect_limit_up_daily", svc.collect_limit_up_daily),
+    ]:
+        log = fn(today)
+        results[task_name] = {"status": log.run_status, "affected_rows": log.affected_rows}
+    return ok({"collect_time": datetime.utcnow().isoformat(), "results": results})
+
+
+# ── Daily Plan ──
+
+@router.get("/plans")
+def list_plans(db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = db.query(PlanDaily).order_by(PlanDaily.plan_date.desc()).limit(60).all()
+    return ok([
+        {
+            "id": row.id,
+            "plan_date": row.plan_date.isoformat(),
+            "today_position": row.today_position,
+            "operation_summary": row.operation_summary,
+            "execution_status": row.execution_status,
+            "tomorrow_plan": row.tomorrow_plan,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ])
+
+
+@router.post("/plans")
+def create_plan(payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
+    plan_date_str = payload.get("plan_date") or date.today().isoformat()
+    plan_date_val = date.fromisoformat(plan_date_str) if isinstance(plan_date_str, str) else date.today()
+    existing = db.query(PlanDaily).filter(PlanDaily.plan_date == plan_date_val).first()
+    if existing:
+        for key in ["today_position", "operation_summary", "execution_status", "tomorrow_plan"]:
+            if key in payload:
+                setattr(existing, key, payload[key])
+        db.commit()
+        return ok({"id": existing.id, "plan_date": existing.plan_date.isoformat(), "updated": True})
+    row = PlanDaily(
+        plan_date=plan_date_val,
+        today_position=payload.get("today_position", ""),
+        operation_summary=payload.get("operation_summary", ""),
+        execution_status=payload.get("execution_status", ""),
+        tomorrow_plan=payload.get("tomorrow_plan", ""),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return ok({"id": row.id, "plan_date": row.plan_date.isoformat(), "created": True})
+
+
+@router.put("/plans/{plan_id}")
+def update_plan(plan_id: int, payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(PlanDaily).filter(PlanDaily.id == plan_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="plan not found")
+    for key in ["today_position", "operation_summary", "execution_status", "tomorrow_plan"]:
+        if key in payload:
+            setattr(row, key, payload[key])
+    db.commit()
+    return ok({"id": row.id, "plan_date": row.plan_date.isoformat(), "updated": True})
+
+
+@router.delete("/plans/{plan_id}")
+def delete_plan(plan_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(PlanDaily).filter(PlanDaily.id == plan_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="plan not found")
+    db.delete(row)
+    db.commit()
     return ok({"deleted": True})

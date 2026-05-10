@@ -135,13 +135,56 @@ class PrdMarketDataService:
         )
         if not row:
             return {"trade_date": trade_date.isoformat(), "items": [], "note": "当前日期暂无市场数据"}
+
+        # Compute index change from previous trading day
+        prev_row = (
+            self.db.query(MktDaily)
+            .filter(MktDaily.trade_date < trade_date)
+            .order_by(MktDaily.trade_date.desc())
+            .first()
+        )
+        index_change_pct = None
+        if prev_row and prev_row.sh_index and row.sh_index:
+            index_change_pct = round((row.sh_index - prev_row.sh_index) / prev_row.sh_index * 100, 2)
+
+        total = (row.up_count or 0) + (row.down_count or 0) + (row.flat_count or 0)
+        up_ratio = row.up_count / total if total else 0
+        # Generate commentary
+        parts = []
+        if row.sh_index and row.sh_index > 0:
+            change_str = f"{index_change_pct:+.2f}%" if index_change_pct is not None else ""
+            parts.append(f"上证指数 {row.sh_index:.0f} 点{(' ' + change_str) if change_str else ''}")
+            parts.append("市场普涨，情绪积极")
+        elif up_ratio >= 0.5:
+            parts.append("市场分化，涨跌互现")
+        elif up_ratio >= 0.3:
+            parts.append("市场偏弱，多数个股下跌")
+        else:
+            parts.append("市场弱势，注意风险控制")
+        if row.total_amount:
+            amt = row.total_amount / 10000
+            if amt > 2:
+                parts.append(f"成交额 {amt:.2f} 万亿，交投活跃")
+            elif amt > 1:
+                parts.append(f"成交额 {amt:.2f} 万亿，交投正常")
+            else:
+                parts.append(f"成交额 {amt:.2f} 万亿，交投低迷")
+        if row.limit_up_count:
+            parts.append(f"涨停 {row.limit_up_count} 家")
+            if row.max_continue_board and row.max_continue_board >= 4:
+                parts.append(f"最高连板 {row.max_continue_board} 板，短线情绪较高")
+        if row.limit_down_count and row.limit_down_count > 10:
+            parts.append(f"跌停 {row.limit_down_count} 家，注意风险释放")
+
+        market_comment = "；".join(parts) + "。仅作为交易辅助，请结合个人交易规则确认。"
+
         return {
             "trade_date": row.trade_date.isoformat(),
             "source": row.source,
             "sh_index": row.sh_index,
             "sz_index": row.sz_index,
             "cyb_index": row.cyb_index,
-            "index_change_pct": row.index_change_pct,
+            "index_change_pct": index_change_pct,
             "total_amount": row.total_amount,
             "up_count": row.up_count,
             "down_count": row.down_count,
@@ -153,6 +196,7 @@ class PrdMarketDataService:
             "source_url": row.source_url,
             "source_update_time": row.source_update_time,
             "collected_at": row.collected_at,
+            "market_comment": market_comment,
         }
 
     def get_hot_boards(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:

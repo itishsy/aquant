@@ -523,6 +523,18 @@ class ConfigReviewTemplate(TimestampMixin, SystemBase):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class PlanDaily(TimestampMixin, SystemBase):
+    __tablename__ = "plan_daily"
+    __table_args__ = (UniqueConstraint("plan_date", name="uq_plan_daily_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_date: Mapped[date] = mapped_column(Date, unique=True, index=True)
+    today_position: Mapped[str] = mapped_column(String(32), default="")
+    operation_summary: Mapped[str] = mapped_column(Text, default="")
+    execution_status: Mapped[str] = mapped_column(String(32), default="")
+    tomorrow_plan: Mapped[str] = mapped_column(Text, default="")
+
+
 class ConfigOperationLog(SystemBase):
     __tablename__ = "config_operation_log"
 

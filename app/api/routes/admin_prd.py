@@ -359,3 +359,19 @@ def admin_profile(admin=Depends(require_admin)):
 @router.get("/security/sensitive-summary")
 def sensitive_summary(admin=Depends(require_admin)):
     return ok({"database_url": "***", "redis_url": "***", "data_source_auth": "***"})
+
+
+@router.post("/market/collect-all")
+def collect_all_market_data(db: Session = Depends(get_db), admin=Depends(require_admin)):
+    svc = TaskService(db)
+    today = date.today()
+    results = {}
+    for task_name, fn in [
+        ("collect_market_daily", svc.collect_market_daily),
+        ("collect_hot_sector_rank", svc.collect_hot_sector_rank),
+        ("collect_hot_stock_rank", svc.collect_hot_stock_rank),
+        ("collect_limit_up_daily", svc.collect_limit_up_daily),
+    ]:
+        log = fn(today)
+        results[task_name] = {"status": log.run_status, "affected_rows": log.affected_rows}
+    return ok({"collect_time": datetime.utcnow().isoformat(), "results": results})

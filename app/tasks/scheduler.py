@@ -14,12 +14,12 @@ def build_scheduler() -> BackgroundScheduler:
     settings = get_settings()
     scheduler = BackgroundScheduler(timezone=settings.timezone)
     scheduler.add_job(
-        run_daily_market_job,
+        run_daily_collect_all,
         trigger="cron",
-        hour=settings.daily_collection_hour,
-        minute=settings.daily_collection_minute,
-        id="collect_market_daily",
-        name="Collect market daily",
+        hour=18,
+        minute=0,
+        id="collect_all_market",
+        name="Collect all market data daily",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
@@ -28,9 +28,12 @@ def build_scheduler() -> BackgroundScheduler:
     return scheduler
 
 
-def run_daily_market_job(trade_date: date | None = None) -> None:
+def run_daily_collect_all() -> None:
     db: Session = SystemSessionLocal()
     try:
-        TaskService(db).collect_market_daily(trade_date or date.today())
+        svc = TaskService(db)
+        today = date.today()
+        for fn in [svc.collect_market_daily, svc.collect_hot_sector_rank, svc.collect_hot_stock_rank, svc.collect_limit_up_daily]:
+            fn(today)
     finally:
         db.close()
