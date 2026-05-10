@@ -6,7 +6,23 @@ from typing import Callable
 
 from sqlalchemy.orm import Session
 
-from app.models import ConfigTaskLog, MktDaily, MktHotBoard, MktHotStock, MktLimitUp
+from app.models import (
+    ConfigTaskLog,
+    MktDaily,
+    MktDailyChance,
+    MktDailyChanceStock,
+    MktDailyTopic,
+    MktDailyTopicStock,
+    MktDailyTuyere,
+    MktDailyTuyereStock,
+    MktHotBoard,
+    MktHotStock,
+    MktLimitUp,
+    MktLimitUpLadder,
+    MktLimitUpLadderStock,
+    MktLimitUpPlate,
+    MktLimitUpStock,
+)
 from app.providers.factory import ProviderFactory
 
 
@@ -17,6 +33,133 @@ def _serialize(data: dict) -> dict:
 class TaskService:
     def __init__(self, db: Session):
         self.db = db
+
+    def _replace_market_structured_rows(self, trade_date: date, snapshot: dict) -> int:
+        existing_chance_ids = [
+            row.id for row in self.db.query(MktDailyChance.id).filter(MktDailyChance.trade_date == trade_date).all()
+        ]
+        existing_tuyere_ids = [
+            row.id for row in self.db.query(MktDailyTuyere.id).filter(MktDailyTuyere.trade_date == trade_date).all()
+        ]
+        existing_topic_ids = [
+            row.id for row in self.db.query(MktDailyTopic.id).filter(MktDailyTopic.trade_date == trade_date).all()
+        ]
+        existing_ladder_ids = [
+            row.id for row in self.db.query(MktLimitUpLadder.id).filter(MktLimitUpLadder.trade_date == trade_date).all()
+        ]
+
+        if existing_chance_ids:
+            self.db.query(MktDailyChanceStock).filter(MktDailyChanceStock.chance_id.in_(existing_chance_ids)).delete(synchronize_session=False)
+        if existing_tuyere_ids:
+            self.db.query(MktDailyTuyereStock).filter(MktDailyTuyereStock.tuyere_id.in_(existing_tuyere_ids)).delete(synchronize_session=False)
+        if existing_topic_ids:
+            self.db.query(MktDailyTopicStock).filter(MktDailyTopicStock.topic_id.in_(existing_topic_ids)).delete(synchronize_session=False)
+        if existing_ladder_ids:
+            self.db.query(MktLimitUpLadderStock).filter(MktLimitUpLadderStock.ladder_id.in_(existing_ladder_ids)).delete(synchronize_session=False)
+
+        self.db.query(MktDailyChance).filter(MktDailyChance.trade_date == trade_date).delete(synchronize_session=False)
+        self.db.query(MktDailyTuyere).filter(MktDailyTuyere.trade_date == trade_date).delete(synchronize_session=False)
+        self.db.query(MktDailyTopic).filter(MktDailyTopic.trade_date == trade_date).delete(synchronize_session=False)
+        self.db.query(MktLimitUpLadder).filter(MktLimitUpLadder.trade_date == trade_date).delete(synchronize_session=False)
+        self.db.flush()
+
+        affected = 0
+        now = datetime.utcnow()
+        for rank_no, item in enumerate(snapshot.get("today_chances") or [], start=1):
+            row = MktDailyChance(
+                trade_date=trade_date,
+                source="real",
+                platform=item.get("source") or "cls",
+                rank_no=rank_no,
+                subject_id=item.get("subject_id"),
+                subject_name=item.get("subject_name") or "",
+                article_id=item.get("article_id"),
+                article_title=item.get("title") or "",
+                article_time=item.get("article_time"),
+                attention_num=item.get("attention_num"),
+                source_update_time=now,
+            )
+            self.db.add(row)
+            self.db.flush()
+            for stock in item.get("stocks") or []:
+                self.db.add(MktDailyChanceStock(
+                    chance_id=row.id,
+                    stock_code=stock.get("stock_code") or "",
+                    stock_name=stock.get("stock_name") or "",
+                    change_pct=stock.get("change_pct"),
+                    last_price=stock.get("last_price"),
+                ))
+            affected += 1
+
+        for rank_no, item in enumerate(snapshot.get("today_tuyeres") or [], start=1):
+            row = MktDailyTuyere(
+                trade_date=trade_date,
+                source="real",
+                platform=item.get("source") or "cls",
+                rank_no=rank_no,
+                subject_id=item.get("subject_id"),
+                subject_name=item.get("subject_name") or "",
+                driver=item.get("driver") or item.get("title") or "",
+                attention_num=item.get("attention_num"),
+                source_update_time=now,
+            )
+            self.db.add(row)
+            self.db.flush()
+            for stock in item.get("stocks") or []:
+                self.db.add(MktDailyTuyereStock(
+                    tuyere_id=row.id,
+                    stock_code=stock.get("stock_code") or "",
+                    stock_name=stock.get("stock_name") or "",
+                    change_pct=stock.get("change_pct"),
+                    last_price=stock.get("last_price"),
+                ))
+            affected += 1
+
+        for item in snapshot.get("topic_list") or []:
+            row = MktDailyTopic(
+                trade_date=trade_date,
+                source="real",
+                platform=item.get("source") or "ths",
+                rank_no=item.get("rank_no"),
+                topic_code=item.get("topic_code") or "",
+                title=item.get("title") or "",
+                description=item.get("description") or "",
+                subtitle=item.get("subtitle") or "",
+                hot_value=item.get("hot_value"),
+                jump_url=item.get("jump_url"),
+                source_update_time=now,
+            )
+            self.db.add(row)
+            self.db.flush()
+            for stock in item.get("stocks") or []:
+                self.db.add(MktDailyTopicStock(
+                    topic_id=row.id,
+                    stock_code=stock.get("stock_code") or "",
+                    stock_name=stock.get("stock_name") or "",
+                    change_pct=stock.get("change_pct"),
+                ))
+            affected += 1
+
+        for item in snapshot.get("limit_up_ladder") or []:
+            row = MktLimitUpLadder(
+                trade_date=trade_date,
+                source="real",
+                platform="cls",
+                height=item.get("height") or 0,
+                stock_count=item.get("count") or 0,
+                source_update_time=now,
+            )
+            self.db.add(row)
+            self.db.flush()
+            for stock in item.get("stocks") or []:
+                self.db.add(MktLimitUpLadderStock(
+                    ladder_id=row.id,
+                    stock_code=stock.get("stock_code") or "",
+                    stock_name=stock.get("stock_name") or "",
+                ))
+            affected += 1
+
+        return affected
 
     def _run(self, task_name: str, fn: Callable[[], int]) -> ConfigTaskLog:
         log = ConfigTaskLog(task_name=task_name, run_status="running", started_at=datetime.utcnow())
@@ -45,16 +188,24 @@ class TaskService:
             )
             if existing:
                 for k, v in snapshot.items():
-                    if hasattr(existing, k):
+                    if hasattr(existing, k) and k not in {"today_chances", "today_tuyeres", "topic_list", "limit_up_ladder"}:
                         setattr(existing, k, v)
                 existing.source_update_time = datetime.utcnow()
-                return 1
+                return 1 + self._replace_market_structured_rows(trade_date, snapshot)
             row = MktDaily(
                 trade_date=snapshot["trade_date"],
                 source="real",
                 sh_index=snapshot.get("sh_index"),
                 sz_index=snapshot.get("sz_index"),
                 cyb_index=snapshot.get("cyb_index"),
+                index_change_pct=snapshot.get("index_change_pct"),
+                sh_index_change_pct=snapshot.get("sh_index_change_pct"),
+                sh_index_change_px=snapshot.get("sh_index_change_px"),
+                sz_index_change_pct=snapshot.get("sz_index_change_pct"),
+                sz_index_change_px=snapshot.get("sz_index_change_px"),
+                cyb_index_change_pct=snapshot.get("cyb_index_change_pct"),
+                cyb_index_change_px=snapshot.get("cyb_index_change_px"),
+                index_trade_status=snapshot.get("index_trade_status") or {},
                 total_amount=snapshot.get("total_amount"),
                 up_count=snapshot.get("up_count"),
                 down_count=snapshot.get("down_count"),
@@ -63,12 +214,13 @@ class TaskService:
                 limit_down_count=snapshot.get("limit_down_count"),
                 broken_limit_count=snapshot.get("broken_limit_count"),
                 max_continue_board=snapshot.get("max_continue_board"),
+                source_url=snapshot.get("source_url"),
                 source_update_time=datetime.utcnow(),
-                raw_snapshot=_serialize(snapshot),
+                raw_snapshot=_serialize(snapshot.get("raw_snapshot") or snapshot),
             )
             self.db.add(row)
             self.db.commit()
-            return 1
+            return 1 + self._replace_market_structured_rows(trade_date, snapshot)
 
         return self._run("collect_market_daily", _do)
 
@@ -155,6 +307,62 @@ class TaskService:
     def collect_limit_up_daily(self, trade_date: date) -> ConfigTaskLog:
         def _do() -> int:
             provider = ProviderFactory.create()
+            if hasattr(provider, "get_limit_up_analysis"):
+                analysis = provider.get_limit_up_analysis(trade_date)
+                self.db.query(MktLimitUpStock).filter(MktLimitUpStock.trade_date == trade_date).delete(synchronize_session=False)
+                self.db.query(MktLimitUpPlate).filter(MktLimitUpPlate.trade_date == trade_date).delete(synchronize_session=False)
+                self.db.query(MktLimitUpLadder).filter(MktLimitUpLadder.trade_date == trade_date).delete(synchronize_session=False)
+                self.db.flush()
+
+                now = datetime.utcnow()
+                count = 0
+                for item in analysis.get("plates") or []:
+                    self.db.add(MktLimitUpPlate(
+                        trade_date=trade_date,
+                        source=item.get("source") or "real",
+                        platform=item.get("platform") or "cls",
+                        plate_code=item.get("plate_code") or "",
+                        plate_name=item.get("plate_name") or "",
+                        change_pct=item.get("change_pct"),
+                        limit_up_count=item.get("limit_up_count"),
+                        up_reason=item.get("up_reason") or "",
+                        source_update_time=now,
+                    ))
+                    count += 1
+                for item in analysis.get("ladders") or []:
+                    self.db.add(MktLimitUpLadder(
+                        trade_date=trade_date,
+                        source="real",
+                        platform="cls",
+                        height=item.get("height") or 0,
+                        stock_count=item.get("count") or 0,
+                        source_update_time=now,
+                    ))
+                    count += 1
+                for item in analysis.get("stocks") or []:
+                    self.db.add(MktLimitUpStock(
+                        trade_date=trade_date,
+                        source=item.get("source") or "real",
+                        platform=item.get("platform") or "cls",
+                        stock_code=item.get("stock_code") or "",
+                        stock_name=item.get("stock_name") or "",
+                        plate_code=item.get("plate_code") or "",
+                        plate_name=item.get("plate_name") or "",
+                        change_pct=item.get("change_pct"),
+                        last_price=item.get("last_price"),
+                        circulating_market_cap=item.get("circulating_market_cap"),
+                        limit_time=item.get("limit_time"),
+                        board_count=item.get("board_count"),
+                        board_text=item.get("board_text") or "",
+                        limit_reason=item.get("limit_reason") or "",
+                        reason_tags=item.get("reason_tags") or "",
+                        ladder_height=item.get("ladder_height"),
+                        source_update_time=now,
+                    ))
+                    count += 1
+                self.db.commit()
+                return count
+
             items = provider.get_limit_up_list(trade_date)
             count = 0
             for item in items:

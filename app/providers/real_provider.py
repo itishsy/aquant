@@ -77,6 +77,14 @@ class RealMarketProvider(
         return round(number * 100, 2) if abs(number) <= 1 else round(number, 2)
 
     @staticmethod
+    def _index_change_pct(item: dict[str, Any]) -> float:
+        return RealMarketProvider._pct(item.get("change"))
+
+    @staticmethod
+    def _index_change_px(item: dict[str, Any]) -> float:
+        return round(RealMarketProvider._number(item.get("change_px")), 2)
+
+    @staticmethod
     def _int(value: Any, default: int = 0) -> int:
         if value is None or value == "":
             return default
@@ -105,6 +113,168 @@ class RealMarketProvider(
         market = {"SH": "1", "SZ": "0", "BJ": "0"}[exchange]
         return f"{market}.{code}"
 
+    @staticmethod
+    def _simplify_cls_stock(item: dict[str, Any]) -> dict:
+        return {
+            "stock_name": item.get("name") or "",
+            "stock_code": item.get("StockID") or "",
+            "change_pct": RealMarketProvider._pct(item.get("RiseRange")),
+            "last_price": RealMarketProvider._number(item.get("last")),
+        }
+
+    def _simplify_cls_subject(self, item: dict[str, Any], kind: str) -> dict:
+        return {
+            "source": "cls",
+            "kind": kind,
+            "subject_id": item.get("subject_id"),
+            "subject_name": item.get("subject_name") or "",
+            "title": item.get("article_name") or item.get("driver") or "",
+            "driver": item.get("driver") or "",
+            "article_id": item.get("article_id"),
+            "article_time": item.get("article_time"),
+            "attention_num": item.get("attention_num"),
+            "stocks": [self._simplify_cls_stock(stock) for stock in item.get("stock_list") or item.get("stocks") or []],
+        }
+
+    @staticmethod
+    def _simplify_ths_stock(item: dict[str, Any]) -> dict:
+        return {
+            "stock_name": item.get("name") or "",
+            "stock_code": item.get("code") or "",
+            "change_pct": RealMarketProvider._pct(item.get("rise_and_fall")),
+        }
+
+    def _simplify_ths_topic(self, item: dict[str, Any], rank_no: int) -> dict:
+        attach_info = item.get("attach_info") or {}
+        stocks = attach_info.get("att_stock") or item.get("attach_hot_stock") or []
+        return {
+            "source": "ths",
+            "rank_no": rank_no,
+            "topic_code": item.get("code"),
+            "title": item.get("title") or "",
+            "description": item.get("description") or "",
+            "subtitle": item.get("subtitle") or "",
+            "hot_value": item.get("hot_value"),
+            "jump_url": item.get("jump_url"),
+            "stocks": [self._simplify_ths_stock(stock) for stock in stocks],
+        }
+
+    def _get_market_subjects(self) -> dict:
+        cls_payload = self._get_json(
+            "https://www.cls.cn/api/subject/recommend/article"
+            "?app=CailianpressWeb&os=web&sv=8.4.6"
+            "&sign=9f8797a1f4de66c2370f7a03990d2737",
+            referer="https://www.cls.cn/",
+        )
+        ths_payload = self._get_json(
+            "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/topic?page=1&page_size=10",
+            referer="https://dq.10jqka.com.cn/",
+        )
+        return {
+            "today_chances": [
+                self._simplify_cls_subject(item, "today_chance")
+                for item in (cls_payload.get("today_chances") or [])
+            ],
+            "today_tuyeres": [
+                self._simplify_cls_subject(item, "today_tuyere")
+                for item in (cls_payload.get("today_tuyeres") or [])
+            ],
+            "topic_list": [
+                self._simplify_ths_topic(item, rank_no)
+                for rank_no, item in enumerate((ths_payload.get("topic_list") or [])[:5], start=1)
+            ],
+            "raw_market_subjects": {"cls": cls_payload, "ths": ths_payload},
+        }
+
+    def _simplify_limit_ladder_stock(self, item: dict[str, Any]) -> dict:
+        raw_code = item.get("secu_code") or ""
+        try:
+            stock_code = self._to_code(raw_code)
+        except Exception:
+            stock_code = raw_code
+        return {
+            "stock_code": stock_code,
+            "stock_name": item.get("secu_name") or "",
+        }
+
+    def _simplify_limit_up_ladder(self, analysis: dict[str, Any]) -> list[dict]:
+        rows = []
+        for item in analysis.get("continuous_limit_up") or []:
+            stocks = [self._simplify_limit_ladder_stock(stock) for stock in item.get("stock_list") or []]
+            rows.append(
+                {
+                    "height": self._int(item.get("height")),
+                    "count": len(stocks),
+                    "stocks": stocks,
+                }
+            )
+        return sorted(rows, key=lambda row: row["height"], reverse=True)
+
+    def get_limit_up_analysis(self, trade_date: date) -> dict:
+        payload = self._get_json(
+            "https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis",
+            referer="https://www.cls.cn/",
+        )
+        ladder_rows = self._simplify_limit_up_ladder(payload)
+        ladder_by_code: dict[str, int] = {}
+        for ladder in ladder_rows:
+            for stock in ladder.get("stocks") or []:
+                ladder_by_code[stock.get("stock_code", "")] = ladder["height"]
+
+        plate_rows = []
+        stock_rows_by_code: dict[str, dict] = {}
+        for plate in payload.get("plate_stock") or []:
+            plate_code = plate.get("secu_code") or ""
+            plate_name = plate.get("secu_name") or ""
+            plate_rows.append(
+                {
+                    "trade_date": trade_date,
+                    "source": "real",
+                    "platform": "cls",
+                    "plate_code": plate_code,
+                    "plate_name": plate_name,
+                    "change_pct": self._pct(plate.get("change")),
+                    "limit_up_count": self._int(plate.get("plate_stock_up_num")),
+                    "up_reason": plate.get("up_reason") or "",
+                }
+            )
+            for stock in plate.get("stock_list") or []:
+                try:
+                    stock_code = self._to_code(stock.get("secu_code", ""))
+                except Exception:
+                    continue
+                if stock_code in stock_rows_by_code:
+                    continue
+                up_reason = stock.get("up_reason") or ""
+                reason_tags = ",".join(stock.get("up_tags") or [])
+                if not reason_tags and "|" in up_reason:
+                    reason_tags = up_reason.split("|", 1)[0]
+                board_count = self._int(stock.get("up_num"), default=ladder_by_code.get(stock_code, 1))
+                stock_rows_by_code[stock_code] = {
+                    "trade_date": trade_date,
+                    "source": "real",
+                    "platform": "cls",
+                    "stock_code": stock_code,
+                    "stock_name": stock.get("secu_name") or "",
+                    "plate_code": plate_code,
+                    "plate_name": plate_name,
+                    "change_pct": self._pct(stock.get("change")),
+                    "last_price": self._number(stock.get("last_px")),
+                    "circulating_market_cap": self._number(stock.get("cmc")),
+                    "limit_time": stock.get("time") or "",
+                    "board_count": board_count,
+                    "board_text": stock.get("up_num") or "",
+                    "limit_reason": up_reason,
+                    "reason_tags": reason_tags,
+                    "ladder_height": ladder_by_code.get(stock_code),
+                }
+        return {
+            "trade_date": trade_date,
+            "ladders": ladder_rows,
+            "plates": plate_rows,
+            "stocks": list(stock_rows_by_code.values()),
+        }
+
     def get_market_snapshot(self, trade_date: date) -> dict:
         index_data = self._get_json(
             "https://x-quote.cls.cn/v2/quote/a/web/stocks/basic"
@@ -122,8 +292,12 @@ class RealMarketProvider(
             "https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis",
             referer="https://www.cls.cn/",
         )
+        market_subjects = self._get_market_subjects()
 
         up_down = emotion.get("up_down_dis", {})
+        sh_index = index_data.get("sh000001", {}) or {}
+        sz_index = index_data.get("sz399001", {}) or {}
+        cyb_index = index_data.get("sz399006", {}) or {}
         up_count = int(up_down.get("rise_num") or 0)
         down_count = int(up_down.get("fall_num") or up_down.get("down_num") or 0)
         flat_count = int(up_down.get("flat_num") or 0)
@@ -133,9 +307,25 @@ class RealMarketProvider(
         limit_up = int(emotion.get("up_ratio_num") or emotion.get("zt_num") or 0)
         return {
             "trade_date": trade_date,
-            "sh_index": round(self._number(index_data.get("sh000001", {}).get("last_px")), 2),
-            "sz_index": round(self._number(index_data.get("sz399001", {}).get("last_px")), 2),
-            "cyb_index": round(self._number(index_data.get("sz399006", {}).get("last_px")), 2),
+            "sh_index": round(self._number(sh_index.get("last_px")), 2),
+            "sz_index": round(self._number(sz_index.get("last_px")), 2),
+            "cyb_index": round(self._number(cyb_index.get("last_px")), 2),
+            "index_change_pct": self._index_change_pct(sh_index),
+            "sh_index_change_pct": self._index_change_pct(sh_index),
+            "sh_index_change_px": self._index_change_px(sh_index),
+            "sz_index_change_pct": self._index_change_pct(sz_index),
+            "sz_index_change_px": self._index_change_px(sz_index),
+            "cyb_index_change_pct": self._index_change_pct(cyb_index),
+            "cyb_index_change_px": self._index_change_px(cyb_index),
+            "index_trade_status": {
+                "sh000001": sh_index.get("trade_status"),
+                "sz399001": sz_index.get("trade_status"),
+                "sz399006": cyb_index.get("trade_status"),
+            },
+            "today_chances": market_subjects["today_chances"],
+            "today_tuyeres": market_subjects["today_tuyeres"],
+            "topic_list": market_subjects["topic_list"],
+            "limit_up_ladder": self._simplify_limit_up_ladder(analysis),
             "total_amount": round(self._number(emotion.get("shsz_balance")), 2),
             "up_count": up_count,
             "down_count": down_count,
@@ -148,6 +338,18 @@ class RealMarketProvider(
             "max_continue_board": int(continuous[0].get("height") if continuous else 0),
             "yesterday_limit_avg_return": self._pct(emotion.get("yesterday_limit_avg_return")),
             "north_money": self._number(emotion.get("north_money")),
+            "source_url": (
+                "https://x-quote.cls.cn/v2/quote/a/web/stocks/basic"
+                "?app=CailianpressWeb&fields=secu_name,secu_code,trade_status,change,change_px,last_px"
+                "&os=web&secu_codes=sh000001,sz399001,sz399006&sv=8.4.6"
+                "&sign=7ddfd2eef7564087ff01a1782c724f43"
+            ),
+            "raw_snapshot": {
+                "index_data": index_data,
+                "emotion": emotion,
+                "analysis": analysis,
+                "market_subjects": market_subjects["raw_market_subjects"],
+            },
             "market_comment": "真实行情采集：市场状态仅作为交易辅助。",
         }
 

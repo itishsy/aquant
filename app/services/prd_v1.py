@@ -12,9 +12,18 @@ from app.models import (
     ConfigStrategy,
     ConfigTask,
     MktDaily,
+    MktDailyChance,
+    MktDailyChanceStock,
+    MktDailyTopic,
+    MktDailyTopicStock,
+    MktDailyTuyere,
+    MktDailyTuyereStock,
     MktHotBoard,
     MktHotStock,
     MktLimitUp,
+    MktLimitUpLadder,
+    MktLimitUpLadderStock,
+    MktLimitUpStock,
     MyNotificationSetting,
     MyUserProfile,
     WatchPool,
@@ -126,6 +135,137 @@ class PrdMarketDataService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _daily_chances(self, trade_date: date) -> list[dict]:
+        rows = (
+            self.db.query(MktDailyChance)
+            .filter(MktDailyChance.trade_date == trade_date)
+            .order_by(MktDailyChance.rank_no.asc(), MktDailyChance.id.asc())
+            .all()
+        )
+        result = []
+        for row in rows:
+            stocks = (
+                self.db.query(MktDailyChanceStock)
+                .filter(MktDailyChanceStock.chance_id == row.id)
+                .order_by(MktDailyChanceStock.id.asc())
+                .all()
+            )
+            result.append({
+                "source": row.platform,
+                "kind": "today_chance",
+                "subject_id": row.subject_id,
+                "subject_name": row.subject_name,
+                "title": row.article_title,
+                "article_id": row.article_id,
+                "article_time": row.article_time,
+                "attention_num": row.attention_num,
+                "stocks": [
+                    {
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "change_pct": stock.change_pct,
+                        "last_price": stock.last_price,
+                    }
+                    for stock in stocks
+                ],
+            })
+        return result
+
+    def _daily_tuyeres(self, trade_date: date) -> list[dict]:
+        rows = (
+            self.db.query(MktDailyTuyere)
+            .filter(MktDailyTuyere.trade_date == trade_date)
+            .order_by(MktDailyTuyere.rank_no.asc(), MktDailyTuyere.id.asc())
+            .all()
+        )
+        result = []
+        for row in rows:
+            stocks = (
+                self.db.query(MktDailyTuyereStock)
+                .filter(MktDailyTuyereStock.tuyere_id == row.id)
+                .order_by(MktDailyTuyereStock.id.asc())
+                .all()
+            )
+            result.append({
+                "source": row.platform,
+                "kind": "today_tuyere",
+                "subject_id": row.subject_id,
+                "subject_name": row.subject_name,
+                "title": row.driver,
+                "driver": row.driver,
+                "attention_num": row.attention_num,
+                "stocks": [
+                    {
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "change_pct": stock.change_pct,
+                        "last_price": stock.last_price,
+                    }
+                    for stock in stocks
+                ],
+            })
+        return result
+
+    def _daily_topics(self, trade_date: date) -> list[dict]:
+        rows = (
+            self.db.query(MktDailyTopic)
+            .filter(MktDailyTopic.trade_date == trade_date)
+            .order_by(MktDailyTopic.rank_no.asc(), MktDailyTopic.id.asc())
+            .all()
+        )
+        result = []
+        for row in rows:
+            stocks = (
+                self.db.query(MktDailyTopicStock)
+                .filter(MktDailyTopicStock.topic_id == row.id)
+                .order_by(MktDailyTopicStock.id.asc())
+                .all()
+            )
+            result.append({
+                "source": row.platform,
+                "rank_no": row.rank_no,
+                "topic_code": row.topic_code,
+                "title": row.title,
+                "description": row.description,
+                "subtitle": row.subtitle,
+                "hot_value": row.hot_value,
+                "jump_url": row.jump_url,
+                "stocks": [
+                    {
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "change_pct": stock.change_pct,
+                    }
+                    for stock in stocks
+                ],
+            })
+        return result
+
+    def _limit_up_ladder(self, trade_date: date) -> list[dict]:
+        rows = (
+            self.db.query(MktLimitUpLadder)
+            .filter(MktLimitUpLadder.trade_date == trade_date)
+            .order_by(MktLimitUpLadder.height.desc())
+            .all()
+        )
+        result = []
+        for row in rows:
+            stocks = (
+                self.db.query(MktLimitUpLadderStock)
+                .filter(MktLimitUpLadderStock.ladder_id == row.id)
+                .order_by(MktLimitUpLadderStock.id.asc())
+                .all()
+            )
+            result.append({
+                "height": row.height,
+                "count": row.stock_count,
+                "stocks": [
+                    {"stock_code": stock.stock_code, "stock_name": stock.stock_name}
+                    for stock in stocks
+                ],
+            })
+        return result
+
     def get_market_overview(self, trade_date: date) -> dict:
         row = (
             self.db.query(MktDaily)
@@ -143,16 +283,33 @@ class PrdMarketDataService:
             .order_by(MktDaily.trade_date.desc())
             .first()
         )
-        index_change_pct = None
-        if prev_row and prev_row.sh_index and row.sh_index:
-            index_change_pct = round((row.sh_index - prev_row.sh_index) / prev_row.sh_index * 100, 2)
+        def calc_index_change(current: float | None, previous: float | None) -> float | None:
+            if current is None or previous is None or previous == 0:
+                return None
+            return round((current - previous) / previous * 100, 2)
+
+        sh_index_change_pct = (
+            row.sh_index_change_pct
+            if row.sh_index_change_pct is not None
+            else calc_index_change(row.sh_index, prev_row.sh_index if prev_row else None)
+        )
+        sz_index_change_pct = (
+            row.sz_index_change_pct
+            if row.sz_index_change_pct is not None
+            else calc_index_change(row.sz_index, prev_row.sz_index if prev_row else None)
+        )
+        cyb_index_change_pct = (
+            row.cyb_index_change_pct
+            if row.cyb_index_change_pct is not None
+            else calc_index_change(row.cyb_index, prev_row.cyb_index if prev_row else None)
+        )
 
         total = (row.up_count or 0) + (row.down_count or 0) + (row.flat_count or 0)
         up_ratio = row.up_count / total if total else 0
         # Generate commentary
         parts = []
         if row.sh_index and row.sh_index > 0:
-            change_str = f"{index_change_pct:+.2f}%" if index_change_pct is not None else ""
+            change_str = f"{sh_index_change_pct:+.2f}%" if sh_index_change_pct is not None else ""
             parts.append(f"上证指数 {row.sh_index:.0f} 点{(' ' + change_str) if change_str else ''}")
             parts.append("市场普涨，情绪积极")
         elif up_ratio >= 0.5:
@@ -184,7 +341,18 @@ class PrdMarketDataService:
             "sh_index": row.sh_index,
             "sz_index": row.sz_index,
             "cyb_index": row.cyb_index,
-            "index_change_pct": index_change_pct,
+            "index_change_pct": sh_index_change_pct,
+            "sh_index_change_pct": sh_index_change_pct,
+            "sh_index_change_px": row.sh_index_change_px,
+            "sz_index_change_pct": sz_index_change_pct,
+            "sz_index_change_px": row.sz_index_change_px,
+            "cyb_index_change_pct": cyb_index_change_pct,
+            "cyb_index_change_px": row.cyb_index_change_px,
+            "index_trade_status": row.index_trade_status or {},
+            "today_chances": self._daily_chances(row.trade_date),
+            "today_tuyeres": self._daily_tuyeres(row.trade_date),
+            "topic_list": self._daily_topics(row.trade_date),
+            "limit_up_ladder": self._limit_up_ladder(row.trade_date),
             "total_amount": row.total_amount,
             "up_count": row.up_count,
             "down_count": row.down_count,
@@ -248,6 +416,15 @@ class PrdMarketDataService:
         ]
 
     def get_limit_ups(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
+        stock_query = self.db.query(MktLimitUpStock)
+        if trade_date:
+            stock_query = stock_query.filter(MktLimitUpStock.trade_date == trade_date)
+        if platform:
+            stock_query = stock_query.filter(MktLimitUpStock.platform == platform)
+        stock_rows = stock_query.order_by(MktLimitUpStock.limit_time, MktLimitUpStock.stock_code).all()
+        if stock_rows:
+            return [self._limit_up_stock_dict(row) for row in stock_rows]
+
         query = self.db.query(MktLimitUp)
         if trade_date:
             query = query.filter(MktLimitUp.trade_date == trade_date)
@@ -258,22 +435,24 @@ class PrdMarketDataService:
     def get_stock_source_summary(self, stock_code: str, trade_date: date) -> dict:
         code = normalize_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code, trade_date=trade_date).all()
+        limit_stock_rows = self.db.query(MktLimitUpStock).filter_by(stock_code=code, trade_date=trade_date).all()
         limit_rows = self.db.query(MktLimitUp).filter_by(stock_code=code, trade_date=trade_date).all()
         return {
             "stock_code": code,
             "hot_sources": [self._hot_stock_dict(item) for item in hot],
-            "limit_sources": [self._limit_up_dict(item) for item in limit_rows],
+            "limit_sources": [self._limit_up_stock_dict(item) for item in limit_stock_rows] or [self._limit_up_dict(item) for item in limit_rows],
             "xueqiu_url": xueqiu_link(code),
         }
 
     def get_latest_source(self, stock_code: str) -> dict:
         code = normalize_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code).order_by(MktHotStock.trade_date.desc()).first()
+        limit_stock_row = self.db.query(MktLimitUpStock).filter_by(stock_code=code).order_by(MktLimitUpStock.trade_date.desc()).first()
         limit_row = self.db.query(MktLimitUp).filter_by(stock_code=code).order_by(MktLimitUp.trade_date.desc()).first()
         return {
             "stock_code": code,
             "latest_hot": self._hot_stock_dict(hot) if hot else None,
-            "latest_limit": self._limit_up_dict(limit_row) if limit_row else None,
+            "latest_limit": self._limit_up_stock_dict(limit_stock_row) if limit_stock_row else (self._limit_up_dict(limit_row) if limit_row else None),
             "xueqiu_url": xueqiu_link(code),
         }
 
@@ -343,6 +522,35 @@ class PrdMarketDataService:
                 "source_update_time",
                 "collected_at",
             ]
+        }
+
+    @staticmethod
+    def _limit_up_stock_dict(row: MktLimitUpStock) -> dict:
+        return {
+            "id": row.id,
+            "trade_date": row.trade_date,
+            "platform": row.platform,
+            "stock_code": row.stock_code,
+            "stock_name": row.stock_name,
+            "limit_time": str(row.limit_time or "").split(" ")[-1][:5] or row.limit_time,
+            "last_limit_time": row.limit_time,
+            "open_limit_count": None,
+            "seal_amount": None,
+            "seal_volume": None,
+            "turnover_rate": None,
+            "amount": None,
+            "board_count": row.board_count or row.ladder_height or 1,
+            "concept": row.plate_name,
+            "limit_reason": row.limit_reason,
+            "limit_type": row.reason_tags,
+            "source_url": None,
+            "source_update_time": row.source_update_time,
+            "collected_at": row.collected_at,
+            "change_pct": row.change_pct,
+            "last_price": row.last_price,
+            "ladder_height": row.ladder_height,
+            "plate_code": row.plate_code,
+            "plate_name": row.plate_name,
         }
 
 

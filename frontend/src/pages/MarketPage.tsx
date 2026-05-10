@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, DatePicker, Dialog, ErrorBlock, Picker, SpinLoading, Toast } from "antd-mobile";
+import { DatePicker, Dialog, ErrorBlock, Picker, SpinLoading, Toast } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
@@ -19,6 +19,17 @@ type MarketSummary = {
   sz_index?: number;
   cyb_index?: number;
   market_comment?: string;
+  index_change_pct?: number;
+  sh_index_change_pct?: number;
+  sh_index_change_px?: number;
+  sz_index_change_pct?: number;
+  sz_index_change_px?: number;
+  cyb_index_change_pct?: number;
+  cyb_index_change_px?: number;
+  today_chances?: any[];
+  today_tuyeres?: any[];
+  topic_list?: any[];
+  limit_up_ladder?: any[];
 };
 
 export function MarketPage() {
@@ -27,7 +38,7 @@ export function MarketPage() {
   const searchParams = new URLSearchParams(location.search);
   const queryDate = searchParams.get("trade_date");
   const refreshKey = searchParams.get("refresh");
-  const [tradeDate, setTradeDate] = useState<string>(queryDate || todayString());
+  const [tradeDate, setTradeDate] = useState<string>(queryDate || "");
   const [pickerVisible, setPickerVisible] = useState(false);
   const [tab, setTab] = useState("overview");
   const [data, setData] = useState<MarketSummary | null>(null);
@@ -35,7 +46,6 @@ export function MarketPage() {
   const [hotStocks, setHotStocks] = useState<any[]>([]);
   const [limitRows, setLimitRows] = useState<any[]>([]);
   const [limitTotal, setLimitTotal] = useState(0);
-  const [limitSummary, setLimitSummary] = useState<any>(null);
   const [limitConcept, setLimitConcept] = useState("");
   const [conceptPickerVisible, setConceptPickerVisible] = useState(false);
   const [hotPlatform, setHotPlatform] = useState("");
@@ -45,14 +55,37 @@ export function MarketPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (queryDate) return;
+
+    apiGet<string[]>("/h5/market/trading-dates")
+      .then((dates) => {
+        const latestDate = (dates || []).slice().sort().reverse()[0];
+        const nextDate = latestDate || todayString();
+        setTradeDate(nextDate);
+        navigate(`/market?trade_date=${nextDate}`, { replace: true });
+      })
+      .catch(() => {
+        const fallbackDate = todayString();
+        setTradeDate(fallbackDate);
+        navigate(`/market?trade_date=${fallbackDate}`, { replace: true });
+      });
+  }, [navigate, queryDate]);
+
+  useEffect(() => {
+    if (!tradeDate) return;
+
     setLoading(true);
-    apiGet<any[]>("/h5/watch-pool").then((items) => {
-      setWatchCodes(new Set((items || []).map((w: any) => w.stock_code)));
-    }).catch(() => {});
+    setError("");
+    apiGet<any[]>("/h5/watch-pool")
+      .then((items) => setWatchCodes(new Set((items || []).map((w: any) => w.stock_code))))
+      .catch(() => {});
 
     apiGet<MarketSummary>(`/h5/market/overview?trade_date=${tradeDate}`)
-      .then((summary) => { setData(summary); setError(""); })
-      .catch(() => setData(null));
+      .then((summary) => setData(summary))
+      .catch(() => {
+        setData(null);
+        setError("市场数据加载失败，请稍后重试");
+      });
 
     apiGet<any>(`/market/review?trade_date=${tradeDate}`)
       .then((r) => setReview(r))
@@ -62,16 +95,19 @@ export function MarketPage() {
       .then((hot) => setHotStocks(hot.list || hot))
       .catch(() => setHotStocks([]));
 
-    apiGet<any>(`/h5/market/limit-ups?trade_date=${tradeDate}&page_size=200`)
+    apiGet<any>(`/h5/market/limit-ups?trade_date=${tradeDate}&page_size=500`)
       .then((limitList) => {
-        setLimitRows(limitList.list || limitList);
-        setLimitTotal(limitList.total || (limitList.list ? limitList.list.length : (Array.isArray(limitList) ? limitList.length : 0)));
+        const rows = limitList.list || limitList || [];
+        setLimitRows(rows);
+        setLimitTotal(limitList.total || rows.length || 0);
       })
-      .catch(() => { setLimitRows([]); setLimitTotal(0); });
+      .catch(() => {
+        setLimitRows([]);
+        setLimitTotal(0);
+      });
 
     apiGet<any>(`/limit-up/summary?trade_date=${tradeDate}`)
-      .then((limit) => setLimitSummary(limit))
-      .catch(() => setLimitSummary(null))
+      .catch(() => null)
       .finally(() => setLoading(false));
   }, [tradeDate, refreshKey, hotPlatform]);
 
@@ -90,12 +126,25 @@ export function MarketPage() {
   const amountText = data ? `${(data.total_amount / 10000).toFixed(2)}万亿` : "-";
   const totalBreadth = data ? Math.max((data.up_count || 0) + (data.down_count || 0) + (data.flat_count || 0), 1) : 1;
   const upRatio = data ? Math.round(((data.up_count || 0) / totalBreadth) * 100) : 0;
+  const formatPct = (value?: number | null) => {
+    if (value == null) return "";
+    return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+  };
+  const formatPx = (value?: number | null) => {
+    if (value == null) return "";
+    return ` ${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+  };
+  const pctColor = (value?: number | null) => value == null ? "#7687a4" : value >= 0 ? "#e34d59" : "#00b578";
+  const marketInfoSections = [
+    { title: "今日机会", tag: "财联社", rows: data?.today_chances || [] },
+    { title: "今日风口", tag: "财联社", rows: data?.today_tuyeres || [] },
+    { title: "话题热榜", tag: "同花顺", rows: data?.topic_list || [] },
+  ];
 
-  // Concept filter for limit ups
   const conceptOptions = useMemo(() => {
     const counts: Record<string, number> = {};
     limitRows.forEach((r) => {
-      const name = r.concept || "未分类";
+      const name = r.concept || r.plate_name || "未分类";
       counts[name] = (counts[name] || 0) + 1;
     });
     return [{ label: "全部涨停", value: "" }].concat(
@@ -107,8 +156,74 @@ export function MarketPage() {
 
   const filteredLimitRows = useMemo(() => {
     if (!limitConcept) return limitRows;
-    return limitRows.filter((r) => (r.concept || "未分类") === limitConcept);
+    return limitRows.filter((r) => (r.concept || r.plate_name || "未分类") === limitConcept);
   }, [limitRows, limitConcept]);
+
+  function showMarketInfoDetail(title: string, item: any) {
+    const stocks = item.stocks || [];
+    Dialog.alert({
+      title,
+      content: (
+        <div style={{ textAlign: "left", color: "#53627c", lineHeight: 1.65 }}>
+          <strong style={{ color: "#18223d" }}>{item.subject_name || item.title}</strong>
+          {item.title && item.subject_name ? <p>{item.title}</p> : null}
+          {item.driver ? <p>{item.driver}</p> : null}
+          {item.description ? <p>{item.description}</p> : null}
+          {item.hot_value != null ? <p>热度：{item.hot_value}</p> : null}
+          {item.attention_num != null ? <p>关注度：{item.attention_num}</p> : null}
+          {stocks.length ? (
+            <p>
+              关联个股：
+              {stocks.map((stock: any) => `${stock.stock_name || stock.name}${stock.change_pct != null ? ` ${formatPct(stock.change_pct)}` : ""}`).join(" / ")}
+            </p>
+          ) : null}
+          <p style={{ marginTop: 10 }}>仅作为市场资讯辅助，请结合个人交易规则确认。</p>
+        </div>
+      ),
+      confirmText: "知道了",
+    });
+  }
+
+  function showLimitLadderDetail(item: any) {
+    Dialog.alert({
+      title: `${item.height}板梯队`,
+      content: (
+        <div style={{ textAlign: "left", color: "#53627c", lineHeight: 1.65 }}>
+          <p>共 {item.count || 0} 只股票。</p>
+          <div style={{ display: "grid", gap: 6 }}>
+            {(item.stocks || []).map((stock: any) => (
+              <div key={`${item.height}-${stock.stock_code}`} style={{ padding: "8px 10px", borderRadius: 12, background: "#f6f8ff" }}>
+                <StockLink stockName={stock.stock_name} stockCode={stock.stock_code} showCode />
+              </div>
+            ))}
+          </div>
+          <p style={{ marginTop: 10 }}>涨停梯队仅展示客观涨停结构，作为市场观察辅助。</p>
+        </div>
+      ),
+      confirmText: "知道了",
+    });
+  }
+
+  function showLimitUpDetail(item: any) {
+    Dialog.alert({
+      title: item.stock_name || item.stock_code,
+      content: (
+        <div style={{ textAlign: "left", color: "#53627c", lineHeight: 1.65 }}>
+          <p><strong>股票：</strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} showCode /></p>
+          <p><strong>所属板块：</strong>{item.concept || item.plate_name || "未分类"}</p>
+          <p><strong>涨停时间：</strong>{item.limit_time || "-"}</p>
+          <p><strong>连板：</strong>{item.board_count || item.ladder_height || 1} 板</p>
+          {item.ladder_height ? <p><strong>梯队：</strong>{item.ladder_height} 板梯队</p> : null}
+          {item.change_pct != null ? <p><strong>涨幅：</strong>{formatPct(item.change_pct)}</p> : null}
+          {item.last_price != null ? <p><strong>最新价：</strong>{item.last_price}</p> : null}
+          {item.reason_tags || item.limit_type ? <p><strong>标签：</strong>{item.reason_tags || item.limit_type}</p> : null}
+          <p><strong>涨停原因：</strong>{item.limit_reason || "暂无原因"}</p>
+          <p style={{ marginTop: 10 }}>仅作为涨停结果观察辅助，请结合个人交易规则确认。</p>
+        </div>
+      ),
+      confirmText: "知道了",
+    });
+  }
 
   async function addWatchFromMarket(item: any, sourceType: string) {
     const confirmed = await Dialog.confirm({
@@ -120,7 +235,7 @@ export function MarketPage() {
     apiPost("/h5/watch-pool", {
       stock_code: item.stock_code,
       stock_name: item.stock_name,
-      sector_name: item.board_name || item.concept,
+      sector_name: item.board_name || item.concept || item.plate_name,
       labels: sourceType === "limit_up" ? ["接力"] : ["人气"],
       operation_strategies: sourceType === "limit_up" ? ["加速接力"] : ["趋势交易"],
       buy_point_types: ["B15 底背离买点"],
@@ -156,14 +271,14 @@ export function MarketPage() {
         title="选择日期"
         visible={pickerVisible}
         precision="day"
-        value={stringToDate(tradeDate)}
+        value={stringToDate(tradeDate || todayString())}
         max={new Date()}
         onClose={() => setPickerVisible(false)}
         onConfirm={(value) => changeTradeDate(dateToString(value))}
       />
 
       {loading && <SpinLoading />}
-      {error && <ErrorBlock description="市场数据加载失败，请稍后重试" />}
+      {error && <ErrorBlock description={error} />}
       {data && (
         <>
           {tab === "overview" && (
@@ -192,15 +307,67 @@ export function MarketPage() {
                 <span>上证指数</span>
                 <strong>
                   {data.sh_index ?? "-"}
-                  {data.index_change_pct != null && (
-                    <span style={{ fontSize: 16, fontWeight: 400, marginLeft: 6, color: data.index_change_pct >= 0 ? "#e34d59" : "#00b578" }}>
-                      {data.index_change_pct >= 0 ? "+" : ""}{data.index_change_pct}%
-                    </span>
-                  )}
+                  <span style={{ fontSize: 16, fontWeight: 400, marginLeft: 6, color: pctColor(data.sh_index_change_pct ?? data.index_change_pct) }}>
+                    {formatPct(data.sh_index_change_pct ?? data.index_change_pct)}
+                    {formatPx(data.sh_index_change_px)}
+                  </span>
                 </strong>
                 <div style={{ fontSize: 12, color: "#7687a4", marginTop: 2 }}>
-                  深成指 {data.sz_index ?? "-"} · 创业板指 {data.cyb_index ?? "-"}
+                  深成指 {data.sz_index ?? "-"}
+                  <span style={{ color: pctColor(data.sz_index_change_pct), marginLeft: 4 }}>
+                    {formatPct(data.sz_index_change_pct)}
+                    {formatPx(data.sz_index_change_px)}
+                  </span>
+                  <span style={{ margin: "0 6px" }}>/</span>
+                  创业板指 {data.cyb_index ?? "-"}
+                  <span style={{ color: pctColor(data.cyb_index_change_pct), marginLeft: 4 }}>
+                    {formatPct(data.cyb_index_change_pct)}
+                    {formatPx(data.cyb_index_change_px)}
+                  </span>
                 </div>
+              </div>
+              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                {marketInfoSections.map((section) => (
+                  <div key={section.title} className="metric-tile" style={{ padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <strong style={{ fontSize: 16 }}>{section.title}</strong>
+                      <span className="soft-tag">{section.tag}</span>
+                    </div>
+                    {section.rows.length ? (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {section.rows.slice(0, section.title === "话题热榜" ? 5 : 3).map((item: any, index: number) => (
+                          <button
+                            key={`${section.title}-${item.subject_id || item.topic_code || index}`}
+                            type="button"
+                            onClick={() => showMarketInfoDetail(section.title, item)}
+                            style={{
+                              border: 0,
+                              borderRadius: 14,
+                              padding: "10px 12px",
+                              textAlign: "left",
+                              background: "#f6f8ff",
+                              color: "#1d2948",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <strong style={{ fontSize: 14 }}>{item.subject_name || item.title}</strong>
+                              {(item.hot_value != null || item.attention_num != null) && (
+                                <span style={{ color: "#64748b", fontSize: 12, whiteSpace: "nowrap" }}>
+                                  {item.hot_value != null ? item.hot_value : item.attention_num}
+                                </span>
+                              )}
+                            </div>
+                            <p style={{ margin: "4px 0 0", color: "#73809a", fontSize: 12 }}>
+                              {item.title || item.driver || item.description || "点击查看详情"}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="empty-panel" style={{ minHeight: 72 }}>暂无{section.title}数据</div>
+                    )}
+                  </div>
+                ))}
               </div>
               {data.market_comment && (
                 <div className="review-note-panel">
@@ -243,36 +410,37 @@ export function MarketPage() {
               </div>
               {hotStocks.length ? (
                 <div className="stack-list">
-                  {hotStocks.slice(0, 10).map((item) => (
-                    <div key={item.stock_code} className="row-card">
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ color: "#4b63ee", fontWeight: 800, fontSize: 16, minWidth: 32, textAlign: "center" }}>
-                          {item.total_score ?? item.raw_score ?? "-"}
-                        </span>
-                        <div>
-                          <strong>
+                  {hotStocks.map((item) => (
+                    <div key={`${item.stock_code}-${item.platform || "all"}`} className="row-card row-card-action">
+                      <div>
+                        <strong>
+                          <span onClick={(event) => event.stopPropagation()}>
                             <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
-                          </strong>
-                          {hotPlatform ? (
-                            <>
-                              <p>原始分数：{item.raw_score ?? "-"} / 排名：#{item.platform_rank ?? "-"}</p>
-                              <p>{item.board_name || "未分类"}</p>
-                            </>
-                          ) : (
-                            <>
-                              <p>综合得分：{item.total_score} {item.cross_platform ? "多平台共振" : ""}</p>
-                              <p>
-                                {(item.platforms || []).map((p: any) => `${p.platform} #${p.rank}(${p.score})`).join("  ")}
-                              </p>
-                            </>
-                          )}
-                        </div>
+                          </span>
+                        </strong>
+                        {hotPlatform ? (
+                          <>
+                            <p>原始分数：{item.raw_score ?? "-"} / 排名：#{item.platform_rank ?? "-"}</p>
+                            <p>{item.board_name || "未分类"}</p>
+                          </>
+                        ) : (
+                          <>
+                            <p>综合得分：{item.total_score} {item.cross_platform ? "多平台共振" : ""}</p>
+                            <p>
+                              {(item.platforms || []).map((p: any) => `${p.platform} #${p.rank}(${p.score})`).join("  ")}
+                            </p>
+                          </>
+                        )}
                       </div>
                       {watchCodes.has(item.stock_code) ? (
                         <span style={{ fontSize: 18, color: "#00b578", lineHeight: 1 }}>✓</span>
                       ) : (
-                        <span style={{ fontSize: 22, color: "#4b63ee", cursor: "pointer", lineHeight: 1, fontWeight: 300 }}
-                          onClick={(e) => { e.stopPropagation(); addWatchFromMarket(item, "hot_stock"); }}>+</span>
+                        <span
+                          style={{ fontSize: 22, color: "#4b63ee", cursor: "pointer", lineHeight: 1, fontWeight: 300 }}
+                          onClick={(e) => { e.stopPropagation(); addWatchFromMarket(item, "hot_stock"); }}
+                        >
+                          +
+                        </span>
                       )}
                     </div>
                   ))}
@@ -294,37 +462,81 @@ export function MarketPage() {
                   {limitConcept || "全部板块"} ▾
                 </span>
               </div>
-              {filteredLimitRows.length ? (
-                    <div className="stack-list">
-                      {filteredLimitRows.slice(0, 20).map((item) => (
-                        <div key={item.stock_code} className="row-card row-card-action">
-                          <div>
-                            <strong>
-                              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
-                              <span style={{ fontSize: 11, fontWeight: 400, color: "#999", marginLeft: 4 }}>
-                                {item.limit_time}
-                              </span>
-                            </strong>
-                            <p>
-                              {item.concept || "未分类"}
-                              {item.limit_reason ? <span style={{ color: "#e34d59", marginLeft: 4 }}>{item.limit_reason}</span> : null}
-                            </p>
-                            <p>
-                              封板：{item.limit_time} / 连板：{item.board_count} / 换手：{item.turnover_rate}%
-                            </p>
-                          </div>
-                          {watchCodes.has(item.stock_code) ? (
-                            <span style={{ fontSize: 18, color: "#00b578", lineHeight: 1 }}>✓</span>
-                          ) : (
-                            <span style={{ fontSize: 22, color: "#4b63ee", cursor: "pointer", lineHeight: 1, fontWeight: 300 }}
-                              onClick={(e) => { e.stopPropagation(); addWatchFromMarket(item, "limit_up"); }}>+</span>
-                          )}
+              {(data.limit_up_ladder || []).length ? (
+                <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <strong style={{ fontSize: 16 }}>涨停梯度</strong>
+                    <span className="soft-tag">连板结构</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 2 }}>
+                    {(data.limit_up_ladder || []).map((item: any) => (
+                      <button
+                        key={item.height}
+                        type="button"
+                        onClick={() => showLimitLadderDetail(item)}
+                        style={{
+                          minWidth: 130,
+                          border: 0,
+                          borderRadius: 18,
+                          padding: "12px 14px",
+                          textAlign: "left",
+                          background: "linear-gradient(135deg, #fff4f4 0%, #eef3ff 100%)",
+                          color: "#1d2948",
+                        }}
+                      >
+                        <div style={{ fontSize: 22, fontWeight: 900, color: "#e34d59" }}>{item.height}板</div>
+                        <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>{item.count || 0} 只</div>
+                        <div style={{ fontSize: 12, color: "#73809a", marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {(item.stocks || []).slice(0, 2).map((stock: any) => stock.stock_name).join(" / ") || "点击查看"}
                         </div>
-                      ))}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {filteredLimitRows.length ? (
+                <div className="stack-list">
+                  {filteredLimitRows.map((item) => (
+                    <div
+                      key={item.stock_code}
+                      className="row-card row-card-action"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => showLimitUpDetail(item)}
+                    >
+                      <div>
+                        <strong>
+                          <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+                          <span style={{ fontSize: 11, fontWeight: 400, color: "#999", marginLeft: 4 }}>
+                            {item.limit_time}
+                          </span>
+                        </strong>
+                        <p>
+                          {item.concept || item.plate_name || "未分类"}
+                          {(item.reason_tags || item.limit_type) ? (
+                            <span style={{ color: "#e34d59", marginLeft: 4 }}>{item.reason_tags || item.limit_type}</span>
+                          ) : null}
+                        </p>
+                        <p>
+                          涨停 {item.limit_time || "-"} / 连板 {item.board_count || item.ladder_height || 1}
+                          {item.ladder_height ? ` / ${item.ladder_height}板梯队` : ""}
+                        </p>
+                      </div>
+                      {watchCodes.has(item.stock_code) ? (
+                        <span style={{ fontSize: 18, color: "#00b578", lineHeight: 1 }}>✓</span>
+                      ) : (
+                        <span
+                          style={{ fontSize: 22, color: "#4b63ee", cursor: "pointer", lineHeight: 1, fontWeight: 300 }}
+                          onClick={(e) => { e.stopPropagation(); addWatchFromMarket(item, "limit_up"); }}
+                        >
+                          +
+                        </span>
+                      )}
                     </div>
-                  ) : (
-                    <div className="empty-panel">该板块暂无涨停明细</div>
-                  )}
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-panel">该板块暂无涨停明细</div>
+              )}
             </article>
           )}
         </>
@@ -344,7 +556,6 @@ export function MarketPage() {
           setHotPlatformPickerVisible(false);
         }}
       />
-
       <Picker
         columns={[conceptOptions]}
         visible={conceptPickerVisible}
