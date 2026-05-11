@@ -191,6 +191,11 @@ def stock_kline_daily(stock_code: str, limit: int = 60, db: Session = Depends(ge
         "low": r.low_price,
         "close": r.close_price,
         "volume": r.volume,
+        "amount": r.amount,
+        "ma5": r.ma5,
+        "ma10": r.ma10,
+        "ma20": r.ma20,
+        "source": r.source,
     } for r in rows])
 
 

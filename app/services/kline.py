@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SystemSessionLocal
 from app.models import MktStockKline15m, MktStockKlineDaily
 from app.providers.factory import ProviderFactory
+from app.services.normalization import normalize_stock_code
 from app.services.quality import DataQualityService
 
 
@@ -23,6 +24,7 @@ class KlineService:
             self.db.close()
 
     def collect_daily_kline(self, stock_code: str, start_date: date, end_date: date) -> list[MktStockKlineDaily]:
+        stock_code = normalize_stock_code(stock_code)
         rows: list[MktStockKlineDaily] = []
         for payload in self.provider.get_daily_kline(stock_code, start_date, end_date):
             DataQualityService.validate_kline_daily(payload)
@@ -43,6 +45,9 @@ class KlineService:
             entity.close_price = payload["close"]
             entity.volume = payload.get("volume", 0.0)
             entity.amount = payload.get("amount", 0.0)
+            entity.ma5 = payload.get("ma5")
+            entity.ma10 = payload.get("ma10")
+            entity.ma20 = payload.get("ma20")
             entity.source_update_time = payload.get("source_update_time")
             self.db.add(entity)
             rows.append(entity)
@@ -77,12 +82,19 @@ class KlineService:
         return rows
 
     def get_daily_kline(self, stock_code: str, limit: int = 100) -> list[MktStockKlineDaily]:
-        if not self.db.query(MktStockKlineDaily).filter(MktStockKlineDaily.stock_code == stock_code).first():
-            today = date.today()
-            self.collect_daily_kline(stock_code, today - timedelta(days=limit), today)
+        stock_code = normalize_stock_code(stock_code)
+        today = date.today()
+        cls_query = self.db.query(MktStockKlineDaily).filter(
+            MktStockKlineDaily.stock_code == stock_code,
+            MktStockKlineDaily.source == "cls",
+        )
+        if not cls_query.first():
+            self.collect_daily_kline(stock_code, today - timedelta(days=limit * 2), today)
+        query = self.db.query(MktStockKlineDaily).filter(MktStockKlineDaily.stock_code == stock_code)
+        if cls_query.first():
+            query = query.filter(MktStockKlineDaily.source == "cls")
         return (
-            self.db.query(MktStockKlineDaily)
-            .filter(MktStockKlineDaily.stock_code == stock_code)
+            query
             .order_by(MktStockKlineDaily.trade_date.desc())
             .limit(limit)
             .all()[::-1]

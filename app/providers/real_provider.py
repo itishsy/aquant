@@ -114,6 +114,11 @@ class RealMarketProvider(
         return f"{market}.{code}"
 
     @staticmethod
+    def _cls_secu_code(stock_code: str) -> str:
+        code, exchange = normalize_stock_code(stock_code).split(".")
+        return f"{exchange.lower()}{code}"
+
+    @staticmethod
     def _simplify_cls_stock(item: dict[str, Any]) -> dict:
         return {
             "stock_name": item.get("name") or "",
@@ -633,34 +638,38 @@ class RealMarketProvider(
         }
 
     def get_daily_kline(self, stock_code: str, start_date: date, end_date: date) -> list[dict]:
-        secid = self._eastmoney_secid(stock_code)
+        secu_code = self._cls_secu_code(stock_code)
         payload = self._get_json(
-            "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-            f"?secid={secid}&fields1=f1,f2,f3,f4,f5,f6"
-            "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
-            f"&klt=101&fqt=1&beg={start_date:%Y%m%d}&end={end_date:%Y%m%d}",
-            data_key="data",
-            referer="https://quote.eastmoney.com/",
+            "https://x-quote.cls.cn/quote/stock/kline"
+            f"?limit=100&secu_code={secu_code}&type=fd1",
+            referer="https://www.cls.cn/",
         )
         rows = []
-        for item in payload.get("klines", []) or []:
-            parts = item.split(",")
-            if len(parts) < 11:
+        for item in payload or []:
+            raw_date = str(item.get("date") or "")
+            if len(raw_date) != 8:
                 continue
-            close = self._number(parts[2])
-            prev_close = round(close / (1 + self._number(parts[8]) / 100), 4) if self._number(parts[8]) != -100 else close
+            trade_date = datetime.strptime(raw_date, "%Y%m%d").date()
+            if trade_date < start_date or trade_date > end_date:
+                continue
+            close = self._number(item.get("close_px"))
             rows.append(
                 {
                     "stock_code": normalize_stock_code(stock_code),
-                    "trade_date": datetime.strptime(parts[0], "%Y-%m-%d").date(),
-                    "open": self._number(parts[1]),
+                    "trade_date": trade_date,
+                    "open": self._number(item.get("open_px")),
                     "close": close,
-                    "high": self._number(parts[3]),
-                    "low": self._number(parts[4]),
-                    "volume": self._number(parts[5]),
-                    "amount": self._number(parts[6]) / 10000,
-                    "change_pct": self._number(parts[8]),
-                    "prev_close": prev_close,
+                    "high": self._number(item.get("high_px")),
+                    "low": self._number(item.get("low_px")),
+                    "volume": self._number(item.get("business_amount")),
+                    "amount": self._number(item.get("business_balance")) / 10000,
+                    "change_pct": self._pct(item.get("change")),
+                    "prev_close": self._number(item.get("preclose_px")),
+                    "ma5": self._number(item.get("ma5"), default=0.0) or None,
+                    "ma10": self._number(item.get("ma10"), default=0.0) or None,
+                    "ma20": self._number(item.get("ma20"), default=0.0) or None,
+                    "source": "cls",
+                    "source_update_time": datetime.utcnow(),
                 }
             )
         return rows
