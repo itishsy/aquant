@@ -47,7 +47,8 @@ export function MarketPage() {
   const [limitRows, setLimitRows] = useState<any[]>([]);
   const [limitTotal, setLimitTotal] = useState(0);
   const [limitConcept, setLimitConcept] = useState("");
-  const [conceptPickerVisible, setConceptPickerVisible] = useState(false);
+  const [limitLadder, setLimitLadder] = useState<number | null>(null);
+  const [includeSt, setIncludeSt] = useState(false);
   const [hotPlatform, setHotPlatform] = useState("");
   const [hotPlatformPickerVisible, setHotPlatformPickerVisible] = useState(false);
   const [watchCodes, setWatchCodes] = useState<Set<string>>(new Set());
@@ -59,7 +60,8 @@ export function MarketPage() {
 
     apiGet<string[]>("/h5/market/trading-dates")
       .then((dates) => {
-        const latestDate = (dates || []).slice().sort().reverse()[0];
+        const sorted = (dates || []).slice().sort();
+        const latestDate = sorted.reverse()[0];
         const nextDate = latestDate || todayString();
         setTradeDate(nextDate);
         navigate(`/market?trade_date=${nextDate}`, { replace: true });
@@ -69,7 +71,8 @@ export function MarketPage() {
         setTradeDate(fallbackDate);
         navigate(`/market?trade_date=${fallbackDate}`, { replace: true });
       });
-  }, [navigate, queryDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!tradeDate) return;
@@ -141,23 +144,37 @@ export function MarketPage() {
     { title: "话题热榜", tag: "同花顺", rows: data?.topic_list || [] },
   ];
 
-  const conceptOptions = useMemo(() => {
-    const counts: Record<string, number> = {};
-    limitRows.forEach((r) => {
-      const name = r.concept || r.plate_name || "未分类";
-      counts[name] = (counts[name] || 0) + 1;
-    });
-    return [{ label: "全部涨停", value: "" }].concat(
-      Object.entries(counts)
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, cnt]) => ({ label: `${name} (${cnt})`, value: name }))
-    );
-  }, [limitRows]);
-
   const filteredLimitRows = useMemo(() => {
-    if (!limitConcept) return limitRows;
-    return limitRows.filter((r) => (r.concept || r.plate_name || "未分类") === limitConcept);
-  }, [limitRows, limitConcept]);
+    let rows = limitRows;
+    if (!includeSt) rows = rows.filter((r) => !(r.stock_name || "").includes("ST"));
+    if (limitConcept) rows = rows.filter((r) => (r.concept || r.plate_name || "未分类") === limitConcept);
+    if (limitLadder != null) rows = rows.filter((r) => (r.board_count || r.ladder_height || 1) === limitLadder);
+    return rows;
+  }, [limitRows, limitConcept, limitLadder, includeSt]);
+
+  // Concept buttons from data (excluding ST)
+  // Rows filtered by ST and concept but NOT by ladder (for ladder computation)
+  const preLadderRows = useMemo(() => {
+    let rows = limitRows;
+    if (!includeSt) rows = rows.filter((r) => !(r.stock_name || "").includes("ST"));
+    if (limitConcept) rows = rows.filter((r) => (r.concept || r.plate_name || "未分类") === limitConcept);
+    return rows;
+  }, [limitRows, includeSt, limitConcept]);
+
+  const { preLadderHeights, preLadderHeightsCount } = useMemo(() => {
+    const heights = [...new Set(preLadderRows.map((r) => r.board_count || r.ladder_height || 1))]
+      .sort((a, b) => Number(b) - Number(a));
+    const count: Record<number, number> = {};
+    heights.forEach((h) => { count[h] = preLadderRows.filter((r) => (r.board_count || r.ladder_height || 1) === h).length; });
+    return { preLadderHeights: heights, preLadderHeightsCount: count };
+  }, [preLadderRows]);
+
+  const conceptButtons = useMemo(() => {
+    const rows = includeSt ? limitRows : limitRows.filter((r) => !(r.stock_name || "").includes("ST"));
+    const counts: Record<string, number> = {};
+    rows.forEach((r) => { const n = r.concept || r.plate_name || "未分类"; counts[n] = (counts[n] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
+  }, [limitRows, includeSt]);
 
   function showMarketInfoDetail(title: string, item: any) {
     const stocks = item.stocks || [];
@@ -455,81 +472,71 @@ export function MarketPage() {
             <article className="feature-card">
               <div className="card-head">
                 <div className="card-headline">
-                  <span className="icon-badge">{limitConcept ? filteredLimitRows.length : limitTotal}</span>
+                  <span className="icon-badge">{limitConcept || limitLadder ? filteredLimitRows.length : (includeSt ? limitTotal : (limitTotal - limitRows.filter((r) => (r.stock_name || "").includes("ST")).length))}</span>
                   <h2>涨停榜</h2>
                 </div>
-                <span className="soft-tag" style={{ cursor: "pointer" }} onClick={() => setConceptPickerVisible(true)}>
-                  {limitConcept || "全部板块"} ▾
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setIncludeSt(!includeSt)}
+                  style={{
+                    padding: "4px 10px", border: `1px solid ${includeSt ? "#e34d59" : "#ddd"}`,
+                    borderRadius: 12, fontSize: 11, fontWeight: 700,
+                    background: includeSt ? "#fff4f4" : "#fff",
+                    color: includeSt ? "#e34d59" : "#999",
+                  }}
+                >{includeSt ? "含ST" : "不含ST"}</button>
               </div>
-              {(data.limit_up_ladder || []).length ? (
-                <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <strong style={{ fontSize: 16 }}>涨停梯度</strong>
-                    <span className="soft-tag">连板结构</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 2 }}>
-                    {(data.limit_up_ladder || []).map((item: any) => (
-                      <button
-                        key={item.height}
-                        type="button"
-                        onClick={() => showLimitLadderDetail(item)}
-                        style={{
-                          minWidth: 130,
-                          border: 0,
-                          borderRadius: 18,
-                          padding: "12px 14px",
-                          textAlign: "left",
-                          background: "linear-gradient(135deg, #fff4f4 0%, #eef3ff 100%)",
-                          color: "#1d2948",
-                        }}
-                      >
-                        <div style={{ fontSize: 22, fontWeight: 900, color: "#e34d59" }}>{item.height}板</div>
-                        <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>{item.count || 0} 只</div>
-                        <div style={{ fontSize: 12, color: "#73809a", marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {(item.stocks || []).slice(0, 2).map((stock: any) => stock.stock_name).join(" / ") || "点击查看"}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+              {/* Concept filter buttons */}
+              <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 4, marginBottom: 4, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => setLimitConcept("")}
+                  style={{ flex: "0 0 auto", padding: "4px 10px", border: 0, borderRadius: 12, fontSize: 12, fontWeight: 600,
+                    background: !limitConcept ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
+                    color: !limitConcept ? "#fff" : "#64748b" }}>全部</button>
+                {conceptButtons.map(([name, count]) => (
+                  <button key={name} type="button" onClick={() => setLimitConcept(limitConcept === name ? "" : name)}
+                    style={{ flex: "0 0 auto", padding: "4px 10px", border: 0, borderRadius: 12, fontSize: 12, fontWeight: 600,
+                      background: limitConcept === name ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
+                      color: limitConcept === name ? "#fff" : "#64748b" }}>{name} {count}</button>
+                ))}
+              </div>
+              {/* Ladder filter buttons */}
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 8 }}>
+                <button type="button" onClick={() => setLimitLadder(null)}
+                  style={{ flex: "0 0 auto", padding: "6px 12px", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700,
+                    background: limitLadder == null ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
+                    color: limitLadder == null ? "#fff" : "#64748b" }}>全部</button>
+                {preLadderHeights.map((h) => (
+                  <button key={String(h)} type="button" onClick={() => setLimitLadder(limitLadder === h ? null : h)}
+                    style={{ flex: "0 0 auto", padding: "6px 12px", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700,
+                      background: limitLadder === h ? "linear-gradient(135deg, #e34d59, #c0392b)" : "#f4f6fb",
+                      color: limitLadder === h ? "#fff" : "#e34d59" }}>{h}板 {preLadderHeightsCount[h]}</button>
+                ))}
+              </div>
               {filteredLimitRows.length ? (
                 <div className="stack-list">
                   {filteredLimitRows.map((item) => (
-                    <div
-                      key={item.stock_code}
-                      className="row-card row-card-action"
-                      style={{ cursor: "pointer" }}
-                      onClick={() => showLimitUpDetail(item)}
-                    >
-                      <div>
+                    <div key={item.stock_code} className="row-card" style={{ padding: "10px 12px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <strong>
                           <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
-                          <span style={{ fontSize: 11, fontWeight: 400, color: "#999", marginLeft: 4 }}>
-                            {item.limit_time}
-                          </span>
+                          <span style={{ fontSize: 11, fontWeight: 400, color: "#999", marginLeft: 4 }}>{item.limit_time}</span>
                         </strong>
-                        <p>
+                        <p style={{ margin: "2px 0" }}>
                           {item.concept || item.plate_name || "未分类"}
-                          {(item.reason_tags || item.limit_type) ? (
-                            <span style={{ color: "#e34d59", marginLeft: 4 }}>{item.reason_tags || item.limit_type}</span>
-                          ) : null}
+                          {item.limit_reason ? <span style={{ color: "#e34d59", marginLeft: 4 }}>{item.limit_reason.slice(0, 20)}</span> : null}
                         </p>
-                        <p>
-                          涨停 {item.limit_time || "-"} / 连板 {item.board_count || item.ladder_height || 1}
-                          {item.ladder_height ? ` / ${item.ladder_height}板梯队` : ""}
+                        <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>
+                          {item.board_count || item.ladder_height || 1}板
+                          {item.change_pct != null ? ` · ${item.change_pct >= 0 ? "+" : ""}${item.change_pct}%` : ""}
+                          {item.last_price != null ? ` · ${item.last_price}` : ""}
+                          {item.turnover_rate != null ? ` · 换手${item.turnover_rate}%` : ""}
                         </p>
                       </div>
                       {watchCodes.has(item.stock_code) ? (
-                        <span style={{ fontSize: 18, color: "#00b578", lineHeight: 1 }}>✓</span>
+                        <span style={{ fontSize: 16, color: "#00b578" }}>✓</span>
                       ) : (
-                        <span
-                          style={{ fontSize: 22, color: "#4b63ee", cursor: "pointer", lineHeight: 1, fontWeight: 300 }}
-                          onClick={(e) => { e.stopPropagation(); addWatchFromMarket(item, "limit_up"); }}
-                        >
-                          +
-                        </span>
+                        <span style={{ fontSize: 20, color: "#4b63ee", cursor: "pointer", fontWeight: 300 }}
+                          onClick={(e) => { e.stopPropagation(); addWatchFromMarket(item, "limit_up"); }}>+</span>
                       )}
                     </div>
                   ))}
@@ -554,16 +561,6 @@ export function MarketPage() {
         onConfirm={(val) => {
           setHotPlatform((val as string[])[0] || "");
           setHotPlatformPickerVisible(false);
-        }}
-      />
-      <Picker
-        columns={[conceptOptions]}
-        visible={conceptPickerVisible}
-        title="选择涨停板块"
-        onClose={() => setConceptPickerVisible(false)}
-        onConfirm={(val) => {
-          setLimitConcept((val as string[])[0] || "");
-          setConceptPickerVisible(false);
         }}
       />
     </PageShell>

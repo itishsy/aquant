@@ -269,6 +269,11 @@ class PrdMarketDataService:
     def get_market_overview(self, trade_date: date) -> dict:
         row = (
             self.db.query(MktDaily)
+            .filter(MktDaily.trade_date == trade_date, MktDaily.source == "real")
+            .order_by(MktDaily.collected_at.desc())
+            .first()
+        ) or (
+            self.db.query(MktDaily)
             .filter(MktDaily.trade_date == trade_date)
             .order_by(MktDaily.collected_at.desc())
             .first()
@@ -397,10 +402,14 @@ class PrdMarketDataService:
             rows.sort(key=lambda r: r.platform_rank or 99)
             for idx, row in enumerate(rows[:10]):
                 score = self.PRIMES[idx] if idx < len(self.PRIMES) else 1
-                entry = scores.setdefault(row.stock_code, {"total_score": 0, "stock_name": row.stock_name, "platforms": [], "best_rank": 99})
+                entry = scores.setdefault(row.stock_code, {"total_score": 0, "stock_name": row.stock_name, "platforms": [], "best_rank": 99, "price": None, "change_pct": None})
                 entry["total_score"] += score
                 entry["best_rank"] = min(entry["best_rank"], idx + 1)
                 entry["platforms"].append({"platform": row.platform, "rank": idx + 1, "score": score})
+                if row.price and not entry["price"]:
+                    entry["price"] = row.price
+                if row.change_pct is not None and entry["change_pct"] is None:
+                    entry["change_pct"] = row.change_pct
 
         ranked = sorted(scores.items(), key=lambda x: x[1]["total_score"], reverse=True)[:10]
         return [
@@ -411,6 +420,8 @@ class PrdMarketDataService:
                 "best_rank": info["best_rank"],
                 "platforms": info["platforms"],
                 "cross_platform": len(info["platforms"]) >= 2,
+                "price": info["price"],
+                "change_pct": info["change_pct"],
             }
             for code, info in ranked
         ]
@@ -491,6 +502,8 @@ class PrdMarketDataService:
                 "platform_rank",
                 "raw_score",
                 "raw_reason",
+                "price",
+                "change_pct",
                 "source_url",
                 "source_update_time",
                 "collected_at",

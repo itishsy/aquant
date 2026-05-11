@@ -12,6 +12,8 @@ export function PageShell(props: {
   onDateClick?: () => void;
   onPrevDate?: () => void;
   onNextDate?: () => void;
+  disablePrev?: boolean;
+  disableNext?: boolean;
   segments?: Segment[];
   activeSegment?: string;
   hideHero?: boolean;
@@ -21,13 +23,17 @@ export function PageShell(props: {
     <section className="page-shell">
       {!props.hideHero ? (
         <header className="top-hero">
-          <button className="nav-chip" aria-label="previous" onClick={props.onPrevDate}>
+          <button className="nav-chip" aria-label="previous" onClick={props.onPrevDate}
+            disabled={props.disablePrev}
+            style={props.disablePrev ? { opacity: 0.3, pointerEvents: "none" } : undefined}>
             {"<"}
           </button>
           <button className="date-pill" type="button" onClick={props.onDateClick}>
             {props.dateText || props.title}
           </button>
-          <button className="nav-chip" aria-label="next" onClick={props.onNextDate}>
+          <button className="nav-chip" aria-label="next" onClick={props.onNextDate}
+            disabled={props.disableNext}
+            style={props.disableNext ? { opacity: 0.3, pointerEvents: "none" } : undefined}>
             {">"}
           </button>
         </header>

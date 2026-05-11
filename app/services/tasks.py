@@ -283,6 +283,8 @@ class TaskService:
                 if existing:
                     existing.platform_rank = item["platform_rank"]
                     existing.raw_score = item.get("rank_score")
+                    existing.price = item.get("price")
+                    existing.change_pct = item.get("change_pct")
                     existing.source_update_time = datetime.utcnow()
                 else:
                     self.db.add(
@@ -294,6 +296,8 @@ class TaskService:
                             board_name=item.get("sector_name"),
                             platform_rank=item["platform_rank"],
                             raw_score=item.get("rank_score"),
+                            price=item.get("price"),
+                            change_pct=item.get("change_pct"),
                             raw_payload=item.get("raw_payload", {}),
                             source_update_time=datetime.utcnow(),
                         )

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button, CenterPopup } from "antd-mobile";
+import { StockDetailPopup } from "./StockDetailPopup";
 
 type StockLinkProps = {
   stockCode?: string | null;
@@ -33,16 +34,42 @@ function InfoRow({ label, value }: { label: string; value: any }) {
   );
 }
 
+function formatStockLabel(stockName?: string | null, stockCode?: string | null, info?: Record<string, any>) {
+  const name = stockName || stockCode || "";
+  const price = info?.price ?? info?.last_price ?? info?.trigger_price ?? info?.first_buy_price;
+  const change = info?.change_pct;
+  if (price != null && change != null) {
+    const sign = change >= 0 ? "+" : "";
+    return `${name} (${price}, ${sign}${change}%)`;
+  }
+  if (price != null) {
+    return `${name} (${price})`;
+  }
+  return `${name} ${stockCode || ""}`;
+}
+
 export function StockLink({ stockCode, stockName, showCode = true, className, info }: StockLinkProps) {
   const [visible, setVisible] = useState(false);
   const url = toXueqiuUrl(stockCode);
-  const label = [stockName || stockCode, showCode && stockCode ? stockCode : ""].filter(Boolean).join(" ");
+  const label = formatStockLabel(stockName, showCode ? stockCode : null, info);
 
   if (!url) {
     return <span className={className || "stock-link"}>{label || "-"}</span>;
   }
 
   const ctx = info || {};
+
+  // Use detail popup for limit-up stocks
+  if (ctx.limit_time != null) {
+    return (
+      <>
+        <span className={className || "stock-link"} onClick={() => setVisible(true)} style={{ cursor: "pointer" }}>
+          {label}
+        </span>
+        <StockDetailPopup visible={visible} stockCode={stockCode || ""} stockName={stockName || ""} info={ctx} onClose={() => setVisible(false)} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -76,10 +103,16 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
             <div style={{ padding: "8px 12px", borderRadius: 10, background: "#f4f6fb", marginBottom: 10 }}>
               <InfoRow label="封板时间" value={ctx.limit_time} />
               <InfoRow label="连板数" value={ctx.board_count ? `${ctx.board_count}板` : ""} />
-              <InfoRow label="涨停原因" value={<span style={{ color: "#e34d59" }}>{ctx.limit_reason}</span>} />
-              <InfoRow label="所属概念" value={ctx.concept} />
+              {ctx.change_pct != null && <InfoRow label="涨幅" value={`${ctx.change_pct >= 0 ? "+" : ""}${ctx.change_pct}%`} />}
+              {ctx.last_price != null && <InfoRow label="最新价" value={ctx.last_price} />}
+              <InfoRow label="所属概念" value={ctx.concept || ctx.plate_name} />
               <InfoRow label="换手率" value={ctx.turnover_rate ? `${ctx.turnover_rate}%` : ""} />
-              <InfoRow label="开板次数" value={ctx.open_limit_count} />
+              {ctx.limit_reason && (
+                <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: "#fff4f4" }}>
+                  <div style={{ fontSize: 11, color: "#999", marginBottom: 2 }}>涨停原因</div>
+                  <div style={{ fontSize: 14, color: "#c0392b", lineHeight: 1.5, wordBreak: "break-word" }}>{ctx.limit_reason}</div>
+                </div>
+              )}
             </div>
           )}
 

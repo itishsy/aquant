@@ -180,6 +180,20 @@ def latest_source(stock_code: str, db: Session = Depends(get_db), user=Depends(r
     return ok(PrdMarketDataService(db).get_latest_source(stock_code))
 
 
+@router.get("/market/stocks/{stock_code}/kline-daily")
+def stock_kline_daily(stock_code: str, limit: int = 60, db: Session = Depends(get_db), user=Depends(require_login)):
+    from app.services.kline import KlineService
+    rows = KlineService(db).get_daily_kline(stock_code, limit)
+    return ok([{
+        "trade_date": r.trade_date.isoformat() if r.trade_date else None,
+        "open": r.open_price,
+        "high": r.high_price,
+        "low": r.low_price,
+        "close": r.close_price,
+        "volume": r.volume,
+    } for r in rows])
+
+
 @router.get("/watch-pool")
 def list_watch_pool(pool_status: str | None = None, db: Session = Depends(get_db), user=Depends(require_login)):
     return ok([_watch_dict(row) for row in PrdWatchPoolService(db).list_watch_pool(pool_status)])

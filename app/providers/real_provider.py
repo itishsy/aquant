@@ -398,6 +398,8 @@ class RealMarketProvider(
         name: str,
         sector: str = "",
         raw_payload: dict | None = None,
+        price: float | None = None,
+        change_pct: float | None = None,
     ) -> None:
         if rank > 20:
             return
@@ -413,6 +415,8 @@ class RealMarketProvider(
                 "stock_name": name,
                 "sector_name": sector,
                 "rank_score": MockProvider.PRIME_SCORES.get(rank, 1),
+                "price": price,
+                "change_pct": change_pct,
                 "raw_payload": raw_payload or {},
             }
         )
@@ -427,7 +431,12 @@ class RealMarketProvider(
             stock = item.get("stock", {})
             stock_id = stock.get("StockID") or stock.get("stock_id") or ""
             if len(stock_id) >= 8:
-                self._append_hot(rows, trade_date, "cls", idx, stock_id, stock.get("name", ""), raw_payload=item)
+                price = stock.get("last") or stock.get("Last") or stock.get("last_px")
+                change = stock.get("RiseRange") or stock.get("change") or stock.get("change_pct")
+                self._append_hot(rows, trade_date, "cls", idx, stock_id, stock.get("name", ""),
+                    raw_payload=item,
+                    price=float(price) if price else None,
+                    change_pct=float(change) if change else None)
 
     def _append_ths_hot(self, rows: list[dict], trade_date: date) -> None:
         payload = self._get_json(
@@ -439,16 +448,14 @@ class RealMarketProvider(
         for idx, item in enumerate(items[:20], start=1):
             tag = item.get("tag", {}) or {}
             sector = ",".join(tag.get("concept_tag", []) or [])
+            price = item.get("price") or item.get("last_price")
+            change = item.get("change") or item.get("change_pct")
             self._append_hot(
-                rows,
-                trade_date,
-                "ths",
-                idx,
-                item.get("code", ""),
-                item.get("name", ""),
-                sector=sector,
-                raw_payload=item,
-            )
+                rows, trade_date, "ths", idx,
+                item.get("code", ""), item.get("name", ""),
+                sector=sector, raw_payload=item,
+                price=float(price) if price else None,
+                change_pct=float(change) if change else None)
 
     def _append_tgb_hot(self, rows: list[dict], trade_date: date) -> None:
         items = self._get_json(
