@@ -59,8 +59,8 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
 
   const ctx = info || {};
 
-  // Use detail popup for limit-up stocks
-  if (ctx.limit_time != null) {
+  // Use detail popup for limit-up or hot stocks
+  if (ctx.limit_time != null || ctx.total_score != null) {
     return (
       <>
         <span className={className || "stock-link"} onClick={() => setVisible(true)} style={{ cursor: "pointer" }}>

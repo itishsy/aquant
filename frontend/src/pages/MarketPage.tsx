@@ -149,6 +149,7 @@ export function MarketPage() {
   const [includeSt, setIncludeSt] = useState(false);
   const [hotPlatform, setHotPlatform] = useState("");
   const [hotPlatformPickerVisible, setHotPlatformPickerVisible] = useState(false);
+  const [selectedSector, setSelectedSector] = useState<any>(null);
   const [watchCodes, setWatchCodes] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -250,6 +251,21 @@ export function MarketPage() {
     });
     return { ladderHeights: heights, ladderCounts: counts };
   }, [preLadderRows]);
+
+  const hotSectors = useMemo(() => {
+    const rows = includeSt ? limitRows : limitRows.filter((r) => !(r.stock_name || "").includes("ST"));
+    const counts: Record<string, { count: number; stocks: string[] }> = {};
+    rows.forEach((r) => {
+      const n = r.concept || r.plate_name || "其他";
+      if (n === "其他" || n === "未分类") return;
+      if (!counts[n]) counts[n] = { count: 0, stocks: [], limitReasons: new Set<string>() };
+      counts[n].count++;
+      if (counts[n].stocks.length < 5) counts[n].stocks.push(r.stock_name);
+      if (r.limit_reason) (counts[n].limitReasons as Set<string>).add(r.limit_reason.split("|")[0]);
+    });
+    return Object.entries(counts).sort((a, b) => b[1].count - a[1].count).slice(0, 5)
+      .map(([name, info]) => ({ name, count: info.count, topStocks: info.stocks, reasons: [...(info.limitReasons as Set<string>)] }));
+  }, [limitRows, includeSt]);
 
   const conceptButtons = useMemo(() => {
     const rows = includeSt ? limitRows : limitRows.filter((row) => !(row.stock_name || "").includes("ST"));
@@ -459,6 +475,7 @@ export function MarketPage() {
           )}
 
           {tab === "hot" && (
+            <>
             <article className="feature-card">
               <div className="card-head">
                 <div className="card-headline">
@@ -501,6 +518,34 @@ export function MarketPage() {
                 <div className="empty-panel">当前日期暂无热榜数据</div>
               )}
             </article>
+            {!hotPlatform && hotSectors.length > 0 && (
+              <article className="feature-card compact-card">
+                <div className="card-head">
+                  <div className="card-headline"><span className="icon-badge">板</span><h2>热榜板块</h2></div>
+                  <span className="soft-tag">涨停板块 Top5</span>
+                </div>
+                <div className="stack-list">
+                  {hotSectors.map((s, idx) => (
+                    <div key={s.name} className="row-card" style={{ padding: "10px 12px", gap: 8, cursor: "pointer" }}
+                      onClick={() => setSelectedSector(selectedSector?.name === s.name ? null : s)}>
+                      <span style={{ fontSize: 22, fontWeight: 900, color: idx < 3 ? "#e34d59" : "#4b63ee", minWidth: 28 }}>{idx + 1}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <strong style={{ fontSize: 15 }}>{s.name}</strong>
+                        <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>涨停 {s.count} 只</p>
+                        {s.topStocks?.length > 0 && <p style={{ margin: 0, fontSize: 11, color: "#999" }}>代表股：{s.topStocks.slice(0, 3).join(" / ")}</p>}
+                        {selectedSector?.name === s.name && (s.reasons?.length > 0) && (
+                          <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: "#f4f6fb" }}>
+                            <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>涨停原因</div>
+                            {s.reasons.map((r: string, i: number) => <div key={i} style={{ fontSize: 12, color: "#e34d59", lineHeight: 1.5 }}>{r}</div>)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            )}
+            </>
           )}
 
           {tab === "limit" && (

@@ -15,12 +15,19 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
   const [tab, setTab] = useState<"kline" | "reason">("kline");
   const [klineData, setKlineData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const xueqiuUrl = `https://xueqiu.com/S/${stockCode.replace(".", "")}`;
+  const xueqiuCode = (() => {
+    const s = stockCode.trim().toUpperCase();
+    if (/^(SH|SZ|BJ)\d{6}$/.test(s)) return s;
+    const m = s.match(/^(\d{6})\.(SH|SZ|BJ)$/);
+    return m ? `${m[2]}${m[1]}` : stockCode;
+  })();
+  const xueqiuUrl = `https://xueqiu.com/S/${xueqiuCode}`;
+  const isHot = info?.total_score != null;
 
   useEffect(() => {
     if (!visible || !stockCode) return;
     setLoading(true);
-    apiGet<any[]>(`/h5/market/stocks/${stockCode}/kline-daily?limit=60`)
+    apiGet<any[]>(`/h5/market/stocks/${stockCode}/kline-daily?limit=100`)
       .then((data) => setKlineData(data || []))
       .catch(() => setKlineData([]))
       .finally(() => setLoading(false));
@@ -28,7 +35,7 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
 
   return (
     <CenterPopup visible={visible} onClose={onClose} closeOnMaskClick>
-      <div style={{ padding: "12px 16px", maxHeight: "80vh", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "10px 12px", maxHeight: "80vh", display: "flex", flexDirection: "column" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <div>
@@ -43,7 +50,7 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
           {[
             { key: "kline" as const, label: "日K线" },
-            { key: "reason" as const, label: "涨停原因" },
+            { key: "reason" as const, label: isHot ? "入榜原因" : "涨停原因" },
           ].map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
               style={{
@@ -62,31 +69,42 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
           )}
           {tab === "reason" && (
             <div style={{ padding: "4px 0" }}>
-              {info?.limit_reason ? (
+              {isHot && (
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ padding: "10px 12px", borderRadius: 10, background: "#f4f6fb" }}>
+                    <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>热榜排名</div>
+                    <div style={{ fontSize: 24, fontWeight: 900, color: "#4b63ee" }}>#{info?.best_rank || "-"}</div>
+                    <div style={{ fontSize: 14, color: "#334", marginTop: 2 }}>综合得分 {info?.total_score}</div>
+                    {info?.cross_platform && <div style={{ fontSize: 12, color: "#e34d59" }}>多平台共振</div>}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#334" }}>各平台明细</div>
+                  {(info?.platforms || []).map((p: any) => (
+                    <div key={p.platform} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
+                      <span style={{ color: "#888" }}>{p.platform}</span><span style={{ color: "#334", fontWeight: 500 }}>#{p.rank}（{p.score}分）</span>
+                    </div>
+                  ))}
+                  {info?.change_pct != null && (
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
+                      <span style={{ color: "#888" }}>涨幅</span><span style={{ color: "#334", fontWeight: 500 }}>{info.change_pct >= 0 ? "+" : ""}{info.change_pct}%</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!isHot && info?.limit_reason ? (
                 <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff4f4" }}>
                   <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>涨停原因明细</div>
-                  <div style={{ fontSize: 15, color: "#c0392b", lineHeight: 1.6, wordBreak: "break-word" }}>
-                    {info.limit_reason}
-                  </div>
+                  <div style={{ fontSize: 15, color: "#c0392b", lineHeight: 1.6 }}>{info.limit_reason}</div>
                 </div>
-              ) : (
-                <div style={{ textAlign: "center", padding: 30, color: "#888", fontSize: 14 }}>暂无涨停原因</div>
+              ) : null}
+              {!isHot && (
+                <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
+                  {[["封板时间", info?.limit_time], ["连板数", info?.board_count ? `${info.board_count}板` : "-"], ["所属概念", info?.concept || info?.plate_name], ["涨幅", info?.change_pct != null ? `${info.change_pct >= 0 ? "+" : ""}${info.change_pct}%` : "-"], ["最新价", info?.last_price], ["换手率", info?.turnover_rate != null ? `${info.turnover_rate}%` : "-"]].filter(([, v]) => v != null && v !== "").map(([label, value]) => (
+                    <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
+                      <span style={{ color: "#888" }}>{label}</span><span style={{ color: "#334", fontWeight: 500 }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
               )}
-              <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
-                {[
-                  ["封板时间", info?.limit_time],
-                  ["连板数", info?.board_count ? `${info.board_count}板` : "-"],
-                  ["所属概念", info?.concept || info?.plate_name],
-                  ["涨幅", info?.change_pct != null ? `${info.change_pct >= 0 ? "+" : ""}${info.change_pct}%` : "-"],
-                  ["最新价", info?.last_price],
-                  ["换手率", info?.turnover_rate != null ? `${info.turnover_rate}%` : "-"],
-                ].filter(([, v]) => v != null && v !== "").map(([label, value]) => (
-                  <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
-                    <span style={{ color: "#888" }}>{label}</span>
-                    <span style={{ color: "#334", fontWeight: 500 }}>{value}</span>
-                  </div>
-                ))}
-              </div>
             </div>
           )}
         </div>
@@ -102,57 +120,50 @@ function KlineChart({ data, loading }: { data: any[]; loading: boolean }) {
     const dates = data.map((d) => d.trade_date);
     const values = data.map((d) => [d.open, d.close, d.low, d.high]);
     const volumes = data.map((d) => d.volume || 0);
+    const ma5 = data.map((d) => d.ma5 ?? null);
+    const ma10 = data.map((d) => d.ma10 ?? null);
+    const ma20 = data.map((d) => d.ma20 ?? null);
 
     chart.setOption({
+      animation: false,
       tooltip: { trigger: "axis" },
       grid: [
-        { left: 8, right: 8, top: 8, height: "60%" },
-        { left: 8, right: 8, top: "75%", height: "18%" },
+        { left: 44, right: 8, top: 8, height: 0 },
+        { left: 44, right: 8, top: 8, height: "62%" },
+        { left: 44, right: 8, top: "74%", height: "16%" },
       ],
       xAxis: [
-        { type: "category", data: dates, gridIndex: 0, axisLabel: { fontSize: 10, rotate: 30, interval: Math.max(1, Math.floor(data.length / 8)) } },
-        { type: "category", data: dates, gridIndex: 1, axisLabel: { show: false } },
+        { type: "category", data: dates, boundaryGap: true, gridIndex: 0, axisLabel: { show: false }, axisTick: { show: false } },
+        { type: "category", data: dates, boundaryGap: true, gridIndex: 1, axisLabel: { show: false }, axisTick: { show: false } },
+        { type: "category", data: dates, gridIndex: 2, axisLabel: { show: false } },
       ],
       yAxis: [
-        { type: "value", gridIndex: 0, scale: true, axisLabel: { fontSize: 10 } },
-        { type: "value", gridIndex: 1, axisLabel: { fontSize: 10 } },
+        { type: "value", gridIndex: 0, show: false },
+        { type: "value", gridIndex: 1, scale: true, splitLine: { lineStyle: { color: "#f0f0f0" } }, axisLabel: { fontSize: 10 } },
+        { type: "value", gridIndex: 2, axisLabel: { show: false } },
       ],
       dataZoom: [
-        { type: "inside", xAxisIndex: [0, 1], zoomOnMouseWheel: true, moveOnMouseMove: true },
-        { type: "slider", xAxisIndex: [0, 1], bottom: 0, height: 16, borderColor: "#ddd", fillerColor: "rgba(75,99,238,0.1)", handleSize: "80%" },
+        { type: "inside", xAxisIndex: [0, 1, 2], zoomOnMouseWheel: true, moveOnMouseMove: true },
+        { type: "slider", xAxisIndex: [0, 1, 2], bottom: 2, height: 18, borderColor: "#e8ecf4", fillerColor: "rgba(75,99,238,0.08)", handleSize: "90%", start: Math.max(0, 100 - 60 / data.length * 100), end: 100 },
       ],
       series: [
-        {
-          name: "K线",
-          type: "candlestick",
-          data: values,
-          xAxisIndex: 0, yAxisIndex: 0,
-          itemStyle: { color: "#e34d59", color0: "#00b578", borderColor: "#e34d59", borderColor0: "#00b578" },
-        },
-        {
-          name: "成交量",
-          type: "bar",
-          data: volumes,
-          xAxisIndex: 1, yAxisIndex: 1,
-          itemStyle: { color: (params: any) => {
-            const idx = params.dataIndex;
-            const d = data[idx];
-            return d.close >= d.open ? "#e34d59" : "#00b578";
-          }},
-        },
+        { name: "K线", type: "candlestick", data: values, xAxisIndex: 1, yAxisIndex: 1,
+          itemStyle: { color: "#e34d59", color0: "#00b578", borderColor: "#e34d59", borderColor0: "#00b578" } },
+        { name: "MA5", type: "line", data: ma5, xAxisIndex: 1, yAxisIndex: 1, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#f59e0b" } },
+        { name: "MA10", type: "line", data: ma10, xAxisIndex: 1, yAxisIndex: 1, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#3b82f6" } },
+        { name: "MA20", type: "line", data: ma20, xAxisIndex: 1, yAxisIndex: 1, smooth: true, symbol: "none", lineStyle: { width: 1.5, color: "#8b5cf6" } },
+        { name: "量", type: "bar", data: volumes, xAxisIndex: 2, yAxisIndex: 2,
+          itemStyle: { color: (params: any) => { const d = data[params.dataIndex]; return d.close >= d.open ? "#e34d59" : "#00b578"; } } },
       ],
     });
 
     const handleResize = () => chart.resize();
     window.addEventListener("resize", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      chart.dispose();
-    };
+    return () => { window.removeEventListener("resize", handleResize); chart.dispose(); };
   };
 
-  if (loading) return <div style={{ textAlign: "center", padding: 40 }}><SpinLoading /></div>;
-  if (!data.length) return <div style={{ textAlign: "center", padding: 40, color: "#888" }}>暂无K线数据</div>;
+  if (loading) return <div style={{ height: 280, display: "grid", placeItems: "center" }}><SpinLoading /></div>;
+  if (!data.length) return <div style={{ height: 120, display: "grid", placeItems: "center", color: "#888" }}>暂无K线数据</div>;
 
-  return <div ref={containerRef} style={{ width: "100%", height: 380 }} />;
+  return <div ref={containerRef} style={{ width: "100%", height: 340 }} />;
 }
