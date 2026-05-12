@@ -9,7 +9,7 @@ from app.models import (
     MktDaily,
     MktHotBoard,
     MktHotStock,
-    MktLimitUp,
+    MktLimitUpStock,
     ReviewForm,
     ReviewMonthly,
     ReviewTrade,
@@ -56,7 +56,7 @@ class MockDataService:
             "mkt_daily": self._init_market(dates),
             "mkt_hot_board": self._init_hot_boards(dates[0]),
             "mkt_hot_stock": self._init_hot_stocks(dates[0]),
-            "mkt_limit_up": self._init_limit_ups(dates[0]),
+            "mkt_limit_up_stock": self._init_limit_ups(dates[0]),
             "watch_pool": 0,
             "watch_signal": 0,
             "watch_trade": 0,
@@ -166,27 +166,35 @@ class MockDataService:
     def _init_limit_ups(self, day: date) -> int:
         created = 0
         for rank, (code, name, sector) in enumerate(self.STOCKS[:10], start=1):
-            platform = "财联社"
-            row = self.db.query(MktLimitUp).filter_by(trade_date=day, platform=platform, stock_code=code).first()
+            platform = "mock"
+            row = (
+                self.db.query(MktLimitUpStock)
+                .filter_by(trade_date=day, source="mock", platform=platform, stock_code=code)
+                .first()
+            )
             if not row:
-                row = MktLimitUp(trade_date=day, platform=platform, stock_code=code, stock_name=name)
+                row = MktLimitUpStock(
+                    trade_date=day,
+                    source="mock",
+                    platform=platform,
+                    stock_code=code,
+                    stock_name=name,
+                )
                 self.db.add(row)
                 created += 1
             row.stock_name = name
+            row.plate_name = sector
+            row.raw_secu_code = code.replace(".", "").lower()
             row.limit_time = f"{9 + rank // 3:02d}:{30 + rank:02d}"
-            row.last_limit_time = row.limit_time
-            row.open_limit_count = rank % 2
-            row.seal_amount = round(1.2 + rank * 0.25, 2)
-            row.seal_volume = 50000 + rank * 8000
-            row.turnover_rate = round(4.5 + rank * 0.6, 2)
-            row.amount = round(22.0 + rank * 5.5, 2)
+            row.limit_datetime = datetime.combine(day, datetime.min.time()).replace(hour=9 + rank // 3, minute=30 + rank)
+            row.change_pct = round(10.0 - rank * 0.08, 2)
+            row.last_price = round(18 + rank * 1.2, 2)
+            row.board_days = rank if rank <= 3 else None
             row.board_count = 1 if rank > 3 else rank
-            row.concept = sector
+            row.board_text = f"{row.board_days}天{row.board_count}板" if row.board_days else f"{row.board_count}板"
             row.limit_reason = f"{sector} 方向活跃，平台原始涨停原因。"
-            row.limit_type = "首板" if row.board_count == 1 else "连板"
-            row.source_url = f"mock://limit-up/{code}"
+            row.reason_tags = "首板" if row.board_count == 1 else "连板"
             row.source_update_time = datetime.combine(day, datetime.min.time()).replace(hour=15, minute=20)
-            row.raw_payload = {"rank_no": rank, "limit_reason": row.limit_reason}
         return created
 
     def _init_watch_pool(self, day: date) -> list[WatchPool]:

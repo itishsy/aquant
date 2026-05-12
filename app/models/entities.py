@@ -147,20 +147,6 @@ class MktDailyTopicStock(TimestampMixin, SystemBase):
     change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
-class MktLimitUpLadder(TimestampMixin, SystemBase):
-    __tablename__ = "mkt_limit_up_ladder"
-    __table_args__ = (UniqueConstraint("trade_date", "source", "height", name="uq_mkt_limit_ladder_day_source_height"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    source: Mapped[str] = mapped_column(String(32), default="real", index=True)
-    platform: Mapped[str] = mapped_column(String(32), default="cls", index=True)
-    height: Mapped[int] = mapped_column(Integer, index=True)
-    stock_count: Mapped[int] = mapped_column(Integer, default=0)
-    source_update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    collected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-
-
 class MktLimitUpPlate(TimestampMixin, SystemBase):
     __tablename__ = "mkt_limit_up_plate"
     __table_args__ = (UniqueConstraint("trade_date", "source", "plate_code", name="uq_mkt_limit_plate_day_source_code"),)
@@ -186,6 +172,7 @@ class MktLimitUpStock(TimestampMixin, SystemBase):
     trade_date: Mapped[date] = mapped_column(Date, index=True)
     source: Mapped[str] = mapped_column(String(32), default="real", index=True)
     platform: Mapped[str] = mapped_column(String(32), default="cls", index=True)
+    raw_secu_code: Mapped[str] = mapped_column(String(32), default="", index=True)
     stock_code: Mapped[str] = mapped_column(String(16), index=True)
     stock_name: Mapped[str] = mapped_column(String(64), default="")
     plate_code: Mapped[str] = mapped_column(String(32), default="", index=True)
@@ -194,6 +181,8 @@ class MktLimitUpStock(TimestampMixin, SystemBase):
     last_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     circulating_market_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
     limit_time: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    limit_datetime: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    board_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     board_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     board_text: Mapped[str] = mapped_column(String(64), default="")
     limit_reason: Mapped[str] = mapped_column(Text, default="")
@@ -201,16 +190,6 @@ class MktLimitUpStock(TimestampMixin, SystemBase):
     ladder_height: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     source_update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-
-
-class MktLimitUpLadderStock(TimestampMixin, SystemBase):
-    __tablename__ = "mkt_limit_up_ladder_stock"
-    __table_args__ = (UniqueConstraint("ladder_id", "stock_code", name="uq_mkt_limit_ladder_stock"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ladder_id: Mapped[int] = mapped_column(Integer, index=True)
-    stock_code: Mapped[str] = mapped_column(String(16), index=True)
-    stock_name: Mapped[str] = mapped_column(String(64), default="")
 
 
 class MktHotBoard(TimestampMixin, SystemBase):
@@ -250,32 +229,6 @@ class MktHotStock(TimestampMixin, SystemBase):
     raw_reason: Mapped[str] = mapped_column(Text, default="")
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
-    source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    source_update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    collected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
-
-
-class MktLimitUp(TimestampMixin, SystemBase):
-    __tablename__ = "mkt_limit_up"
-    __table_args__ = (UniqueConstraint("trade_date", "platform", "stock_code", name="uq_mkt_limit_up_day_platform_code"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    platform: Mapped[str] = mapped_column(String(32), index=True)
-    stock_code: Mapped[str] = mapped_column(String(16), index=True)
-    stock_name: Mapped[str] = mapped_column(String(64))
-    limit_time: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    last_limit_time: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    open_limit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    seal_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
-    seal_volume: Mapped[float | None] = mapped_column(Float, nullable=True)
-    turnover_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
-    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
-    board_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    concept: Mapped[str] = mapped_column(String(128), default="")
-    limit_reason: Mapped[str] = mapped_column(Text, default="")
-    limit_type: Mapped[str] = mapped_column(String(64), default="")
     source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

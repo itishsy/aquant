@@ -47,6 +47,10 @@ function pctColor(value?: number | null) {
   return value == null ? "#7687a4" : value >= 0 ? "#e34d59" : "#00b578";
 }
 
+function limitHeight(row: any) {
+  return row.ladder_height || row.board_count || 1;
+}
+
 function LimitUpKlineChart({ stockCode }: { stockCode?: string }) {
   const chartRef = useRef<HTMLDivElement | null>(null);
   const [rows, setRows] = useState<any[]>([]);
@@ -142,7 +146,9 @@ export function MarketPage() {
   const [data, setData] = useState<MarketSummary | null>(null);
   const [review, setReview] = useState<any>(null);
   const [hotStocks, setHotStocks] = useState<any[]>([]);
+  const [hotSectors, setHotSectors] = useState<any[]>([]);
   const [limitRows, setLimitRows] = useState<any[]>([]);
+  const [limitLadderRows, setLimitLadderRows] = useState<any[]>([]);
   const [limitTotal, setLimitTotal] = useState(0);
   const [limitConcept, setLimitConcept] = useState("");
   const [limitLadder, setLimitLadder] = useState<number | null>(null);
@@ -193,14 +199,25 @@ export function MarketPage() {
       .then((hot) => setHotStocks(hot.list || hot || []))
       .catch(() => setHotStocks([]));
 
+    apiGet<any>(`/h5/market/hot-boards?trade_date=${tradeDate}&page_size=5`)
+      .then((boards) => setHotSectors((boards.list || boards || []).map((row: any) => ({
+        name: row.plate_name || row.board_name,
+        count: row.limit_up_count || row.raw_score || 0,
+        changePct: row.change_pct,
+        reason: row.up_reason || row.reason || "",
+      }))))
+      .catch(() => setHotSectors([]));
+
     apiGet<any>(`/h5/market/limit-ups?trade_date=${tradeDate}&page_size=500`)
       .then((limitList) => {
         const rows = limitList.list || limitList || [];
         setLimitRows(rows);
+        setLimitLadderRows(limitList.limit_up_ladder || []);
         setLimitTotal(limitList.total || rows.length || 0);
       })
       .catch(() => {
         setLimitRows([]);
+        setLimitLadderRows([]);
         setLimitTotal(0);
       })
       .finally(() => setLoading(false));
@@ -231,7 +248,7 @@ export function MarketPage() {
     let rows = limitRows;
     if (!includeSt) rows = rows.filter((row) => !(row.stock_name || "").includes("ST"));
     if (limitConcept) rows = rows.filter((row) => (row.concept || row.plate_name || "未分类") === limitConcept);
-    if (limitLadder != null) rows = rows.filter((row) => (row.board_count || row.ladder_height || 1) === limitLadder);
+    if (limitLadder != null) rows = rows.filter((row) => limitHeight(row) === limitLadder);
     return rows;
   }, [limitRows, limitConcept, limitLadder, includeSt]);
 
@@ -243,29 +260,22 @@ export function MarketPage() {
   }, [limitRows, includeSt, limitConcept]);
 
   const { ladderHeights, ladderCounts } = useMemo(() => {
-    const heights = [...new Set(preLadderRows.map((row) => row.board_count || row.ladder_height || 1))]
+    if (includeSt && !limitConcept && limitLadderRows.length) {
+      const heights = limitLadderRows.map((row) => row.height).filter(Boolean).sort((a, b) => Number(b) - Number(a));
+      const counts: Record<number, number> = {};
+      limitLadderRows.forEach((row) => {
+        counts[row.height] = row.count || 0;
+      });
+      return { ladderHeights: heights, ladderCounts: counts };
+    }
+    const heights = [...new Set(preLadderRows.map((row) => limitHeight(row)))]
       .sort((a, b) => Number(b) - Number(a));
     const counts: Record<number, number> = {};
     heights.forEach((height) => {
-      counts[height] = preLadderRows.filter((row) => (row.board_count || row.ladder_height || 1) === height).length;
+      counts[height] = preLadderRows.filter((row) => limitHeight(row) === height).length;
     });
     return { ladderHeights: heights, ladderCounts: counts };
-  }, [preLadderRows]);
-
-  const hotSectors = useMemo(() => {
-    const rows = includeSt ? limitRows : limitRows.filter((r) => !(r.stock_name || "").includes("ST"));
-    const counts: Record<string, { count: number; stocks: string[] }> = {};
-    rows.forEach((r) => {
-      const n = r.concept || r.plate_name || "其他";
-      if (n === "其他" || n === "未分类") return;
-      if (!counts[n]) counts[n] = { count: 0, stocks: [], limitReasons: new Set<string>() };
-      counts[n].count++;
-      if (counts[n].stocks.length < 5) counts[n].stocks.push(r.stock_name);
-      if (r.limit_reason) (counts[n].limitReasons as Set<string>).add(r.limit_reason.split("|")[0]);
-    });
-    return Object.entries(counts).sort((a, b) => b[1].count - a[1].count).slice(0, 5)
-      .map(([name, info]) => ({ name, count: info.count, topStocks: info.stocks, reasons: [...(info.limitReasons as Set<string>)] }));
-  }, [limitRows, includeSt]);
+  }, [preLadderRows, includeSt, limitConcept, limitLadderRows]);
 
   const conceptButtons = useMemo(() => {
     const rows = includeSt ? limitRows : limitRows.filter((row) => !(row.stock_name || "").includes("ST"));
@@ -311,7 +321,7 @@ export function MarketPage() {
           <p><strong>股票：</strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} showCode /></p>
           <p><strong>所属板块：</strong>{item.concept || item.plate_name || "未分类"}</p>
           <p><strong>涨停时间：</strong>{item.limit_time || "-"}</p>
-          <p><strong>连板：</strong>{item.board_count || item.ladder_height || 1} 板</p>
+          <p><strong>连板：</strong>{limitHeight(item)} 板</p>
           {item.change_pct != null ? <p><strong>涨幅：</strong>{formatPct(item.change_pct)}</p> : null}
           {item.last_price != null ? <p><strong>最新价：</strong>{item.last_price}</p> : null}
           {item.reason_tags || item.limit_type ? <p><strong>标签：</strong>{item.reason_tags || item.limit_type}</p> : null}
@@ -532,11 +542,12 @@ export function MarketPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <strong style={{ fontSize: 15 }}>{s.name}</strong>
                         <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>涨停 {s.count} 只</p>
-                        {s.topStocks?.length > 0 && <p style={{ margin: 0, fontSize: 11, color: "#999" }}>代表股：{s.topStocks.slice(0, 3).join(" / ")}</p>}
-                        {selectedSector?.name === s.name && (s.reasons?.length > 0) && (
+                        {s.changePct != null && <p style={{ margin: 0, fontSize: 11, color: "#999" }}>板块涨幅：{formatPct(s.changePct)}</p>}
+                        {s.reason && <p style={{ margin: 0, fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>上榜理由：{s.reason}</p>}
+                        {selectedSector?.name === s.name && s.reason && (
                           <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: "#f4f6fb" }}>
-                            <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>涨停原因</div>
-                            {s.reasons.map((r: string, i: number) => <div key={i} style={{ fontSize: 12, color: "#e34d59", lineHeight: 1.5 }}>{r}</div>)}
+                            <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>上榜理由</div>
+                            <div style={{ fontSize: 12, color: "#e34d59", lineHeight: 1.5 }}>{s.reason}</div>
                           </div>
                         )}
                       </div>
@@ -599,7 +610,7 @@ export function MarketPage() {
                           {(item.reason_tags || item.limit_type) ? <span style={{ color: "#e34d59", marginLeft: 4 }}>{item.reason_tags || item.limit_type}</span> : null}
                         </p>
                         <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>
-                          {item.board_count || item.ladder_height || 1}板
+                          {limitHeight(item)}板
                           {item.change_pct != null ? ` / ${formatPct(item.change_pct)}` : ""}
                           {item.last_price != null ? ` / ${item.last_price}` : ""}
                           {item.turnover_rate != null ? ` / 换手${item.turnover_rate}%` : ""}

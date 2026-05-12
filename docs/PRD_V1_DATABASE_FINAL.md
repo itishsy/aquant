@@ -3,6 +3,7 @@
 Active migration baseline:
 
 - `alembic/versions/20260505_0001_prd_v1_baseline.py`
+- Latest incremental migration: `alembic/versions/20260512_0008_simplify_limit_up_stock.py`
 
 This is a development reset baseline. Rebuild local development databases from this migration.
 
@@ -14,11 +15,13 @@ This is a development reset baseline. Rebuild local development databases from t
 - `mkt_daily`
 - `mkt_hot_board`
 - `mkt_hot_stock`
-- `mkt_limit_up`
+- `mkt_limit_up_stock`
+- `mkt_limit_up_plate`
 - `mkt_stock_kline_daily`
 - `mkt_stock_kline_15m`
 
 Market data tables retain source/platform traceability fields such as `source`, `platform`, `source_url`, `source_update_time`, and `collected_at` where applicable.
+Limit-up ladder display is now calculated from `mkt_limit_up_stock.ladder_height` / `board_count`; no standalone ladder table is active.
 
 ### Watch, Signals, Trades
 
@@ -62,7 +65,8 @@ Watch-pool records are manually created. Trade records use `watch_trade` as the 
 - `mkt_daily`: `trade_date + source`
 - `mkt_hot_board`: `trade_date + platform + board_name`
 - `mkt_hot_stock`: `trade_date + platform + stock_code`
-- `mkt_limit_up`: `trade_date + platform + stock_code`
+- `mkt_limit_up_stock`: `trade_date + source + stock_code`
+- `mkt_limit_up_plate`: `trade_date + source + plate_code`
 - `mkt_stock_kline_daily`: `stock_code + trade_date + source`
 - `mkt_stock_kline_15m`: `stock_code + kline_time + source`
 - `watch_signal`: `stock_code + buy_point_type + signal_type + trigger_date`
@@ -97,6 +101,8 @@ The following old MVP/v1.1 tables are no longer active PRD v1 models:
 - `monthly_review`
 - `discipline_rule`
 - `user_trading_score`
+- `mkt_limit_up_ladder`
+- `mkt_limit_up_ladder_stock`
 
 Old migration files were archived to `alembic/archive_old/`.
 

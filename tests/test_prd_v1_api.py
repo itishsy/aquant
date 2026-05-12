@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from app.models import MktHotStock, MktLimitUp, ReviewForm, WatchPool, WatchSignal
+from app.models import MktHotStock, MktLimitUpPlate, MktLimitUpStock, ReviewForm, WatchPool, WatchSignal
 
 
 def test_common_xueqiu_url_enveloped(client):
@@ -26,18 +26,48 @@ def test_h5_market_uses_raw_hot_stock_fields(client, db_session):
         )
     )
     db_session.add(
-        MktLimitUp(
+        MktLimitUpStock(
             trade_date=trade_date,
+            source="mock",
             platform="mock",
             stock_code="603019.SH",
             stock_name="中科曙光",
-            board_count=1,
+            plate_name="测试板块",
+            raw_secu_code="sh603019",
+            board_days=3,
+            board_count=2,
+            board_text="3天2板",
+            ladder_height=2,
             limit_reason="平台涨停原因",
         )
     )
+    db_session.add_all(
+        [
+            MktLimitUpPlate(
+                trade_date=trade_date,
+                source="mock",
+                platform="mock",
+                plate_code="p1",
+                plate_name="AI应用",
+                limit_up_count=8,
+                change_pct=2.5,
+                up_reason="上榜理由来自涨停板块表",
+            ),
+            MktLimitUpPlate(
+                trade_date=trade_date,
+                source="mock",
+                platform="mock",
+                plate_code="p2",
+                plate_name="ST板块",
+                limit_up_count=99,
+                change_pct=9.9,
+                up_reason="应排除 ST",
+            ),
+        ]
+    )
     db_session.commit()
 
-    response = client.get(f"/api/h5/market/hot-stocks?trade_date={trade_date}")
+    response = client.get(f"/api/h5/market/hot-stocks?trade_date={trade_date}&platform=mock")
     assert response.status_code == 200
     item = response.json()["data"]["list"][0]
     assert item["platform_rank"] == 1
@@ -46,7 +76,19 @@ def test_h5_market_uses_raw_hot_stock_fields(client, db_session):
 
     limit_response = client.get(f"/api/h5/market/limit-ups?trade_date={trade_date}")
     assert limit_response.status_code == 200
-    assert limit_response.json()["data"]["list"][0]["limit_reason"] == "平台涨停原因"
+    limit_data = limit_response.json()["data"]
+    assert limit_data["list"][0]["limit_reason"] == "平台涨停原因"
+    assert limit_data["list"][0]["board_text"] == "3天2板"
+    assert limit_data["limit_up_ladder"][0]["height"] == 2
+    assert limit_data["limit_up_ladder"][0]["count"] == 1
+
+    board_response = client.get(f"/api/h5/market/hot-boards?trade_date={trade_date}&platform=mock")
+    assert board_response.status_code == 200
+    boards = board_response.json()["data"]["list"]
+    assert boards[0]["board_name"] == "AI应用"
+    assert boards[0]["limit_up_count"] == 8
+    assert boards[0]["up_reason"] == "上榜理由来自涨停板块表"
+    assert all("ST" not in item["board_name"] for item in boards)
 
 
 def test_h5_watch_pool_manual_add_only_and_idempotent(client):

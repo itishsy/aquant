@@ -191,7 +191,7 @@ class RealMarketProvider(
             "raw_market_subjects": {"cls": cls_payload, "ths": ths_payload},
         }
 
-    def _simplify_limit_ladder_stock(self, item: dict[str, Any]) -> dict:
+    def _simplify_continuous_limit_stock(self, item: dict[str, Any]) -> dict:
         raw_code = item.get("secu_code") or ""
         try:
             stock_code = self._to_code(raw_code)
@@ -205,7 +205,7 @@ class RealMarketProvider(
     def _simplify_limit_up_ladder(self, analysis: dict[str, Any]) -> list[dict]:
         rows = []
         for item in analysis.get("continuous_limit_up") or []:
-            stocks = [self._simplify_limit_ladder_stock(stock) for stock in item.get("stock_list") or []]
+            stocks = [self._simplify_continuous_limit_stock(stock) for stock in item.get("stock_list") or []]
             rows.append(
                 {
                     "height": self._int(item.get("height")),
@@ -214,6 +214,30 @@ class RealMarketProvider(
                 }
             )
         return sorted(rows, key=lambda row: row["height"], reverse=True)
+
+    @staticmethod
+    def _parse_limit_up_text(text: Any) -> tuple[int | None, int]:
+        value = str(text or "").strip()
+        if not value:
+            return None, 1
+        numbers = [int(item) for item in re.findall(r"\d+", value)]
+        if len(numbers) >= 2:
+            return numbers[0], numbers[1]
+        if len(numbers) == 1:
+            return None, numbers[0]
+        return None, 1
+
+    @staticmethod
+    def _parse_cls_datetime(value: Any) -> datetime | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        return None
 
     def get_limit_up_analysis(self, trade_date: date) -> dict:
         payload = self._get_json(
@@ -254,11 +278,12 @@ class RealMarketProvider(
                 reason_tags = ",".join(stock.get("up_tags") or [])
                 if not reason_tags and "|" in up_reason:
                     reason_tags = up_reason.split("|", 1)[0]
-                board_count = self._int(stock.get("up_num"), default=ladder_by_code.get(stock_code, 1))
+                board_days, board_count = self._parse_limit_up_text(stock.get("up_num"))
                 stock_rows_by_code[stock_code] = {
                     "trade_date": trade_date,
                     "source": "real",
                     "platform": "cls",
+                    "raw_secu_code": stock.get("secu_code") or "",
                     "stock_code": stock_code,
                     "stock_name": stock.get("secu_name") or "",
                     "plate_code": plate_code,
@@ -267,6 +292,8 @@ class RealMarketProvider(
                     "last_price": self._number(stock.get("last_px")),
                     "circulating_market_cap": self._number(stock.get("cmc")),
                     "limit_time": stock.get("time") or "",
+                    "limit_datetime": self._parse_cls_datetime(stock.get("time")),
+                    "board_days": board_days,
                     "board_count": board_count,
                     "board_text": stock.get("up_num") or "",
                     "limit_reason": up_reason,

@@ -166,8 +166,12 @@ def hot_stocks(trade_date: date | None = None, platform: str | None = None, page
 
 @router.get("/market/limit-ups")
 def limit_ups(trade_date: date | None = None, platform: str | None = None, page_no: int = 1, page_size: int = 20, db: Session = Depends(get_db), user=Depends(require_login)):
-    rows = PrdMarketDataService(db).get_limit_ups(trade_date, platform)
-    return ok(page(rows[(page_no - 1) * page_size : page_no * page_size], page_no, page_size, len(rows)))
+    service = PrdMarketDataService(db)
+    rows = service.get_limit_ups(trade_date, platform)
+    payload = page(rows[(page_no - 1) * page_size : page_no * page_size], page_no, page_size, len(rows))
+    if trade_date:
+        payload["limit_up_ladder"] = service.get_limit_up_ladder(trade_date)
+    return ok(payload)
 
 
 @router.get("/market/stocks/{stock_code}/source-summary")

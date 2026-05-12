@@ -20,9 +20,7 @@ from app.models import (
     MktDailyTuyereStock,
     MktHotBoard,
     MktHotStock,
-    MktLimitUp,
-    MktLimitUpLadder,
-    MktLimitUpLadderStock,
+    MktLimitUpPlate,
     MktLimitUpStock,
     MyNotificationSetting,
     MyUserProfile,
@@ -243,28 +241,28 @@ class PrdMarketDataService:
 
     def _limit_up_ladder(self, trade_date: date) -> list[dict]:
         rows = (
-            self.db.query(MktLimitUpLadder)
-            .filter(MktLimitUpLadder.trade_date == trade_date)
-            .order_by(MktLimitUpLadder.height.desc())
+            self.db.query(MktLimitUpStock)
+            .filter(MktLimitUpStock.trade_date == trade_date)
             .all()
         )
-        result = []
+        grouped: dict[int, list[MktLimitUpStock]] = {}
         for row in rows:
-            stocks = (
-                self.db.query(MktLimitUpLadderStock)
-                .filter(MktLimitUpLadderStock.ladder_id == row.id)
-                .order_by(MktLimitUpLadderStock.id.asc())
-                .all()
-            )
-            result.append({
-                "height": row.height,
-                "count": row.stock_count,
+            height = row.ladder_height or row.board_count or 1
+            grouped.setdefault(height, []).append(row)
+        return [
+            {
+                "height": height,
+                "count": len(stocks),
                 "stocks": [
                     {"stock_code": stock.stock_code, "stock_name": stock.stock_name}
-                    for stock in stocks
+                    for stock in sorted(stocks, key=lambda item: (item.limit_datetime is None, item.limit_datetime, item.stock_code))
                 ],
-            })
-        return result
+            }
+            for height, stocks in sorted(grouped.items(), key=lambda item: item[0], reverse=True)
+        ]
+
+    def get_limit_up_ladder(self, trade_date: date) -> list[dict]:
+        return self._limit_up_ladder(trade_date)
 
     def get_market_overview(self, trade_date: date) -> dict:
         row = (
@@ -373,6 +371,24 @@ class PrdMarketDataService:
         }
 
     def get_hot_boards(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
+        if trade_date:
+            query = self.db.query(MktLimitUpPlate).filter(MktLimitUpPlate.trade_date == trade_date)
+            if platform:
+                query = query.filter(MktLimitUpPlate.platform == platform)
+            query = query.filter(
+                ~MktLimitUpPlate.plate_name.like("%ST%"),
+                MktLimitUpPlate.plate_name != "其他",
+                MktLimitUpPlate.plate_name != "其它",
+                MktLimitUpPlate.plate_name != "未分类",
+            )
+            return [
+                self._limit_up_plate_board_dict(row, index)
+                for index, row in enumerate(
+                    query.order_by(MktLimitUpPlate.limit_up_count.desc(), MktLimitUpPlate.change_pct.desc()).limit(5).all(),
+                    start=1,
+                )
+            ]
+
         query = self.db.query(MktHotBoard)
         if trade_date:
             query = query.filter(MktHotBoard.trade_date == trade_date)
@@ -433,25 +449,16 @@ class PrdMarketDataService:
         if platform:
             stock_query = stock_query.filter(MktLimitUpStock.platform == platform)
         stock_rows = stock_query.order_by(MktLimitUpStock.limit_time, MktLimitUpStock.stock_code).all()
-        if stock_rows:
-            return [self._limit_up_stock_dict(row) for row in stock_rows]
-
-        query = self.db.query(MktLimitUp)
-        if trade_date:
-            query = query.filter(MktLimitUp.trade_date == trade_date)
-        if platform:
-            query = query.filter(MktLimitUp.platform == platform)
-        return [self._limit_up_dict(row) for row in query.order_by(MktLimitUp.limit_time, MktLimitUp.stock_code).all()]
+        return [self._limit_up_stock_dict(row) for row in stock_rows]
 
     def get_stock_source_summary(self, stock_code: str, trade_date: date) -> dict:
         code = normalize_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code, trade_date=trade_date).all()
         limit_stock_rows = self.db.query(MktLimitUpStock).filter_by(stock_code=code, trade_date=trade_date).all()
-        limit_rows = self.db.query(MktLimitUp).filter_by(stock_code=code, trade_date=trade_date).all()
         return {
             "stock_code": code,
             "hot_sources": [self._hot_stock_dict(item) for item in hot],
-            "limit_sources": [self._limit_up_stock_dict(item) for item in limit_stock_rows] or [self._limit_up_dict(item) for item in limit_rows],
+            "limit_sources": [self._limit_up_stock_dict(item) for item in limit_stock_rows],
             "xueqiu_url": xueqiu_link(code),
         }
 
@@ -459,11 +466,10 @@ class PrdMarketDataService:
         code = normalize_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code).order_by(MktHotStock.trade_date.desc()).first()
         limit_stock_row = self.db.query(MktLimitUpStock).filter_by(stock_code=code).order_by(MktLimitUpStock.trade_date.desc()).first()
-        limit_row = self.db.query(MktLimitUp).filter_by(stock_code=code).order_by(MktLimitUp.trade_date.desc()).first()
         return {
             "stock_code": code,
             "latest_hot": self._hot_stock_dict(hot) if hot else None,
-            "latest_limit": self._limit_up_stock_dict(limit_stock_row) if limit_stock_row else (self._limit_up_dict(limit_row) if limit_row else None),
+            "latest_limit": self._limit_up_stock_dict(limit_stock_row) if limit_stock_row else None,
             "xueqiu_url": xueqiu_link(code),
         }
 
@@ -489,6 +495,25 @@ class PrdMarketDataService:
         }
 
     @staticmethod
+    def _limit_up_plate_board_dict(row: MktLimitUpPlate, rank_no: int) -> dict:
+        return {
+            "id": row.id,
+            "trade_date": row.trade_date,
+            "platform": row.platform,
+            "board_name": row.plate_name,
+            "plate_code": row.plate_code,
+            "plate_name": row.plate_name,
+            "platform_rank": rank_no,
+            "raw_score": row.limit_up_count,
+            "limit_up_count": row.limit_up_count,
+            "change_pct": row.change_pct,
+            "reason": row.up_reason,
+            "up_reason": row.up_reason,
+            "source_update_time": row.source_update_time,
+            "collected_at": row.collected_at,
+        }
+
+    @staticmethod
     def _hot_stock_dict(row: MktHotStock) -> dict:
         return {
             key: getattr(row, key)
@@ -511,41 +536,16 @@ class PrdMarketDataService:
         }
 
     @staticmethod
-    def _limit_up_dict(row: MktLimitUp) -> dict:
-        return {
-            key: getattr(row, key)
-            for key in [
-                "id",
-                "trade_date",
-                "platform",
-                "stock_code",
-                "stock_name",
-                "limit_time",
-                "last_limit_time",
-                "open_limit_count",
-                "seal_amount",
-                "seal_volume",
-                "turnover_rate",
-                "amount",
-                "board_count",
-                "concept",
-                "limit_reason",
-                "limit_type",
-                "source_url",
-                "source_update_time",
-                "collected_at",
-            ]
-        }
-
-    @staticmethod
     def _limit_up_stock_dict(row: MktLimitUpStock) -> dict:
         return {
             "id": row.id,
             "trade_date": row.trade_date,
             "platform": row.platform,
+            "raw_secu_code": row.raw_secu_code,
             "stock_code": row.stock_code,
             "stock_name": row.stock_name,
             "limit_time": str(row.limit_time or "").split(" ")[-1][:5] or row.limit_time,
+            "limit_datetime": row.limit_datetime,
             "last_limit_time": row.limit_time,
             "open_limit_count": None,
             "seal_amount": None,
@@ -553,6 +553,8 @@ class PrdMarketDataService:
             "turnover_rate": None,
             "amount": None,
             "board_count": row.board_count or row.ladder_height or 1,
+            "board_days": row.board_days,
+            "board_text": row.board_text,
             "concept": row.plate_name,
             "limit_reason": row.limit_reason,
             "limit_type": row.reason_tags,

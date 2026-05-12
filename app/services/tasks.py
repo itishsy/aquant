@@ -17,9 +17,6 @@ from app.models import (
     MktDailyTuyereStock,
     MktHotBoard,
     MktHotStock,
-    MktLimitUp,
-    MktLimitUpLadder,
-    MktLimitUpLadderStock,
     MktLimitUpPlate,
     MktLimitUpStock,
 )
@@ -44,23 +41,16 @@ class TaskService:
         existing_topic_ids = [
             row.id for row in self.db.query(MktDailyTopic.id).filter(MktDailyTopic.trade_date == trade_date).all()
         ]
-        existing_ladder_ids = [
-            row.id for row in self.db.query(MktLimitUpLadder.id).filter(MktLimitUpLadder.trade_date == trade_date).all()
-        ]
-
         if existing_chance_ids:
             self.db.query(MktDailyChanceStock).filter(MktDailyChanceStock.chance_id.in_(existing_chance_ids)).delete(synchronize_session=False)
         if existing_tuyere_ids:
             self.db.query(MktDailyTuyereStock).filter(MktDailyTuyereStock.tuyere_id.in_(existing_tuyere_ids)).delete(synchronize_session=False)
         if existing_topic_ids:
             self.db.query(MktDailyTopicStock).filter(MktDailyTopicStock.topic_id.in_(existing_topic_ids)).delete(synchronize_session=False)
-        if existing_ladder_ids:
-            self.db.query(MktLimitUpLadderStock).filter(MktLimitUpLadderStock.ladder_id.in_(existing_ladder_ids)).delete(synchronize_session=False)
 
         self.db.query(MktDailyChance).filter(MktDailyChance.trade_date == trade_date).delete(synchronize_session=False)
         self.db.query(MktDailyTuyere).filter(MktDailyTuyere.trade_date == trade_date).delete(synchronize_session=False)
         self.db.query(MktDailyTopic).filter(MktDailyTopic.trade_date == trade_date).delete(synchronize_session=False)
-        self.db.query(MktLimitUpLadder).filter(MktLimitUpLadder.trade_date == trade_date).delete(synchronize_session=False)
         self.db.flush()
 
         affected = 0
@@ -137,25 +127,6 @@ class TaskService:
                     stock_code=stock.get("stock_code") or "",
                     stock_name=stock.get("stock_name") or "",
                     change_pct=stock.get("change_pct"),
-                ))
-            affected += 1
-
-        for item in snapshot.get("limit_up_ladder") or []:
-            row = MktLimitUpLadder(
-                trade_date=trade_date,
-                source="real",
-                platform="cls",
-                height=item.get("height") or 0,
-                stock_count=item.get("count") or 0,
-                source_update_time=now,
-            )
-            self.db.add(row)
-            self.db.flush()
-            for stock in item.get("stocks") or []:
-                self.db.add(MktLimitUpLadderStock(
-                    ladder_id=row.id,
-                    stock_code=stock.get("stock_code") or "",
-                    stock_name=stock.get("stock_name") or "",
                 ))
             affected += 1
 
@@ -315,7 +286,6 @@ class TaskService:
                 analysis = provider.get_limit_up_analysis(trade_date)
                 self.db.query(MktLimitUpStock).filter(MktLimitUpStock.trade_date == trade_date).delete(synchronize_session=False)
                 self.db.query(MktLimitUpPlate).filter(MktLimitUpPlate.trade_date == trade_date).delete(synchronize_session=False)
-                self.db.query(MktLimitUpLadder).filter(MktLimitUpLadder.trade_date == trade_date).delete(synchronize_session=False)
                 self.db.flush()
 
                 now = datetime.utcnow()
@@ -333,21 +303,12 @@ class TaskService:
                         source_update_time=now,
                     ))
                     count += 1
-                for item in analysis.get("ladders") or []:
-                    self.db.add(MktLimitUpLadder(
-                        trade_date=trade_date,
-                        source="real",
-                        platform="cls",
-                        height=item.get("height") or 0,
-                        stock_count=item.get("count") or 0,
-                        source_update_time=now,
-                    ))
-                    count += 1
                 for item in analysis.get("stocks") or []:
                     self.db.add(MktLimitUpStock(
                         trade_date=trade_date,
                         source=item.get("source") or "real",
                         platform=item.get("platform") or "cls",
+                        raw_secu_code=item.get("raw_secu_code") or "",
                         stock_code=item.get("stock_code") or "",
                         stock_name=item.get("stock_name") or "",
                         plate_code=item.get("plate_code") or "",
@@ -356,6 +317,8 @@ class TaskService:
                         last_price=item.get("last_price"),
                         circulating_market_cap=item.get("circulating_market_cap"),
                         limit_time=item.get("limit_time"),
+                        limit_datetime=item.get("limit_datetime"),
+                        board_days=item.get("board_days"),
                         board_count=item.get("board_count"),
                         board_text=item.get("board_text") or "",
                         limit_reason=item.get("limit_reason") or "",
@@ -371,45 +334,24 @@ class TaskService:
             count = 0
             for item in items:
                 existing = (
-                    self.db.query(MktLimitUp)
+                    self.db.query(MktLimitUpStock)
                     .filter(
-                        MktLimitUp.trade_date == trade_date,
-                        MktLimitUp.platform == "cls",
-                        MktLimitUp.stock_code == item["stock_code"],
+                        MktLimitUpStock.trade_date == trade_date,
+                        MktLimitUpStock.source == "mock",
+                        MktLimitUpStock.stock_code == item["stock_code"],
                     )
                     .first()
-                )
-                if existing:
-                    existing.limit_time = item.get("limit_time")
-                    existing.open_limit_count = item.get("open_limit_count")
-                    existing.seal_amount = item.get("seal_amount")
-                    existing.seal_volume = item.get("seal_volume")
-                    existing.turnover_rate = item.get("turnover_rate")
-                    existing.amount = item.get("amount")
-                    existing.board_count = item.get("board_count")
-                    existing.concept = item.get("concept", "")
-                    existing.limit_reason = item.get("reason", "")
-                    existing.source_update_time = datetime.utcnow()
-                else:
-                    self.db.add(
-                        MktLimitUp(
-                            trade_date=trade_date,
-                            platform="cls",
-                            stock_code=item["stock_code"],
-                            stock_name=item["stock_name"],
-                            limit_time=item.get("limit_time"),
-                            open_limit_count=item.get("open_limit_count"),
-                            seal_amount=item.get("seal_amount"),
-                            seal_volume=item.get("seal_volume"),
-                            turnover_rate=item.get("turnover_rate"),
-                            amount=item.get("amount"),
-                            board_count=item.get("board_count", 1),
-                            concept=item.get("concept", ""),
-                            limit_reason=item.get("reason", ""),
-                            source_update_time=datetime.utcnow(),
-                            raw_payload=_serialize(item),
-                        )
-                    )
+                ) or MktLimitUpStock(trade_date=trade_date, source="mock", platform="mock", stock_code=item["stock_code"])
+                existing.stock_name = item.get("stock_name", "")
+                existing.plate_name = item.get("concept", "")
+                existing.limit_time = item.get("limit_time")
+                existing.limit_datetime = None
+                existing.board_days = None
+                existing.board_count = item.get("board_count", 1)
+                existing.limit_reason = item.get("reason", "")
+                existing.reason_tags = item.get("limit_type", "")
+                existing.source_update_time = datetime.utcnow()
+                self.db.add(existing)
                 count += 1
             self.db.commit()
             return count
