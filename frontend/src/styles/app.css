@@ -43,6 +43,14 @@ button {
   padding: 12px 14px 100px;
 }
 
+.page-content {
+  overflow-x: hidden;
+}
+
+.feature-card {
+  overflow: hidden;
+}
+
 .page-shell {
   display: grid;
   gap: 12px;

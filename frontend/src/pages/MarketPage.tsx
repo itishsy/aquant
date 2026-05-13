@@ -155,7 +155,6 @@ export function MarketPage() {
   const [includeSt, setIncludeSt] = useState(false);
   const [hotPlatform, setHotPlatform] = useState("");
   const [hotPlatformPickerVisible, setHotPlatformPickerVisible] = useState(false);
-  const [selectedSector, setSelectedSector] = useState<any>(null);
   const [watchCodes, setWatchCodes] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -431,6 +430,9 @@ export function MarketPage() {
                     {formatPx(data.cyb_index_change_px)}
                   </span>
                 </div>
+                {data.market_comment && (
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 6, lineHeight: 1.5 }}>{data.market_comment}</div>
+                )}
               </div>
               <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                 {marketInfoSections.map((section) => (
@@ -468,12 +470,6 @@ export function MarketPage() {
                   </div>
                 ))}
               </div>
-              {data.market_comment && (
-                <div className="review-note-panel">
-                  <strong>每日收评</strong>
-                  <p>{data.market_comment}</p>
-                </div>
-              )}
               <p className="card-note">市场页仅展示客观原始数据，不作为交易建议。仅作为交易辅助，请结合个人交易规则确认。</p>
               {review ? (
                 <div className="review-note-panel">
@@ -536,20 +532,15 @@ export function MarketPage() {
                 </div>
                 <div className="stack-list">
                   {hotSectors.map((s, idx) => (
-                    <div key={s.name} className="row-card" style={{ padding: "10px 12px", gap: 8, cursor: "pointer" }}
-                      onClick={() => setSelectedSector(selectedSector?.name === s.name ? null : s)}>
-                      <span style={{ fontSize: 22, fontWeight: 900, color: idx < 3 ? "#e34d59" : "#4b63ee", minWidth: 28 }}>{idx + 1}</span>
+                    <div key={s.name} className="row-card" style={{ padding: "10px 12px", alignItems: "flex-start" }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: idx < 3 ? "#e34d59" : "#4b63ee", minWidth: 20 }}>{idx + 1}</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <strong style={{ fontSize: 15 }}>{s.name}</strong>
-                        <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>涨停 {s.count} 只</p>
-                        {s.changePct != null && <p style={{ margin: 0, fontSize: 11, color: "#999" }}>板块涨幅：{formatPct(s.changePct)}</p>}
-                        {s.reason && <p style={{ margin: 0, fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>上榜理由：{s.reason}</p>}
-                        {selectedSector?.name === s.name && s.reason && (
-                          <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: "#f4f6fb" }}>
-                            <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>上榜理由</div>
-                            <div style={{ fontSize: 12, color: "#e34d59", lineHeight: 1.5 }}>{s.reason}</div>
-                          </div>
-                        )}
+                        <strong style={{ fontSize: 14 }}>{s.name}</strong>
+                        <p style={{ margin: "1px 0", fontSize: 12, color: "#888" }}>
+                          涨停 {s.count} 只
+                          {s.changePct != null ? ` · ${formatPct(s.changePct)}` : ""}
+                        </p>
+                        {s.reason && <p style={{ margin: "2px 0 0", fontSize: 12, color: "#e34d59", lineHeight: 1.5 }}>{s.reason}</p>}
                       </div>
                     </div>
                   ))}
