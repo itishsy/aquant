@@ -22,7 +22,6 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
     return m ? `${m[2]}${m[1]}` : stockCode;
   })();
   const xueqiuUrl = `https://xueqiu.com/S/${xueqiuCode}`;
-  const isHot = info?.total_score != null;
 
   useEffect(() => {
     if (!visible || !stockCode) return;
@@ -50,7 +49,7 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
           {[
             { key: "kline" as const, label: "日K线" },
-            { key: "reason" as const, label: isHot ? "入榜原因" : "涨停原因" },
+            { key: "reason" as const, label: "涨停原因" },
           ].map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
               style={{
@@ -69,42 +68,19 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
           )}
           {tab === "reason" && (
             <div style={{ padding: "4px 0" }}>
-              {isHot && (
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={{ padding: "10px 12px", borderRadius: 10, background: "#f4f6fb" }}>
-                    <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>热榜排名</div>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: "#4b63ee" }}>#{info?.best_rank || "-"}</div>
-                    <div style={{ fontSize: 14, color: "#334", marginTop: 2 }}>综合得分 {info?.total_score}</div>
-                    {info?.cross_platform && <div style={{ fontSize: 12, color: "#e34d59" }}>多平台共振</div>}
-                  </div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#334" }}>各平台明细</div>
-                  {(info?.platforms || []).map((p: any) => (
-                    <div key={p.platform} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
-                      <span style={{ color: "#888" }}>{p.platform}</span><span style={{ color: "#334", fontWeight: 500 }}>#{p.rank}（{p.score}分）</span>
-                    </div>
-                  ))}
-                  {info?.change_pct != null && (
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
-                      <span style={{ color: "#888" }}>涨幅</span><span style={{ color: "#334", fontWeight: 500 }}>{info.change_pct >= 0 ? "+" : ""}{info.change_pct}%</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              {!isHot && info?.limit_reason ? (
+              {info?.limit_reason ? (
                 <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff4f4" }}>
                   <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>涨停原因明细</div>
                   <div style={{ fontSize: 15, color: "#c0392b", lineHeight: 1.6 }}>{info.limit_reason}</div>
                 </div>
               ) : null}
-              {!isHot && (
-                <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
-                  {[["封板时间", info?.limit_time], ["连板数", info?.board_count ? `${info.board_count}板` : "-"], ["所属概念", info?.concept || info?.plate_name], ["涨幅", info?.change_pct != null ? `${info.change_pct >= 0 ? "+" : ""}${info.change_pct}%` : "-"], ["最新价", info?.last_price], ["换手率", info?.turnover_rate != null ? `${info.turnover_rate}%` : "-"]].filter(([, v]) => v != null && v !== "").map(([label, value]) => (
-                    <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
-                      <span style={{ color: "#888" }}>{label}</span><span style={{ color: "#334", fontWeight: 500 }}>{value}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
+                {[["封板时间", info?.limit_time], ["连板数", info?.board_count ? `${info.board_count}板` : "-"], ["所属概念", info?.concept || info?.plate_name], ["涨幅", info?.change_pct != null ? `${info.change_pct >= 0 ? "+" : ""}${info.change_pct}%` : "-"], ["最新价", info?.last_price], ["换手率", info?.turnover_rate != null ? `${info.turnover_rate}%` : "-"]].filter(([, v]) => v != null && v !== "").map(([label, value]) => (
+                  <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13, borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ color: "#888" }}>{label}</span><span style={{ color: "#334", fontWeight: 500 }}>{value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

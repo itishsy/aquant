@@ -282,7 +282,11 @@ class MktStockKline15m(TimestampMixin, SystemBase):
 
 class WatchPool(TimestampMixin, SystemBase):
     __tablename__ = "watch_pool"
-    __table_args__ = (Index("ix_watch_pool_code_status", "stock_code", "pool_status"),)
+    __table_args__ = (
+        Index("ix_watch_pool_code_status", "stock_code", "pool_status"),
+        Index("ix_watch_pool_code_lifecycle", "stock_code", "lifecycle_status"),
+        Index("ix_watch_pool_trading_system", "trading_system"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     stock_code: Mapped[str] = mapped_column(String(16), index=True)
@@ -294,6 +298,17 @@ class WatchPool(TimestampMixin, SystemBase):
     monitor_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     operation_strategies: Mapped[list] = mapped_column(JSON, default=list)
     buy_point_types: Mapped[list] = mapped_column(JSON, default=list)
+    entry_source: Mapped[str] = mapped_column(String(32), default="manual", index=True)
+    entry_reason: Mapped[str] = mapped_column(Text, default="")
+    trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    system_recommendation: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(32), default="watching", index=True)
+    key_observe_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    invalid_condition: Mapped[str] = mapped_column(Text, default="")
+    risk_tags: Mapped[list] = mapped_column(JSON, default=list)
+    signal_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    latest_signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_remark: Mapped[str] = mapped_column(Text, default="")
     source_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_platform: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -319,6 +334,8 @@ class WatchPoolStatusLog(SystemBase):
     from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     to_status: Mapped[str] = mapped_column(String(32), index=True)
     change_reason: Mapped[str] = mapped_column(Text, default="")
+    operation_type: Mapped[str] = mapped_column(String(32), default="status_change")
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     operator_type: Mapped[str] = mapped_column(String(16), default="user")
     operated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -326,7 +343,11 @@ class WatchPoolStatusLog(SystemBase):
 
 class WatchSignal(TimestampMixin, SystemBase):
     __tablename__ = "watch_signal"
-    __table_args__ = (UniqueConstraint("stock_code", "buy_point_type", "signal_type", "trigger_date", name="uq_watch_signal_code_point_type_date"),)
+    __table_args__ = (
+        UniqueConstraint("stock_code", "buy_point_type", "signal_type", "trigger_date", name="uq_watch_signal_code_point_type_date"),
+        Index("ix_watch_signal_watch_status", "watch_id", "signal_status"),
+        Index("ix_watch_signal_trigger_signature", "trigger_signature"),
+    )
 
     signal_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     watch_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
@@ -334,6 +355,7 @@ class WatchSignal(TimestampMixin, SystemBase):
     stock_name: Mapped[str] = mapped_column(String(64), default="")
     signal_type: Mapped[str] = mapped_column(String(32), index=True)
     buy_point_type: Mapped[str] = mapped_column(String(64), default="")
+    trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
     strategy_name: Mapped[str] = mapped_column(String(64), index=True)
     signal_level: Mapped[str] = mapped_column(String(8), default="B")
     kline_period: Mapped[str] = mapped_column(String(16), default="")
@@ -345,6 +367,14 @@ class WatchSignal(TimestampMixin, SystemBase):
     stop_loss_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     invalid_condition: Mapped[str] = mapped_column(Text, default="")
+    buy_point_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    buy_point_confirm_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    buy_point_confirm_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    abandoned_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    abandoned_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    abandoned_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    prevent_duplicate_signal: Mapped[bool] = mapped_column(Boolean, default=True)
+    trigger_signature: Mapped[str | None] = mapped_column(String(128), nullable=True)
     signal_status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     user_action: Mapped[str] = mapped_column(String(32), default="pending")
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -375,6 +405,7 @@ class WatchSignalPerformance(TimestampMixin, SystemBase):
 
 class WatchTrade(TimestampMixin, SystemBase):
     __tablename__ = "watch_trade"
+    __table_args__ = (Index("ix_watch_trade_watch_status", "watch_id", "trade_status"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     signal_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
@@ -383,6 +414,7 @@ class WatchTrade(TimestampMixin, SystemBase):
     stock_name: Mapped[str] = mapped_column(String(64), default="")
     trade_source: Mapped[str] = mapped_column(String(32), default="signal")
     buy_point_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
     first_buy_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     first_buy_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_buy_amount: Mapped[float] = mapped_column(Float, default=0.0)
@@ -401,6 +433,9 @@ class WatchTrade(TimestampMixin, SystemBase):
     result_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    buy_reason: Mapped[str] = mapped_column(Text, default="")
+    trade_plan: Mapped[str] = mapped_column(Text, default="")
+    emotion_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
     remark: Mapped[str] = mapped_column(Text, default="")
 
 

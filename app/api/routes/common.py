@@ -46,6 +46,8 @@ def dictionaries(dict_type: str | None = None, db: Session = Depends(get_db), us
             {
                 "dict_id": row.dict_id,
                 "dict_type": row.dict_type,
+                "code": row.dict_value,
+                "label": row.dict_label,
                 "dict_label": row.dict_label,
                 "dict_value": row.dict_value,
             }

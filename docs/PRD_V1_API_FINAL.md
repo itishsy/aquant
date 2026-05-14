@@ -58,6 +58,12 @@ Market APIs expose raw source/platform data. They do not calculate or expose sub
 
 Watch-pool creation is manual only. Market hot lists may provide an add entry, but must not automatically write to `watch_pool`.
 
+`POST /api/h5/watch-pool` requires `trading_system`, `entry_reason`, `key_observe_price`, and `invalid_condition`. Re-adding an active stock updates the existing row. Re-adding a blacklisted stock requires explicit `confirm_blacklist_risk=true`.
+
+`PUT /api/h5/watch-pool/{watch_id}` requires `adjust_reason`.
+
+`POST /api/h5/watch-pool/{watch_id}/invalid` marks a watch item invalid and writes `watch_pool_status_log.operation_type = mark_invalid`.
+
 ## H5 Signals
 
 - `GET /api/h5/watch-signals`
@@ -68,9 +74,12 @@ Watch-pool creation is manual only. Market hot lists may provide an add entry, b
 - `POST /api/h5/watch-signals/{signal_id}/ignore`
 - `POST /api/h5/watch-signals/{signal_id}/mark-false-positive`
 - `POST /api/h5/watch-signals/{signal_id}/invalidate`
+- `POST /api/h5/watch-signals/{signal_id}/abandon`
 - `GET /api/h5/watch-signals/{signal_id}/performance`
 
 Signals are auxiliary reminders only. Confirm-buy is a user-confirmed internal record action and does not connect to any broker.
+
+Confirm-buy requires `signal_status = buy_pending_confirm`, `buy_point_confirmed = true`, and `stop_loss_price`.
 
 ## H5 Trades
 
@@ -85,6 +94,8 @@ Signals are auxiliary reminders only. Confirm-buy is a user-confirmed internal r
 - `PUT /api/h5/watch-trades/{trade_id}`
 
 Trades use `watch_trade` and `watch_trade_execution`.
+
+Confirm-sell is full-exit only in MVP. The request must include `is_full_exit=true` and `amount` equal to the remaining position. Partial sell requests return `BAD_REQUEST`.
 
 ## H5 Reviews
 

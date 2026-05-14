@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_login
@@ -40,9 +41,18 @@ def _watch_dict(row: WatchPool) -> dict:
         "sector_name": row.sector_name,
         "labels": row.labels,
         "pool_status": row.pool_status,
+        "lifecycle_status": row.lifecycle_status,
+        "entry_source": row.entry_source,
+        "entry_reason": row.entry_reason,
+        "trading_system": row.trading_system,
+        "system_recommendation": row.system_recommendation,
+        "key_observe_price": row.key_observe_price,
+        "invalid_condition": row.invalid_condition,
+        "risk_tags": row.risk_tags,
+        "signal_enabled": row.signal_enabled,
+        "latest_signal_id": row.latest_signal_id,
+        "user_remark": row.user_remark,
         "monitor_enabled": row.monitor_enabled,
-        "operation_strategies": row.operation_strategies,
-        "buy_point_types": row.buy_point_types,
         "source_platform": row.source_platform,
         "source_rank": row.source_rank,
         "source_score": row.source_score,
@@ -72,6 +82,15 @@ def _signal_dict(row: WatchSignal) -> dict:
         "invalid_condition": row.invalid_condition,
         "signal_status": row.signal_status,
         "user_action": row.user_action,
+        "trading_system": row.trading_system,
+        "buy_point_confirmed": row.buy_point_confirmed,
+        "buy_point_confirm_time": row.buy_point_confirm_time,
+        "buy_point_confirm_price": row.buy_point_confirm_price,
+        "abandoned_flag": row.abandoned_flag,
+        "abandoned_reason": row.abandoned_reason,
+        "abandoned_time": row.abandoned_time,
+        "prevent_duplicate_signal": row.prevent_duplicate_signal,
+        "trigger_signature": row.trigger_signature,
         "assistant_note": ASSISTANT_NOTE,
     }
 
@@ -84,6 +103,10 @@ def _trade_dict(row: WatchTrade) -> dict:
         "stock_code": row.stock_code,
         "stock_name": row.stock_name,
         "trade_source": row.trade_source,
+        "trading_system": row.trading_system,
+        "buy_reason": row.buy_reason,
+        "trade_plan": row.trade_plan,
+        "emotion_state": row.emotion_state,
         "first_buy_time": row.first_buy_time,
         "first_buy_price": row.first_buy_price,
         "total_buy_amount": row.total_buy_amount,
@@ -204,8 +227,27 @@ def stock_kline_daily(stock_code: str, limit: int = 60, db: Session = Depends(ge
 
 
 @router.get("/watch-pool")
-def list_watch_pool(pool_status: str | None = None, db: Session = Depends(get_db), user=Depends(require_login)):
-    return ok([_watch_dict(row) for row in PrdWatchPoolService(db).list_watch_pool(pool_status)])
+def list_watch_pool(
+    pool_status: str | None = None,
+    lifecycle_status: str | None = None,
+    trading_system: str | None = None,
+    keyword: str | None = None,
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    query = db.query(WatchPool)
+    if pool_status:
+        query = query.filter(WatchPool.pool_status == pool_status)
+    if lifecycle_status:
+        query = query.filter(WatchPool.lifecycle_status == lifecycle_status)
+    if not pool_status and not lifecycle_status:
+        query = query.filter(WatchPool.active.is_(True))
+    if trading_system:
+        query = query.filter(WatchPool.trading_system == trading_system)
+    if keyword:
+        like = f"%{keyword}%"
+        query = query.filter(or_(WatchPool.stock_code.ilike(like), WatchPool.stock_name.ilike(like), WatchPool.entry_reason.ilike(like)))
+    return ok([_watch_dict(row) for row in query.order_by(WatchPool.created_at.desc()).all()])
 
 
 @router.get("/watch-pool/summary")
@@ -228,7 +270,20 @@ def add_watch(payload: dict, db: Session = Depends(get_db), user=Depends(require
 
 @router.put("/watch-pool/{watch_id}")
 def update_watch(watch_id: int, payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
-    return ok(_watch_dict(PrdWatchPoolService(db).update_watch(watch_id, payload)))
+    if not payload.get("adjust_reason"):
+        raise HTTPException(status_code=400, detail="adjust_reason is required")
+    try:
+        return ok(_watch_dict(PrdWatchPoolService(db).update_watch(watch_id, payload)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/watch-pool/{watch_id}/invalid")
+def mark_watch_invalid(watch_id: int, payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
+    try:
+        return ok(_watch_dict(PrdWatchPoolService(db).mark_invalid(watch_id, payload)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.delete("/watch-pool/{watch_id}")
@@ -272,6 +327,8 @@ def watch_logs(watch_id: int, db: Session = Depends(get_db), user=Depends(requir
             "to_status": row.to_status,
             "change_reason": row.change_reason,
             "operator_type": row.operator_type,
+            "operation_type": row.operation_type,
+            "snapshot": row.snapshot,
             "operated_at": row.operated_at,
         }
         for row in PrdWatchPoolService(db).logs(watch_id)
@@ -350,6 +407,42 @@ def invalidate_signal(signal_id: int, payload: dict | None = None, db: Session =
     return ok(_signal_dict(row))
 
 
+@router.post("/watch-signals/{signal_id}/abandon")
+def abandon_signal(signal_id: int, payload: dict | None = None, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(WatchSignal).filter(WatchSignal.signal_id == signal_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="signal not found")
+    reason = (payload or {}).get("reason") or (payload or {}).get("abandoned_reason") or "user abandoned signal"
+    row.abandoned_flag = True
+    row.abandoned_reason = reason
+    row.abandoned_time = datetime.utcnow()
+    row.signal_status = "abandoned"
+    row.user_action = "abandoned"
+    row.handled_at = row.abandoned_time
+    row.raw_snapshot = {**(row.raw_snapshot or {}), "abandon_reason": reason}
+    if row.watch_id:
+        watch = db.query(WatchPool).filter(WatchPool.id == row.watch_id).first()
+        if watch:
+            old_status = watch.lifecycle_status or watch.pool_status
+            watch.lifecycle_status = "waiting_buy_point"
+            watch.pool_status = "waiting_buy_point"
+            db.add(
+                WatchPoolStatusLog(
+                    watch_id=watch.id,
+                    stock_code=watch.stock_code,
+                    from_status=old_status,
+                    to_status="waiting_buy_point",
+                    change_reason=reason,
+                    operator_type="user",
+                    operation_type="abandon_signal",
+                    snapshot={"signal_id": signal_id, "reason": reason},
+                )
+            )
+    db.commit()
+    db.refresh(row)
+    return ok(_signal_dict(row))
+
+
 @router.get("/watch-signals/{signal_id}/performance")
 def signal_performance(signal_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
     row = db.query(WatchSignalPerformance).filter(WatchSignalPerformance.signal_id == signal_id).first()
@@ -372,11 +465,17 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
     existing_by_signal = db.query(WatchTrade).filter(WatchTrade.signal_id == signal_id).first()
     if existing_by_signal:
         return ok(_trade_dict(existing_by_signal), message="signal already confirmed")
+    if signal.signal_status != "buy_pending_confirm":
+        raise HTTPException(status_code=400, detail="signal_status must be buy_pending_confirm")
+    if payload.get("buy_point_confirmed") is not True:
+        raise HTTPException(status_code=400, detail="buy_point_confirmed is required")
+    if payload.get("stop_loss_price") in (None, ""):
+        raise HTTPException(status_code=400, detail="stop_loss_price is required")
     buy_price = float(payload["buy_price"])
     amount = float(payload["amount"])
     trade = (
         db.query(WatchTrade)
-        .filter(WatchTrade.stock_code == signal.stock_code, WatchTrade.trade_status.in_(["open", "partial_sold", "holding"]))
+        .filter(WatchTrade.stock_code == signal.stock_code, WatchTrade.trade_status.in_(["open", "holding"]))
         .first()
     )
     now = datetime.utcnow()
@@ -387,6 +486,7 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
             stock_code=signal.stock_code,
             stock_name=signal.stock_name,
             buy_point_type=signal.buy_point_type,
+            trading_system=signal.trading_system,
             first_buy_time=now,
             first_buy_price=buy_price,
             total_buy_amount=amount,
@@ -396,6 +496,9 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
             stop_loss_price=payload.get("stop_loss_price"),
             target_price=payload.get("target_price"),
             trade_status="open",
+            buy_reason=payload.get("buy_reason", signal.trigger_reason or ""),
+            trade_plan=payload.get("trade_plan", ""),
+            emotion_state=payload.get("emotion_state"),
             remark=payload.get("remark", ""),
         )
         db.add(trade)
@@ -421,13 +524,29 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
     signal.user_action = "confirmed_buy"
     signal.handled_at = now
     signal.related_trade_id = trade.id
+    signal.buy_point_confirmed = True
+    signal.buy_point_confirm_time = now
+    signal.buy_point_confirm_price = buy_price
     if signal.watch_id:
         watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first()
         if watch:
-            old_status = watch.pool_status
-            watch.pool_status = "holding"
+            old_status = watch.lifecycle_status or watch.pool_status
+            watch.pool_status = "trading"
+            watch.lifecycle_status = "trading"
             watch.monitor_enabled = False
-            db.add(WatchPoolStatusLog(watch_id=watch.id, stock_code=watch.stock_code, from_status=old_status, to_status="holding", change_reason="user confirmed buy", operator_type="user"))
+            watch.signal_enabled = False
+            db.add(
+                WatchPoolStatusLog(
+                    watch_id=watch.id,
+                    stock_code=watch.stock_code,
+                    from_status=old_status,
+                    to_status="trading",
+                    change_reason="user confirmed buy",
+                    operator_type="user",
+                    operation_type="confirm_buy",
+                    snapshot={"signal_id": signal_id, "trade_id": trade.id, "buy_price": buy_price, "amount": amount},
+                )
+            )
     perf = db.query(WatchSignalPerformance).filter(WatchSignalPerformance.signal_id == signal.signal_id).first()
     if not perf:
         db.add(WatchSignalPerformance(signal_id=signal.signal_id, watch_id=signal.watch_id, stock_code=signal.stock_code, trigger_price=signal.trigger_price, is_confirmed_trade=True, related_trade_id=trade.id))
@@ -457,7 +576,7 @@ def recent_watch_trades(limit: int = 10, db: Session = Depends(get_db), user=Dep
 def watch_trade_summary(db: Session = Depends(get_db), user=Depends(require_login)):
     return ok({
         "total": db.query(WatchTrade).count(),
-        "open": db.query(WatchTrade).filter(WatchTrade.trade_status.in_(["open", "partial_sold", "holding"])).count(),
+        "open": db.query(WatchTrade).filter(WatchTrade.trade_status.in_(["open", "holding"])).count(),
         "completed": db.query(WatchTrade).filter(WatchTrade.trade_status == "completed").count(),
     })
 
@@ -483,6 +602,9 @@ def confirm_sell(trade_id: int, payload: dict, db: Session = Depends(get_db), us
         raise HTTPException(status_code=404, detail="trade not found")
     sell_price = float(payload["sell_price"])
     amount = float(payload["amount"])
+    remaining = float(trade.remaining_amount or 0)
+    if payload.get("is_full_exit") is not True or abs(amount - remaining) > 0.000001:
+        raise HTTPException(status_code=400, detail="BAD_REQUEST: MVP only supports full exit")
     execution_type = payload.get("execution_type", "sell")
     execution_time = datetime.fromisoformat(payload["execution_time"]) if payload.get("execution_time") else datetime.utcnow()
     duplicate = (
@@ -492,11 +614,10 @@ def confirm_sell(trade_id: int, payload: dict, db: Session = Depends(get_db), us
     )
     if duplicate:
         return ok(_execution_dict(duplicate), message="duplicate execution ignored")
-    amount = min(amount, trade.remaining_amount)
     buy_price = trade.average_buy_price or trade.first_buy_price or sell_price
     pnl_amount = (sell_price - buy_price) * amount
     pnl_ratio = (sell_price - buy_price) / buy_price if buy_price else 0.0
-    is_full_exit = bool(payload.get("is_full_exit")) or amount >= trade.remaining_amount
+    is_full_exit = True
     execution = WatchTradeExecution(
         trade_id=trade.id,
         signal_id=trade.signal_id,
@@ -519,14 +640,31 @@ def confirm_sell(trade_id: int, payload: dict, db: Session = Depends(get_db), us
     trade.pnl_ratio = trade.pnl_amount / ((trade.average_buy_price or buy_price) * trade.total_buy_amount) if trade.total_buy_amount else 0.0
     if trade.first_buy_time:
         trade.holding_days = max(0, (execution_time.date() - trade.first_buy_time.date()).days)
-    if is_full_exit or trade.remaining_amount <= 0:
-        trade.remaining_amount = 0
-        trade.trade_status = "completed"
-        trade.closed_at = execution_time
-        if not db.query(ReviewTrade).filter(ReviewTrade.trade_id == trade.id).first():
-            db.add(ReviewTrade(trade_id=trade.id, final_pnl_ratio=trade.pnl_ratio, status="pending"))
-    else:
-        trade.trade_status = "partial_sold"
+    trade.remaining_amount = 0
+    trade.trade_status = "completed"
+    trade.closed_at = execution_time
+    if not db.query(ReviewTrade).filter(ReviewTrade.trade_id == trade.id).first():
+        db.add(ReviewTrade(trade_id=trade.id, final_pnl_ratio=trade.pnl_ratio, status="pending"))
+    if trade.watch_id:
+        watch = db.query(WatchPool).filter(WatchPool.id == trade.watch_id).first()
+        if watch:
+            old_status = watch.lifecycle_status or watch.pool_status
+            watch.lifecycle_status = "pending_review"
+            watch.pool_status = "pending_review"
+            watch.monitor_enabled = False
+            watch.signal_enabled = False
+            db.add(
+                WatchPoolStatusLog(
+                    watch_id=watch.id,
+                    stock_code=watch.stock_code,
+                    from_status=old_status,
+                    to_status="pending_review",
+                    change_reason=payload.get("execution_reason", "user confirmed full sell"),
+                    operator_type="user",
+                    operation_type="confirm_sell",
+                    snapshot={"trade_id": trade.id, "sell_price": sell_price, "amount": amount, "pnl_ratio": trade.pnl_ratio},
+                )
+            )
     db.commit()
     db.refresh(execution)
     return ok(_execution_dict(execution))
@@ -590,7 +728,7 @@ def list_reviews(review_type: str | None = None, db: Session = Depends(get_db), 
 
 @router.get("/reviews/todos")
 def review_todos(db: Session = Depends(get_db), user=Depends(require_login)):
-    rows = db.query(ReviewForm).filter(ReviewForm.status.in_(["pending", "editing", "待填写", "填写中"])).all()
+    rows = db.query(ReviewForm).filter(ReviewForm.status.in_(["pending", "editing"])).all()
     return ok([_review_dict(row) for row in rows])
 
 
@@ -598,8 +736,8 @@ def review_todos(db: Session = Depends(get_db), user=Depends(require_login)):
 def review_summary(db: Session = Depends(get_db), user=Depends(require_login)):
     return ok({
         "total": db.query(ReviewForm).count(),
-        "pending": db.query(ReviewForm).filter(ReviewForm.status.in_(["pending", "待填写"])).count(),
-        "completed": db.query(ReviewForm).filter(ReviewForm.status.in_(["completed", "已完成"])).count(),
+        "pending": db.query(ReviewForm).filter(ReviewForm.status == "pending").count(),
+        "completed": db.query(ReviewForm).filter(ReviewForm.status == "completed").count(),
     })
 
 

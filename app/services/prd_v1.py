@@ -35,27 +35,95 @@ ASSISTANT_NOTE = "仅作为交易辅助，请结合个人交易规则确认。"
 
 class SeedService:
     DICTS = {
-        "watch_tag": ["人气", "接力", "趋势"],
-        "operation_strategy": ["趋势交易", "加速接力", "平台突破"],
-        "buy_point_type": ["B15 底背离买点", "支撑买点", "平台突破确认买点"],
-        "signal_status": ["未处理", "已确认买入", "已忽略", "已失效"],
-        "signal_user_action": ["未处理", "已确认买入", "已忽略", "标记误报"],
-        "trade_status": ["持仓中", "部分卖出", "已完成", "已取消", "已失效"],
-        "review_status": ["待填写", "填写中", "已完成", "已归档"],
-        "issue_tag": ["追高买入", "止损犹豫", "止盈不及时", "仓位过重", "情绪化交易", "非信号交易"],
+        "watch_tag": [("popularity", "人气"), ("relay", "接力"), ("trend", "趋势")],
+        "operation_strategy": [("trend_trade", "趋势交易"), ("accelerated_relay", "加速接力"), ("platform_breakout", "平台突破")],
+        "buy_point_type": [
+            ("b15_divergence", "B15 底背离买点"),
+            ("support_buy", "支撑买点"),
+            ("platform_breakout_confirm", "平台突破确认买点"),
+        ],
+        "trading_system": [
+            ("platform_breakout", "平台突破"),
+            ("uptrend", "上涨趋势"),
+            ("relay", "追涨接力"),
+        ],
+        "watch_lifecycle_status": [
+            ("watching", "观察中"),
+            ("signal_generated", "买入信号已生成"),
+            ("waiting_buy_point", "等待买点确认"),
+            ("buy_pending_confirm", "买入待确认"),
+            ("trading", "交易中"),
+            ("sell_signal_pending", "卖出信号待处理"),
+            ("sell_delayed", "卖出延后处理"),
+            ("sold", "已卖出"),
+            ("pending_review", "待复盘"),
+            ("archived", "已归档"),
+            ("invalid", "已失效"),
+            ("blacklist", "黑名单"),
+            ("removed", "已剔除"),
+        ],
+        "watch_invalid_reason": [
+            ("market_weak", "市场转弱"),
+            ("sector_weak", "板块转弱"),
+            ("technical_invalid", "技术形态失效"),
+            ("break_key_price", "跌破关键价"),
+            ("risk_high", "风险过高"),
+            ("user_cancel", "用户不再关注"),
+        ],
+        "signal_abandon_reason": [
+            ("unclear_buy_point", "买点不清晰"),
+            ("bad_risk_reward", "风险收益比不合适"),
+            ("market_weak", "市场转弱"),
+            ("sector_weak", "板块转弱"),
+            ("price_deviation", "价格偏离买点"),
+            ("user_skip", "用户放弃本次机会"),
+        ],
+        "sell_reason": [
+            ("stop_loss", "止损"),
+            ("take_profit", "止盈"),
+            ("system_rule_break", "跌破体系规则"),
+            ("breakout_failure", "突破失败"),
+            ("trend_broken", "趋势破坏"),
+            ("relay_failed", "接力失败"),
+            ("high_volume_risk", "高位放量风险"),
+            ("weak_seal", "封板弱"),
+            ("manual_sell", "手动卖出"),
+        ],
+        "emotion_state": [("calm", "冷静"), ("hesitant", "犹豫"), ("impulsive", "冲动"), ("fearful", "害怕踏空")],
+        "risk_tag": [
+            ("high_position", "高位"),
+            ("weak_seal", "封板弱"),
+            ("shrinking_volume", "缩量"),
+            ("sector_weak", "板块转弱"),
+            ("abnormal_volume", "放量异常"),
+            ("break_support", "跌破支撑"),
+        ],
+        "signal_status": [("pending", "未处理"), ("confirmed_buy", "已确认买入"), ("ignored", "已忽略"), ("invalid", "已失效")],
+        "signal_user_action": [("pending", "未处理"), ("confirmed_buy", "已确认买入"), ("ignored", "已忽略"), ("false_positive", "标记误报")],
+        "trade_status": [("open", "持仓中"), ("completed", "已完成"), ("cancelled", "已取消"), ("invalid", "已失效")],
+        "review_status": [("pending", "待填写"), ("editing", "填写中"), ("completed", "已完成"), ("archived", "已归档")],
+        "issue_tag": [
+            ("chase_high", "追高买入"),
+            ("stop_loss_hesitation", "止损犹豫"),
+            ("late_take_profit", "止盈不及时"),
+            ("heavy_position", "仓位过重"),
+            ("emotional_trade", "情绪化交易"),
+            ("non_signal_trade", "非信号交易"),
+        ],
         "attribution_type": [
-            "市场问题",
-            "板块问题",
-            "个股问题",
-            "买点问题",
-            "卖点问题",
-            "仓位问题",
-            "纪律问题",
-            "情绪问题",
-            "策略问题",
-            "数据问题",
+            ("market", "市场问题"),
+            ("sector", "板块问题"),
+            ("stock", "个股问题"),
+            ("buy_point", "买点问题"),
+            ("sell_point", "卖点问题"),
+            ("position", "仓位问题"),
+            ("discipline", "纪律问题"),
+            ("emotion", "情绪问题"),
+            ("strategy", "策略问题"),
+            ("data", "数据问题"),
         ],
     }
+
     TASKS = [
         ("collect_market_daily", "market"),
         ("collect_hot_sector_rank", "market"),
@@ -75,16 +143,26 @@ class SeedService:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _dict_items(values: list) -> list[tuple[str, str]]:
+        result = []
+        for item in values:
+            if isinstance(item, tuple):
+                result.append((item[0], item[1]))
+            else:
+                result.append((item, item))
+        return result
+
     def init_defaults(self) -> dict:
         created = 0
         for dict_type, values in self.DICTS.items():
-            for order, label in enumerate(values, start=1):
-                if not self.db.query(ConfigDictionary).filter_by(dict_type=dict_type, dict_value=label).first():
+            for order, (code, label) in enumerate(self._dict_items(values), start=1):
+                if not self.db.query(ConfigDictionary).filter_by(dict_type=dict_type, dict_value=code).first():
                     self.db.add(
                         ConfigDictionary(
                             dict_type=dict_type,
                             dict_label=label,
-                            dict_value=label,
+                            dict_value=code,
                             sort_order=order,
                         )
                     )
@@ -93,13 +171,13 @@ class SeedService:
             if not self.db.query(ConfigTask).filter_by(task_name=name).first():
                 self.db.add(ConfigTask(task_name=name, task_type="scheduled", owner_module=owner, enabled=True))
                 created += 1
-        for name in self.DICTS["buy_point_type"]:
-            if not self.db.query(ConfigStrategy).filter_by(strategy_name=name).first():
+        for code, label in self._dict_items(self.DICTS["buy_point_type"]):
+            if not self.db.query(ConfigStrategy).filter_by(strategy_name=label).first():
                 self.db.add(
                     ConfigStrategy(
-                        strategy_name=name,
+                        strategy_name=label,
                         strategy_type="buy",
-                        buy_point_type=name,
+                        buy_point_type=code,
                         enabled=True,
                     )
                 )
@@ -396,51 +474,14 @@ class PrdMarketDataService:
             query = query.filter(MktHotBoard.platform == platform)
         return [self._board_dict(row) for row in query.order_by(MktHotBoard.platform, MktHotBoard.platform_rank).all()]
 
-    PRIMES = [29, 23, 19, 17, 13, 11, 7, 5, 3, 2]  # rank 1..10 → descending primes
-
     def get_hot_stocks(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
-        # If platform filter requested, return raw platform data
+        query = self.db.query(MktHotStock)
+        if trade_date:
+            query = query.filter(MktHotStock.trade_date == trade_date)
         if platform:
-            query = self.db.query(MktHotStock)
-            if trade_date:
-                query = query.filter(MktHotStock.trade_date == trade_date)
             query = query.filter(MktHotStock.platform == platform)
-            return [self._hot_stock_dict(row) for row in query.order_by(MktHotStock.platform_rank).limit(10).all()]
-
-        # Cross-platform prime-score ranking
-        all_rows = self.db.query(MktHotStock).filter(MktHotStock.trade_date == trade_date).all() if trade_date else []
-        platform_stocks: dict[str, list] = {}
-        for row in all_rows:
-            platform_stocks.setdefault(row.platform, []).append(row)
-
-        scores: dict[str, dict] = {}  # stock_code → {total_score, stock_name, platforms}
-        for _, rows in platform_stocks.items():
-            rows.sort(key=lambda r: r.platform_rank or 99)
-            for idx, row in enumerate(rows[:10]):
-                score = self.PRIMES[idx] if idx < len(self.PRIMES) else 1
-                entry = scores.setdefault(row.stock_code, {"total_score": 0, "stock_name": row.stock_name, "platforms": [], "best_rank": 99, "price": None, "change_pct": None})
-                entry["total_score"] += score
-                entry["best_rank"] = min(entry["best_rank"], idx + 1)
-                entry["platforms"].append({"platform": row.platform, "rank": idx + 1, "score": score})
-                if row.price and not entry["price"]:
-                    entry["price"] = row.price
-                if row.change_pct is not None and entry["change_pct"] is None:
-                    entry["change_pct"] = row.change_pct
-
-        ranked = sorted(scores.items(), key=lambda x: x[1]["total_score"], reverse=True)[:10]
-        return [
-            {
-                "stock_code": code,
-                "stock_name": info["stock_name"],
-                "total_score": info["total_score"],
-                "best_rank": info["best_rank"],
-                "platforms": info["platforms"],
-                "cross_platform": len(info["platforms"]) >= 2,
-                "price": info["price"],
-                "change_pct": info["change_pct"],
-            }
-            for code, info in ranked
-        ]
+        rows = query.order_by(MktHotStock.platform, MktHotStock.platform_rank).limit(30 if not platform else 10).all()
+        return [self._hot_stock_dict(row) for row in rows]
 
     def get_limit_ups(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
         stock_query = self.db.query(MktLimitUpStock)
@@ -570,7 +611,33 @@ class PrdMarketDataService:
 
 
 class PrdWatchPoolService:
-    ACTIVE_STATUSES = ["watching", "triggered", "holding", "not_trade"]
+    ACTIVE_STATUSES = [
+        "watching",
+        "signal_generated",
+        "waiting_buy_point",
+        "buy_pending_confirm",
+        "trading",
+        "sell_signal_pending",
+        "sell_delayed",
+    ]
+    TERMINAL_STATUSES = {"sold", "pending_review", "archived", "invalid", "blacklist", "removed"}
+    TRADING_SYSTEMS = {"platform_breakout", "uptrend", "relay"}
+    VALID_TRANSITIONS = {
+        None: {"watching", "blacklist"},
+        "watching": {"signal_generated", "waiting_buy_point", "buy_pending_confirm", "trading", "invalid", "blacklist", "removed", "archived"},
+        "signal_generated": {"waiting_buy_point", "buy_pending_confirm", "trading", "invalid", "blacklist", "removed", "watching"},
+        "waiting_buy_point": {"buy_pending_confirm", "signal_generated", "invalid", "blacklist", "removed", "watching"},
+        "buy_pending_confirm": {"trading", "waiting_buy_point", "invalid", "blacklist", "removed"},
+        "trading": {"sell_signal_pending", "sell_delayed", "sold", "pending_review", "blacklist"},
+        "sell_signal_pending": {"sell_delayed", "sold", "pending_review", "trading"},
+        "sell_delayed": {"sell_signal_pending", "sold", "pending_review", "trading"},
+        "sold": {"pending_review", "archived"},
+        "pending_review": {"archived"},
+        "invalid": {"watching", "archived", "blacklist"},
+        "removed": {"watching", "blacklist"},
+        "blacklist": {"watching"},
+        "archived": {"watching"},
+    }
 
     def __init__(self, db: Session):
         self.db = db
@@ -585,46 +652,94 @@ class PrdWatchPoolService:
 
     def add_watch(self, payload: dict) -> WatchPool:
         code = normalize_stock_code(payload["stock_code"])
-        existing = (
-            self.db.query(WatchPool)
-            .filter(WatchPool.stock_code == code, WatchPool.pool_status.in_(self.ACTIVE_STATUSES))
-            .first()
-        )
+        self._validate_required_add_payload(payload)
+        existing = self.get_effective_watch(code)
         if existing:
             return self.update_watch(existing.id, payload)
+
+        blacklist = self._get_blacklist_watch(code)
+        if blacklist and payload.get("confirm_blacklist_risk") is not True:
+            raise ValueError("blacklist confirmation required")
+        if blacklist and payload.get("confirm_blacklist_risk") is True:
+            self._apply_watch_payload(blacklist, payload)
+            self.transition(
+                blacklist.id,
+                "watching",
+                payload.get("entry_reason") or payload.get("reason") or "restore from blacklist",
+                operation_type="restore_from_blacklist",
+                snapshot={"payload": self._safe_payload(payload), "confirmed_blacklist_risk": True},
+            )
+            self.db.refresh(blacklist)
+            return blacklist
+
+        entry_source = payload.get("entry_source") or payload.get("source_type") or "manual"
+        entry_reason = payload.get("entry_reason") or payload.get("reason") or payload.get("source_reason")
+        key_observe_price = payload.get("key_observe_price", payload.get("entry_price"))
+        trading_system = payload["trading_system"]
         entity = WatchPool(
             stock_code=code,
             stock_name=payload.get("stock_name") or code,
             sector_name=payload.get("sector_name") or payload.get("board_name"),
-            reason=payload.get("reason") or payload.get("source_reason") or "用户手动加入自选",
+            reason=entry_reason,
+            entry_reason=entry_reason,
+            entry_source=entry_source,
+            trading_system=trading_system,
+            system_recommendation=payload.get("system_recommendation") or self.recommend_trading_system(entry_source, payload),
+            lifecycle_status="watching",
+            key_observe_price=key_observe_price,
+            invalid_condition=payload.get("invalid_condition"),
+            risk_tags=payload.get("risk_tags") or [],
+            signal_enabled=payload.get("signal_enabled", True),
+            latest_signal_id=payload.get("latest_signal_id"),
+            user_remark=payload.get("user_remark") or payload.get("remark") or "",
             labels=payload.get("labels") or [],
             pool_status="watching",
             monitor_enabled=True,
-            operation_strategies=payload.get("operation_strategies") or [],
-            buy_point_types=payload.get("buy_point_types") or [],
-            source_type=payload.get("source_type") or "manual",
+            operation_strategies=[],
+            buy_point_types=[],
+            source_type=entry_source,
             source_platform=payload.get("source_platform"),
             source_rank=payload.get("source_rank"),
             source_score=payload.get("source_score"),
             source_reason=payload.get("source_reason") or "",
             xueqiu_url=xueqiu_link(code),
-            entry_price=payload.get("entry_price"),
-            remark=payload.get("remark") or "",
+            entry_price=key_observe_price,
+            remark=payload.get("user_remark") or payload.get("remark") or "",
             added_trade_date=date.today(),
+            active=True,
+            is_blacklist=False,
         )
         self.db.add(entity)
         self.db.flush()
-        self._log(entity, None, "watching", "用户手动加入自选")
+        self._log(
+            entity,
+            None,
+            "watching",
+            entry_reason,
+            operation_type="add_watch",
+            snapshot={"payload": self._safe_payload(payload), "watch": self._snapshot(entity)},
+        )
         self.db.commit()
         self.db.refresh(entity)
         return entity
 
     def update_watch(self, watch_id: int, payload: dict) -> WatchPool:
         entity = self.get_watch(watch_id)
-        for key in ["labels", "operation_strategies", "buy_point_types", "remark", "reason", "entry_price", "pool_status", "monitor_enabled", "sector_name"]:
-            if key in payload:
-                setattr(entity, key, payload[key])
+        before_status = entity.lifecycle_status or entity.pool_status
+        self._apply_watch_payload(entity, payload)
+        after_status = entity.lifecycle_status or entity.pool_status
+        if before_status != after_status:
+            self.validate_transition(before_status, after_status)
+        self._log(
+            entity,
+            before_status,
+            after_status,
+            payload.get("adjust_reason") or payload.get("entry_reason") or payload.get("reason") or "update watch",
+            operation_type="update_watch",
+            snapshot={"payload": self._safe_payload(payload), "watch": self._snapshot(entity)},
+        )
         self.db.commit()
+        self.db.refresh(entity)
         return entity
 
     def get_watch(self, watch_id: int) -> WatchPool:
@@ -634,55 +749,35 @@ class PrdWatchPoolService:
         return entity
 
     def remove_watch(self, watch_id: int, reason: str) -> WatchPool:
-        entity = self.get_watch(watch_id)
-        old = entity.pool_status
-        entity.pool_status = "removed"
-        entity.active = False
-        entity.archive_reason = reason
-        self._log(entity, old, "removed", reason)
-        self.db.commit()
-        return entity
+        return self.transition(watch_id, "removed", reason, operation_type="remove_watch")
 
     def restore_watch(self, watch_id: int) -> WatchPool:
-        entity = self.get_watch(watch_id)
-        old = entity.pool_status
-        entity.pool_status = "watching"
-        entity.active = True
-        entity.monitor_enabled = True
-        self._log(entity, old, "watching", "用户恢复观察")
-        self.db.commit()
-        return entity
+        return self.transition(watch_id, "watching", "restore to watching", operation_type="restore_watch")
 
     def blacklist_watch(self, watch_id: int, reason: str) -> WatchPool:
-        entity = self.get_watch(watch_id)
-        old = entity.pool_status
-        entity.pool_status = "blacklist"
-        entity.is_blacklist = True
-        entity.blacklist_reason = reason
-        entity.active = False
-        self._log(entity, old, "blacklist", reason)
-        self.db.commit()
-        return entity
+        return self.transition(watch_id, "blacklist", reason, operation_type="blacklist_watch")
 
     def unblacklist_watch(self, watch_id: int, reason: str) -> WatchPool:
-        entity = self.get_watch(watch_id)
-        old = entity.pool_status
-        entity.pool_status = "watching"
-        entity.is_blacklist = False
-        entity.active = True
-        self._log(entity, old, "watching", reason)
-        self.db.commit()
-        return entity
+        return self.transition(watch_id, "watching", reason, operation_type="unblacklist_watch")
 
     def set_monitor(self, watch_id: int, enabled: bool, reason: str = "") -> WatchPool:
         entity = self.get_watch(watch_id)
         entity.monitor_enabled = enabled
+        entity.signal_enabled = enabled
+        self._log(
+            entity,
+            entity.lifecycle_status or entity.pool_status,
+            entity.lifecycle_status or entity.pool_status,
+            reason or ("enable monitor" if enabled else "disable monitor"),
+            operation_type="set_monitor",
+            snapshot={"monitor_enabled": enabled, "watch": self._snapshot(entity)},
+        )
         self.db.commit()
         return entity
 
     def summary(self) -> dict:
-        statuses = ["watching", "triggered", "holding", "not_trade", "completed", "removed", "blacklist"]
-        return {status: self.db.query(WatchPool).filter(WatchPool.pool_status == status).count() for status in statuses}
+        statuses = [*self.ACTIVE_STATUSES, *sorted(self.TERMINAL_STATUSES)]
+        return {status: self.db.query(WatchPool).filter(WatchPool.lifecycle_status == status).count() for status in statuses}
 
     def logs(self, watch_id: int) -> list[WatchPoolStatusLog]:
         return (
@@ -692,7 +787,192 @@ class PrdWatchPoolService:
             .all()
         )
 
-    def _log(self, entity: WatchPool, from_status: str | None, to_status: str, reason: str) -> None:
+    def transition(
+        self,
+        watch_id: int,
+        to_status: str,
+        reason: str,
+        operator_type: str = "user",
+        operation_type: str = "status_transition",
+        snapshot: dict | None = None,
+    ) -> WatchPool:
+        entity = self.get_watch(watch_id)
+        from_status = entity.lifecycle_status or entity.pool_status
+        self.validate_transition(from_status, to_status)
+        entity.lifecycle_status = to_status
+        entity.pool_status = to_status
+        if to_status in {"removed", "archived", "invalid", "blacklist"}:
+            entity.active = False
+        if to_status == "watching":
+            entity.active = True
+            entity.monitor_enabled = True
+            entity.signal_enabled = True
+            entity.is_blacklist = False
+            entity.blacklist_reason = None
+        if to_status == "blacklist":
+            entity.is_blacklist = True
+            entity.blacklist_reason = reason
+            entity.monitor_enabled = False
+            entity.signal_enabled = False
+        if to_status in {"removed", "archived", "invalid"}:
+            entity.archive_reason = reason
+            entity.monitor_enabled = False
+            entity.signal_enabled = False
+        self._log(
+            entity,
+            from_status,
+            to_status,
+            reason,
+            operator_type=operator_type,
+            operation_type=operation_type,
+            snapshot=snapshot or self._snapshot(entity),
+        )
+        self.db.commit()
+        self.db.refresh(entity)
+        return entity
+
+    def validate_transition(self, from_status: str | None, to_status: str) -> bool:
+        if from_status == to_status:
+            return True
+        allowed = self.VALID_TRANSITIONS.get(from_status)
+        if allowed is None and from_status not in self.VALID_TRANSITIONS:
+            allowed = set(self.ACTIVE_STATUSES) | self.TERMINAL_STATUSES
+        if to_status not in (allowed or set()):
+            raise ValueError(f"invalid watch lifecycle transition: {from_status} -> {to_status}")
+        return True
+
+    def mark_invalid(self, watch_id: int, payload: dict | str) -> WatchPool:
+        if isinstance(payload, str):
+            reason = payload
+            snapshot = {"reason": reason}
+        else:
+            reason = payload.get("invalid_reason") or payload.get("reason") or "watch invalid"
+            snapshot = self._safe_payload(payload)
+        return self.transition(watch_id, "invalid", reason, operation_type="mark_invalid", snapshot=snapshot)
+
+    def get_effective_watch(self, stock_code: str) -> WatchPool | None:
+        code = normalize_stock_code(stock_code)
+        return (
+            self.db.query(WatchPool)
+            .filter(
+                WatchPool.stock_code == code,
+                WatchPool.active.is_(True),
+                WatchPool.lifecycle_status.in_(self.ACTIVE_STATUSES) | WatchPool.pool_status.in_(self.ACTIVE_STATUSES),
+            )
+            .order_by(WatchPool.updated_at.desc(), WatchPool.created_at.desc())
+            .first()
+        )
+
+    def recommend_trading_system(self, entry_source: str | None = None, payload: dict | None = None) -> str:
+        payload = payload or {}
+        text = " ".join(str(payload.get(key) or "") for key in ["entry_reason", "reason", "source_reason", "limit_reason", "board_name"])
+        if entry_source == "limit_up" or "relay" in text.lower():
+            return "relay"
+        if "breakout" in text.lower() or "\u7a81\u7834" in text:
+            return "platform_breakout"
+        return "uptrend"
+
+    def _validate_required_add_payload(self, payload: dict) -> None:
+        required = ["trading_system", "entry_reason", "key_observe_price", "invalid_condition"]
+        missing = [key for key in required if payload.get(key) in (None, "")]
+        if missing:
+            raise ValueError(f"{missing[0]} is required")
+        if payload["trading_system"] not in self.TRADING_SYSTEMS:
+            raise ValueError("trading_system is invalid")
+        try:
+            if float(payload["key_observe_price"]) <= 0:
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ValueError("key_observe_price must be positive") from exc
+
+    def _get_blacklist_watch(self, stock_code: str) -> WatchPool | None:
+        return (
+            self.db.query(WatchPool)
+            .filter(
+                WatchPool.stock_code == stock_code,
+                (WatchPool.is_blacklist.is_(True)) | (WatchPool.lifecycle_status == "blacklist") | (WatchPool.pool_status == "blacklist"),
+            )
+            .order_by(WatchPool.updated_at.desc(), WatchPool.created_at.desc())
+            .first()
+        )
+
+    def _apply_watch_payload(self, entity: WatchPool, payload: dict) -> None:
+        if "stock_code" in payload:
+            entity.stock_code = normalize_stock_code(payload["stock_code"])
+            entity.xueqiu_url = xueqiu_link(entity.stock_code)
+        simple_fields = [
+            "stock_name",
+            "sector_name",
+            "labels",
+            "monitor_enabled",
+            "signal_enabled",
+            "source_platform",
+            "source_rank",
+            "source_score",
+            "source_reason",
+            "risk_tags",
+            "latest_signal_id",
+            "system_recommendation",
+        ]
+        for key in simple_fields:
+            if key in payload:
+                setattr(entity, key, payload[key])
+        if "board_name" in payload and "sector_name" not in payload:
+            entity.sector_name = payload["board_name"]
+        if "trading_system" in payload:
+            if payload["trading_system"] not in self.TRADING_SYSTEMS:
+                raise ValueError("trading_system is invalid")
+            entity.trading_system = payload["trading_system"]
+        if "entry_source" in payload or "source_type" in payload:
+            entity.entry_source = payload.get("entry_source") or payload.get("source_type")
+            entity.source_type = entity.entry_source
+        if "entry_reason" in payload or "reason" in payload:
+            entity.entry_reason = payload.get("entry_reason") or payload.get("reason")
+            entity.reason = entity.entry_reason
+        if "key_observe_price" in payload or "entry_price" in payload:
+            entity.key_observe_price = payload.get("key_observe_price", payload.get("entry_price"))
+            entity.entry_price = entity.key_observe_price
+        if "invalid_condition" in payload:
+            entity.invalid_condition = payload["invalid_condition"]
+        if "user_remark" in payload or "remark" in payload:
+            entity.user_remark = payload.get("user_remark") or payload.get("remark")
+            entity.remark = entity.user_remark
+        if "lifecycle_status" in payload or "pool_status" in payload:
+            status = payload.get("lifecycle_status") or payload.get("pool_status")
+            entity.lifecycle_status = status
+            entity.pool_status = status
+
+    def _safe_payload(self, payload: dict) -> dict:
+        return {key: value for key, value in payload.items() if key not in {"password", "token", "cookie", "secret"}}
+
+    def _snapshot(self, entity: WatchPool) -> dict:
+        return {
+            "watch_id": entity.id,
+            "stock_code": entity.stock_code,
+            "stock_name": entity.stock_name,
+            "pool_status": entity.pool_status,
+            "lifecycle_status": entity.lifecycle_status,
+            "trading_system": entity.trading_system,
+            "entry_source": entity.entry_source,
+            "entry_reason": entity.entry_reason,
+            "key_observe_price": entity.key_observe_price,
+            "invalid_condition": entity.invalid_condition,
+            "risk_tags": entity.risk_tags or [],
+            "signal_enabled": entity.signal_enabled,
+            "monitor_enabled": entity.monitor_enabled,
+            "is_blacklist": entity.is_blacklist,
+        }
+
+    def _log(
+        self,
+        entity: WatchPool,
+        from_status: str | None,
+        to_status: str,
+        reason: str,
+        operator_type: str = "user",
+        operation_type: str = "status_transition",
+        snapshot: dict | None = None,
+    ) -> None:
         self.db.add(
             WatchPoolStatusLog(
                 watch_id=entity.id,
@@ -700,7 +980,9 @@ class PrdWatchPoolService:
                 from_status=from_status,
                 to_status=to_status,
                 change_reason=reason,
-                operator_type="user",
+                operator_type=operator_type,
+                operation_type=operation_type,
+                snapshot=snapshot or self._snapshot(entity),
             )
         )
 

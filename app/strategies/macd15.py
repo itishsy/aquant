@@ -16,7 +16,7 @@ class Macd15BullishDivergenceStrategy(StrategyBase):
         return (
             context.get("in_watch_pool", False)
             and context.get("monitor_enabled", False)
-            and context.get("pool_status") == "观察中"
+            and context.get("lifecycle_status") == "watching"
             and context.get("data_quality_ok", True)
         )
 

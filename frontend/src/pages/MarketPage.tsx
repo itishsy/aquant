@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DatePicker, Dialog, ErrorBlock, Picker, SpinLoading, Toast } from "antd-mobile";
+import { Button, DatePicker, Dialog, ErrorBlock, Input, Picker, Popup, Selector, SpinLoading, TextArea, Toast } from "antd-mobile";
 import * as echarts from "echarts";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client";
@@ -33,6 +33,38 @@ type MarketSummary = {
   limit_up_ladder?: any[];
 };
 
+type WatchDraft = {
+  stock_code: string;
+  stock_name: string;
+  source_type: "hot_stock" | "limit_up";
+  source_platform?: string;
+  source_rank?: number;
+  source_score?: number;
+  source_reason: string;
+  sector_name?: string;
+  trading_system: "platform_breakout" | "uptrend" | "relay";
+  entry_reason: string;
+  key_observe_price: string;
+  invalid_condition: string;
+  risk_tags: string[];
+  user_remark: string;
+  raw_item: any;
+};
+
+const tradingSystemOptions = [
+  { label: "平台突破", value: "platform_breakout" },
+  { label: "上涨趋势", value: "uptrend" },
+  { label: "追涨接力", value: "relay" },
+];
+
+const riskTagOptions = [
+  { label: "高位", value: "high_position" },
+  { label: "封板弱", value: "weak_seal" },
+  { label: "放量异常", value: "abnormal_volume" },
+  { label: "板块转弱", value: "sector_weak" },
+  { label: "跌破支撑", value: "break_support" },
+];
+
 function formatPct(value?: number | null) {
   if (value == null) return "";
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
@@ -49,6 +81,40 @@ function pctColor(value?: number | null) {
 
 function limitHeight(row: any) {
   return row.ladder_height || row.board_count || 1;
+}
+
+function recommendTradingSystem(item: any, sourceType: "hot_stock" | "limit_up"): WatchDraft["trading_system"] {
+  const reason = `${item.raw_reason || ""} ${item.limit_reason || ""} ${item.reason || ""}`;
+  if (reason.includes("突破") || reason.toLowerCase().includes("breakout")) return "platform_breakout";
+  if (sourceType === "limit_up") return "relay";
+  return "uptrend";
+}
+
+function tradingSystemLabel(value: string) {
+  return tradingSystemOptions.find((item) => item.value === value)?.label || value;
+}
+
+function buildWatchDraft(item: any, sourceType: "hot_stock" | "limit_up"): WatchDraft {
+  const sourceReason = item.raw_reason || item.limit_reason || item.reason || item.up_reason || "";
+  const tradingSystem = recommendTradingSystem(item, sourceType);
+  const price = item.last_price ?? item.price ?? item.trigger_price ?? "";
+  return {
+    stock_code: item.stock_code,
+    stock_name: item.stock_name,
+    source_type: sourceType,
+    source_platform: item.platform,
+    source_rank: item.platform_rank,
+    source_score: item.raw_score,
+    source_reason: sourceReason,
+    sector_name: item.board_name || item.concept || item.plate_name,
+    trading_system: tradingSystem,
+    entry_reason: sourceReason || (sourceType === "limit_up" ? "涨停榜手动加入观察" : "人气榜手动加入观察"),
+    key_observe_price: price ? String(price) : "",
+    invalid_condition: sourceType === "limit_up" ? "涨停结构走弱或跌破关键观察价" : "跌破关键观察价或人气逻辑失效",
+    risk_tags: sourceType === "limit_up" ? ["high_position"] : [],
+    user_remark: "",
+    raw_item: item,
+  };
 }
 
 function LimitUpKlineChart({ stockCode }: { stockCode?: string }) {
@@ -156,8 +222,16 @@ export function MarketPage() {
   const [hotPlatform, setHotPlatform] = useState("");
   const [hotPlatformPickerVisible, setHotPlatformPickerVisible] = useState(false);
   const [watchCodes, setWatchCodes] = useState<Set<string>>(new Set());
+  const [watchDraft, setWatchDraft] = useState<WatchDraft | null>(null);
+  const [watchSubmitting, setWatchSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  function refreshWatchCodes() {
+    return apiGet<any[]>("/h5/watch-pool")
+      .then((items) => setWatchCodes(new Set((items || []).map((item: any) => item.stock_code))))
+      .catch(() => {});
+  }
 
   useEffect(() => {
     if (queryDate) return;
@@ -179,9 +253,7 @@ export function MarketPage() {
     setLoading(true);
     setError("");
 
-    apiGet<any[]>("/h5/watch-pool")
-      .then((items) => setWatchCodes(new Set((items || []).map((item: any) => item.stock_code))))
-      .catch(() => {});
+    refreshWatchCodes();
 
     apiGet<MarketSummary>(`/h5/market/overview?trade_date=${tradeDate}`)
       .then((summary) => setData(summary))
@@ -332,32 +404,47 @@ export function MarketPage() {
     });
   }
 
-  async function addWatchFromMarket(item: any, sourceType: string) {
-    const confirmed = await Dialog.confirm({
-      content: `添加 ${item.stock_name} 到自选观察池？`,
-      confirmText: "确认添加",
-      cancelText: "取消",
-    });
-    if (!confirmed) return;
-    apiPost("/h5/watch-pool", {
-      stock_code: item.stock_code,
-      stock_name: item.stock_name,
-      sector_name: item.board_name || item.concept || item.plate_name,
-      labels: sourceType === "limit_up" ? ["接力"] : ["人气"],
-      operation_strategies: sourceType === "limit_up" ? ["加速接力"] : ["趋势交易"],
-      buy_point_types: ["B15 底背离买点"],
-      source_type: sourceType,
-      source_platform: item.platform,
-      source_rank: item.platform_rank,
-      source_score: item.raw_score,
-      source_reason: item.raw_reason || item.limit_reason,
-      reason: item.raw_reason || item.limit_reason || "市场页手动加入自选",
-    })
-      .then(() => {
-        Toast.show({ content: "已添加自选" });
-        setWatchCodes((prev) => new Set(prev).add(item.stock_code));
-      })
-      .catch(() => setError("添加自选失败"));
+  function addWatchFromMarket(item: any, sourceType: "hot_stock" | "limit_up") {
+    setWatchDraft(buildWatchDraft(item, sourceType));
+  }
+
+  async function submitWatchDraft() {
+    if (!watchDraft) return;
+    if (!watchDraft.trading_system || !watchDraft.entry_reason.trim() || !watchDraft.key_observe_price || !watchDraft.invalid_condition.trim()) {
+      Toast.show({ content: "请补全交易系统、入选理由、关键观察价和失效条件" });
+      return;
+    }
+    setWatchSubmitting(true);
+    try {
+      await apiPost("/h5/watch-pool", {
+        stock_code: watchDraft.stock_code,
+        stock_name: watchDraft.stock_name,
+        sector_name: watchDraft.sector_name,
+        labels: watchDraft.source_type === "limit_up" ? ["relay"] : ["popularity"],
+        source_type: watchDraft.source_type,
+        entry_source: watchDraft.source_type,
+        source_platform: watchDraft.source_platform,
+        source_rank: watchDraft.source_rank,
+        source_score: watchDraft.source_score,
+        source_reason: watchDraft.source_reason,
+        trading_system: watchDraft.trading_system,
+        entry_reason: watchDraft.entry_reason,
+        reason: watchDraft.entry_reason,
+        key_observe_price: Number(watchDraft.key_observe_price),
+        invalid_condition: watchDraft.invalid_condition,
+        risk_tags: watchDraft.risk_tags,
+        user_remark: watchDraft.user_remark,
+      });
+      Toast.show({ content: "已加入自选观察" });
+      const code = watchDraft.stock_code;
+      setWatchDraft(null);
+      await refreshWatchCodes();
+      setWatchCodes((prev) => new Set(prev).add(code));
+    } catch {
+      Toast.show({ content: "添加自选失败，请检查填写信息" });
+    } finally {
+      setWatchSubmitting(false);
+    }
   }
 
   return (
@@ -489,7 +576,7 @@ export function MarketPage() {
                   <h2>热榜</h2>
                 </div>
                 <span className="soft-tag" style={{ cursor: "pointer" }} onClick={() => setHotPlatformPickerVisible(true)}>
-                  {hotPlatform ? `${hotPlatform} Top10` : "三平台素数加权"} ▾
+                  {hotPlatform ? `${hotPlatform} Top10` : "平台原始榜单"} ▾
                 </span>
               </div>
               {hotStocks.length ? (
@@ -500,20 +587,11 @@ export function MarketPage() {
                         <strong>
                           <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
                         </strong>
-                        {hotPlatform ? (
-                          <>
-                            <p>原始分数：{item.raw_score ?? "-"} / 排名：#{item.platform_rank ?? "-"}</p>
-                            <p>{item.board_name || "未分类"}</p>
-                          </>
-                        ) : (
-                          <>
-                            <p>得分：{item.total_score ?? item.raw_score ?? "-"} {item.cross_platform ? "多平台共振" : ""}</p>
-                            <p>{(item.platforms || []).map((p: any) => `${p.platform} #${p.rank}(${p.score})`).join("  ")}</p>
-                          </>
-                        )}
+                        <p>原始分数：{item.raw_score ?? "-"} / 排名：#{item.platform_rank ?? "-"}</p>
+                        <p>{item.platform || "-"} · {item.board_name || "未分类"}</p>
                       </div>
                       {watchCodes.has(item.stock_code) ? (
-                        <span style={{ fontSize: 18, color: "#00b578", lineHeight: 1 }}>✓</span>
+                        <span style={{ fontSize: 12, color: "#00b578", lineHeight: 1, fontWeight: 700 }}>已自选</span>
                       ) : (
                         <span style={{ fontSize: 22, color: "#4b63ee", cursor: "pointer", lineHeight: 1, fontWeight: 300 }} onClick={(event) => { event.stopPropagation(); addWatchFromMarket(item, "hot_stock"); }}>+</span>
                       )}
@@ -608,7 +686,7 @@ export function MarketPage() {
                         </p>
                       </div>
                       {watchCodes.has(item.stock_code) ? (
-                        <span style={{ fontSize: 16, color: "#00b578" }}>✓</span>
+                        <span style={{ fontSize: 12, color: "#00b578", fontWeight: 700 }}>已自选</span>
                       ) : (
                         <span style={{ fontSize: 20, color: "#4b63ee", cursor: "pointer", fontWeight: 300 }} onClick={(event) => { event.stopPropagation(); addWatchFromMarket(item, "limit_up"); }}>+</span>
                       )}
@@ -622,6 +700,99 @@ export function MarketPage() {
           )}
         </>
       )}
+      <Popup
+        visible={!!watchDraft}
+        onMaskClick={() => setWatchDraft(null)}
+        bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "18px 18px 22px", maxHeight: "86vh", overflowY: "auto" }}
+      >
+        {watchDraft && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#15213d" }}>{watchDraft.stock_name}</div>
+                <div style={{ marginTop: 4, color: "#72819b", fontSize: 13 }}>{watchDraft.stock_code}</div>
+              </div>
+              <span className="soft-tag">{watchDraft.source_type === "limit_up" ? "涨停榜" : "人气榜"}</span>
+            </div>
+
+            <div style={{ borderRadius: 16, background: "#f6f8ff", padding: 12, color: "#53627c", fontSize: 13, lineHeight: 1.6 }}>
+              <div>来源平台：{watchDraft.source_platform || "-"}</div>
+              <div>来源排名：{watchDraft.source_rank ?? "-"}</div>
+              <div>来源原因：{watchDraft.source_reason || "-"}</div>
+              <div>系统推荐：{tradingSystemLabel(recommendTradingSystem(watchDraft.raw_item, watchDraft.source_type))}</div>
+            </div>
+
+            <label style={{ display: "grid", gap: 8 }}>
+              <span style={{ fontWeight: 700, color: "#1d2948" }}>用户确认交易系统</span>
+              <Selector
+                options={tradingSystemOptions}
+                value={[watchDraft.trading_system]}
+                onChange={(value) => setWatchDraft({ ...watchDraft, trading_system: value[0] as WatchDraft["trading_system"] })}
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 8 }}>
+              <span style={{ fontWeight: 700, color: "#1d2948" }}>入选理由</span>
+              <TextArea
+                value={watchDraft.entry_reason}
+                autoSize={{ minRows: 2, maxRows: 4 }}
+                placeholder="说明为什么把它加入观察池"
+                onChange={(value) => setWatchDraft({ ...watchDraft, entry_reason: value })}
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 8 }}>
+              <span style={{ fontWeight: 700, color: "#1d2948" }}>关键观察价</span>
+              <Input
+                type="number"
+                value={watchDraft.key_observe_price}
+                placeholder="例如 12.35"
+                onChange={(value) => setWatchDraft({ ...watchDraft, key_observe_price: value })}
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 8 }}>
+              <span style={{ fontWeight: 700, color: "#1d2948" }}>失效条件</span>
+              <TextArea
+                value={watchDraft.invalid_condition}
+                autoSize={{ minRows: 2, maxRows: 4 }}
+                placeholder="例如 跌破关键观察价且无法收回"
+                onChange={(value) => setWatchDraft({ ...watchDraft, invalid_condition: value })}
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 8 }}>
+              <span style={{ fontWeight: 700, color: "#1d2948" }}>风险标签</span>
+              <Selector
+                multiple
+                options={riskTagOptions}
+                value={watchDraft.risk_tags}
+                onChange={(value) => setWatchDraft({ ...watchDraft, risk_tags: value as string[] })}
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 8 }}>
+              <span style={{ fontWeight: 700, color: "#1d2948" }}>用户备注</span>
+              <TextArea
+                value={watchDraft.user_remark}
+                autoSize={{ minRows: 2, maxRows: 4 }}
+                placeholder="可记录个人观察计划"
+                onChange={(value) => setWatchDraft({ ...watchDraft, user_remark: value })}
+              />
+            </label>
+
+            <p style={{ margin: 0, color: "#7b879c", fontSize: 12, lineHeight: 1.6 }}>
+              加入自选仅用于后续观察和信号提醒，仅作为交易辅助，请结合个人交易规则确认。
+            </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Button block onClick={() => setWatchDraft(null)}>取消</Button>
+              <Button block color="primary" loading={watchSubmitting} onClick={submitWatchDraft}>提交</Button>
+            </div>
+          </div>
+        )}
+      </Popup>
+
       <Picker
         columns={[[
           { label: "三平台素数加权", value: "" },

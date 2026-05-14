@@ -59,8 +59,8 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
 
   const ctx = info || {};
 
-  // Use detail popup for limit-up or hot stocks
-  if (ctx.limit_time != null || ctx.total_score != null) {
+  // Use detail popup for limit-up stocks.
+  if (ctx.limit_time != null) {
     return (
       <>
         <span className={className || "stock-link"} onClick={() => setVisible(true)} style={{ cursor: "pointer" }}>
@@ -84,20 +84,6 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
           </div>
           {stockCode && <div style={{ fontSize: 13, color: "#888", textAlign: "center", marginBottom: 10 }}>{stockCode}</div>}
 
-          {/* Hot stock info */}
-          {ctx.total_score != null && (
-            <div style={{ padding: "8px 12px", borderRadius: 10, background: "#f4f6fb", marginBottom: 10 }}>
-              <InfoRow label="综合得分" value={ctx.total_score} />
-              <InfoRow label="最佳排名" value={`#${ctx.best_rank}`} />
-              <InfoRow label="多平台共振" value={ctx.cross_platform ? "是" : "否"} />
-              {(ctx.platforms || []).map((p: any) => (
-                <InfoRow key={p.platform} label={p.platform} value={`#${p.rank} (${p.score}分)`} />
-              ))}
-              <InfoRow label="原始分数" value={ctx.raw_score} />
-              <InfoRow label="所属板块" value={ctx.board_name} />
-            </div>
-          )}
-
           {/* Limit-up info */}
           {ctx.limit_time != null && (
             <div style={{ padding: "8px 12px", borderRadius: 10, background: "#f4f6fb", marginBottom: 10 }}>
@@ -119,13 +105,14 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
           {/* Watch pool info */}
           {ctx.pool_status != null && (
             <div style={{ padding: "8px 12px", borderRadius: 10, background: "#f4f6fb", marginBottom: 10 }}>
-              <InfoRow label="自选状态" value={ctx.pool_status} />
+              <InfoRow label="自选状态" value={ctx.lifecycle_status || ctx.pool_status} />
+              <InfoRow label="交易系统" value={ctx.trading_system} />
               <InfoRow label="标签" value={(ctx.labels || []).join(" / ")} />
-              <InfoRow label="操作策略" value={(ctx.operation_strategies || []).join(",")} />
-              <InfoRow label="买点类型" value={(ctx.buy_point_types || []).join(",")} />
               <InfoRow label="来源平台" value={ctx.source_platform} />
               <InfoRow label="来源排名" value={ctx.source_rank} />
-              <InfoRow label="入选理由" value={ctx.reason || ctx.source_reason} />
+              <InfoRow label="入选理由" value={ctx.entry_reason || ctx.reason || ctx.source_reason} />
+              <InfoRow label="关键观察价" value={ctx.key_observe_price} />
+              <InfoRow label="失效条件" value={ctx.invalid_condition} />
             </div>
           )}
 

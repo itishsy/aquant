@@ -3,7 +3,7 @@
 Active migration baseline:
 
 - `alembic/versions/20260505_0001_prd_v1_baseline.py`
-- Latest incremental migration: `alembic/versions/20260512_0008_simplify_limit_up_stock.py`
+- Latest incremental migration: `alembic/versions/20260514_0009_watch_pool_lifecycle_upgrade.py`
 
 This is a development reset baseline. Rebuild local development databases from this migration.
 
@@ -33,6 +33,55 @@ Limit-up ladder display is now calculated from `mkt_limit_up_stock.ladder_height
 - `watch_trade_execution`
 
 Watch-pool records are manually created. Trade records use `watch_trade` as the master table and `watch_trade_execution` as the buy/sell execution ledger.
+
+`20260514_0009_watch_pool_lifecycle_upgrade.py` is a development reset migration for the watch-pool lifecycle upgrade. It clears existing business rows from `watch_pool`, `watch_pool_status_log`, `watch_signal`, `watch_signal_performance`, `watch_trade`, `watch_trade_execution`, and `review_trade`, then adds the lifecycle fields required by `docs/自选池管理开发文档.md`.
+
+#### `watch_pool` lifecycle fields
+
+- `entry_source`: manual / hot_stock / limit_up.
+- `entry_reason`: user-confirmed reason for adding the stock to the watch pool.
+- `trading_system`: platform_breakout / uptrend / relay.
+- `system_recommendation`: system-proposed trading system before user confirmation.
+- `lifecycle_status`: watching / signal_generated / waiting_buy_point / buy_pending_confirm / trading / sell_signal_pending / sell_delayed / sold / pending_review / archived / invalid / blacklist / removed.
+- `key_observe_price`: key observation price.
+- `invalid_condition`: condition that invalidates the watch thesis.
+- `risk_tags`: structured risk tags.
+- `signal_enabled`: whether buy-point signal scanning is enabled.
+- `latest_signal_id`: latest related signal id.
+- `user_remark`: user note.
+
+`pool_status`, `reason`, `labels`, `operation_strategies`, `buy_point_types`, `entry_price`, and `remark` remain as compatibility fields only. The active self-selected watch-pool flow no longer requires or derives decisions from `operation_strategies` / `buy_point_types`; it uses `trading_system`, `lifecycle_status`, `key_observe_price`, and `invalid_condition`.
+
+#### `watch_pool_status_log` lifecycle fields
+
+- `operation_type`: add_watch / adjust_observe_params / mark_invalid / confirm_buy / confirm_sell / archive / status_change.
+- `snapshot`: JSON snapshot at the time of status change.
+
+#### `watch_signal` lifecycle fields
+
+- `trading_system`: trading system that generated the signal.
+- `buy_point_confirmed`: whether the buy-point confirmation condition has been met.
+- `buy_point_confirm_time`: buy-point confirmation time.
+- `buy_point_confirm_price`: buy-point confirmation price.
+- `abandoned_flag`: whether the user abandoned this opportunity.
+- `abandoned_reason`: reason for abandoning this opportunity.
+- `abandoned_time`: abandon time.
+- `prevent_duplicate_signal`: whether equivalent future signals should be suppressed.
+- `trigger_signature`: strategy-level deduplication signature.
+
+#### `watch_trade` lifecycle fields
+
+- `trading_system`: trading system used by this trade.
+- `buy_reason`: user-confirmed buy reason.
+- `trade_plan`: user-confirmed trade plan.
+- `emotion_state`: user emotion state at confirmation time.
+
+### Self-Selected Watch Pool Final Cleanup
+
+- Trade Tab data source: `/api/h5/watch-trades/recent` or `/api/h5/watch-trades`.
+- Trade list must not be synthesized from `watch_pool`.
+- MVP sell flow supports full exit only. `watch_trade_execution.is_full_exit = true` is required for confirm-sell.
+- Full exit updates `watch_trade.trade_status = completed`, writes a sell execution, updates the related watch to `pending_review`, and creates `review_trade` when missing.
 
 ### Reviews
 
@@ -73,6 +122,19 @@ Watch-pool records are manually created. Trade records use `watch_trade` as the 
 - `watch_signal_performance`: `signal_id`
 - `review_form`: `review_type + review_period`
 - `config_notification_record`: `push_type + target_type + target_id + channel`
+
+## Watch Lifecycle Indexes
+
+- `watch_pool`: `stock_code + lifecycle_status`
+- `watch_pool`: `trading_system`
+- `watch_pool`: `latest_signal_id`
+- `watch_pool_status_log`: `operation_type`
+- `watch_signal`: `watch_id + signal_status`
+- `watch_signal`: `trigger_signature`
+- `watch_signal`: `trading_system`
+- `watch_signal`: `abandoned_flag`
+- `watch_trade`: `watch_id + trade_status`
+- `watch_trade`: `trading_system`
 
 ## Removed From Active Schema
 
