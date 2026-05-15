@@ -58,6 +58,41 @@ function formatMoney(value: unknown) {
   return num.toFixed(2);
 }
 
+function statusTone(status?: string) {
+  if (["trading", "buy_pending_confirm", "sell_signal_pending"].includes(status || "")) return { color: "#e34d59", bg: "#fff1f1" };
+  if (["invalid", "removed", "blacklist"].includes(status || "")) return { color: "#7b879c", bg: "#eef2f7" };
+  if (["signal_generated", "waiting_buy_point"].includes(status || "")) return { color: "#4b63ee", bg: "#eef2ff" };
+  return { color: "#00a870", bg: "#eefaf4" };
+}
+
+function MiniStat({ label, value, tone = "#22375c" }: { label: string; value: any; tone?: string }) {
+  return (
+    <div style={{ borderRadius: 18, background: "rgba(255,255,255,0.72)", padding: "11px 12px", boxShadow: "inset 0 0 0 1px rgba(226,232,240,0.65)" }}>
+      <div style={{ color: "#7b879c", fontSize: 12, marginBottom: 4 }}>{label}</div>
+      <strong style={{ color: tone, fontSize: 19, lineHeight: 1 }}>{value ?? "-"}</strong>
+    </div>
+  );
+}
+
+function StatusPill({ label, status }: { label: string; status?: string }) {
+  const tone = statusTone(status);
+  return (
+    <span style={{ borderRadius: 999, background: tone.bg, color: tone.color, padding: "6px 10px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>
+      {label}
+    </span>
+  );
+}
+
+function InfoLine({ label, value }: { label: string; value: any }) {
+  if (value === undefined || value === null || value === "") return null;
+  return (
+    <div style={{ display: "grid", gap: 2 }}>
+      <span style={{ color: "#98a2b3", fontSize: 11, fontWeight: 700 }}>{label}</span>
+      <span style={{ color: "#32415f", fontSize: 13, lineHeight: 1.45 }}>{value}</span>
+    </div>
+  );
+}
+
 function nextAction(item: any) {
   const status = item.lifecycle_status || item.pool_status;
   if (!item.monitor_enabled || item.signal_enabled === false) return "监控关闭，等待手动开启";
@@ -330,6 +365,124 @@ export function WatchPoolPage() {
     );
   }
 
+  function renderSignalCardV2(item: any) {
+    const canConfirmBuy = item.signal_status === "buy_pending_confirm";
+    const isRisk = item.signal_type !== "buy";
+    return (
+      <div key={item.signal_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+            </strong>
+            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <StatusPill label={signalTypeLabels[item.signal_type] || item.signal_type} status={isRisk ? "sell_signal_pending" : item.signal_status} />
+              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="signal_generated" />
+            </div>
+          </div>
+          <span style={{ borderRadius: 16, padding: "8px 10px", minWidth: 44, textAlign: "center", color: "#fff", background: isRisk ? "linear-gradient(135deg,#e34d59,#c83b46)" : "linear-gradient(135deg,#5570ff,#4052d2)", fontWeight: 900 }}>
+            {item.signal_level || "-"}
+          </span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <MiniStat label="触发价" value={item.trigger_price ?? "-"} />
+          <MiniStat label="止损位" value={item.stop_loss_price ?? "-"} tone="#e34d59" />
+          <MiniStat label="目标价" value={item.target_price ?? "-"} tone="#4b63ee" />
+        </div>
+        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 9 }}>
+          <InfoLine label="买点类型" value={buyPointLabels[item.buy_point_type] || item.buy_point_type || "-"} />
+          <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${item.signal_status || "-"}`} />
+          <InfoLine label="触发原因" value={item.trigger_reason || ASSISTANT_NOTE} />
+          <InfoLine label="风险说明" value={item.risk_desc || "-"} />
+          <p style={{ margin: 0, color: "#8a94a8", fontSize: 12, lineHeight: 1.55 }}>{ASSISTANT_NOTE}</p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: canConfirmBuy ? "1.1fr 1fr" : "1fr", gap: 8 }}>
+          {canConfirmBuy && <Button block color="primary" onClick={() => openBuyForm(item)} style={{ borderRadius: 14, fontWeight: 800 }}>确认买入</Button>}
+          <Button block fill="outline" onClick={() => abandonSignal(item)} style={{ borderRadius: 14 }}>放弃本次机会</Button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderTradeCardV2(item: any) {
+    const isOpen = ["open", "holding"].includes(item.trade_status);
+    const pnl = Number(item.pnl_amount) || 0;
+    return (
+      <div key={item.trade_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+            </strong>
+            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="trading" />
+              <StatusPill label={item.trade_status || "-"} status={item.trade_status} />
+            </div>
+          </div>
+          <span style={{ borderRadius: 16, padding: "8px 10px", minWidth: 74, textAlign: "right", color: pnl >= 0 ? "#e34d59" : "#00a870", background: pnl >= 0 ? "#fff1f1" : "#eefaf4", fontWeight: 900 }}>
+            {formatMoney(item.pnl_amount)}
+          </span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <MiniStat label="买入均价" value={item.average_buy_price ?? item.first_buy_price ?? "-"} />
+          <MiniStat label="剩余数量" value={item.remaining_amount ?? "-"} />
+          <MiniStat label="盈亏率" value={`${formatMoney((Number(item.pnl_ratio) || 0) * 100)}%`} tone={pnl >= 0 ? "#e34d59" : "#00a870"} />
+        </div>
+        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <InfoLine label="止损价" value={item.stop_loss_price ?? "-"} />
+          <InfoLine label="目标价" value={item.target_price ?? "-"} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: isOpen ? "1fr 1fr" : "1fr", gap: 8 }}>
+          <Button block fill="outline" onClick={() => showExecutions(item)} style={{ borderRadius: 14 }}>执行流水</Button>
+          {isOpen && <Button block color="danger" fill="outline" onClick={() => openSellForm(item)} style={{ borderRadius: 14 }}>确认全部卖出</Button>}
+        </div>
+      </div>
+    );
+  }
+
+  function renderWatchCard(item: any) {
+    const status = item.lifecycle_status || item.pool_status;
+    const monitorOff = item.monitor_enabled === false || item.signal_enabled === false;
+    const source = `${item.entry_source || item.source_type || item.source_platform || "manual"}${item.source_rank ? ` #${item.source_rank}` : ""}`;
+    const riskText = (item.risk_tags || []).map((tag: string) => riskTagLabels[tag] || tag).join(" / ") || "暂无";
+    return (
+      <div key={item.watch_id} style={{ borderRadius: 24, background: "#fff", padding: 15, boxShadow: "0 12px 30px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ display: "block", fontSize: 18, color: "#17213b" }}>
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+            </strong>
+            <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="signal_generated" />
+              <StatusPill label={labelOf(lifecycleOptions, status)} status={status} />
+            </div>
+          </div>
+          <StatusPill label={monitorOff ? "监控关闭" : "监控中"} status={monitorOff ? "invalid" : "watching"} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <MiniStat label="观察价" value={item.key_observe_price ?? "-"} tone="#4b63ee" />
+          <MiniStat label="来源" value={source} />
+        </div>
+        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+          <InfoLine label="入选理由" value={item.entry_reason || item.reason || item.source_reason || "用户手动关注"} />
+          <InfoLine label="失效条件" value={item.invalid_condition || "-"} />
+          <InfoLine label="风险标签" value={riskText} />
+          <InfoLine label="下一步" value={nextAction(item)} />
+          {item.user_remark ? <InfoLine label="备注" value={item.user_remark} /> : null}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <Button block fill="outline" onClick={() => openEdit(item)} style={{ borderRadius: 14 }}>调整</Button>
+          <Button block fill="outline" onClick={() => toggleMonitor(item)} style={{ borderRadius: 14 }}>{monitorOff ? "开启监控" : "关闭监控"}</Button>
+          <Button block fill="outline" onClick={() => markInvalid(item)} style={{ borderRadius: 14 }}>失效</Button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Button block fill="outline" onClick={() => removeWatch(item)} style={{ borderRadius: 14 }}>剔除</Button>
+          <Button block color="danger" fill="outline" onClick={() => blacklistWatch(item)} style={{ borderRadius: 14 }}>黑名单</Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <PageShell
       title="自选"
@@ -350,13 +503,19 @@ export function WatchPoolPage() {
             <div className="card-headline"><span className="icon-badge">{todayNew}</span><h2>观察</h2></div>
             <span className="soft-tag">今日新增 {todayNew} / 当前 {items.length} / 总览 {watchSummary.watching ?? "-"}</span>
           </div>
-          <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+            <MiniStat label="今日新增" value={todayNew} tone="#4b63ee" />
+            <MiniStat label="当前筛选" value={items.length} />
+            <MiniStat label="观察中" value={watchSummary.watching ?? "-"} tone="#00a870" />
+          </div>
+          <div style={{ display: "grid", gap: 10, marginBottom: 14, borderRadius: 22, background: "#fff", padding: 12, boxShadow: "0 10px 28px rgba(31,43,77,0.05)" }}>
             <Selector options={tradingSystemOptions} value={[tradingSystem]} onChange={(value) => setTradingSystem((value[0] as string) || "")} />
             <Selector options={lifecycleOptions} value={[lifecycleStatus]} onChange={(value) => setLifecycleStatus((value[0] as string) || "")} />
           </div>
           {items.length ? (
             <div className="stack-list">
-              {items.map((item) => (
+              {items.map(renderWatchCard)}
+              {false && items.map((item) => (
                 <div key={item.watch_id} className="row-card" style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                     <div>
@@ -395,8 +554,8 @@ export function WatchPoolPage() {
             <span className="soft-tag">今日 {todaySignals} / 总数 {signalSummary.total ?? signals.length}</span>
           </div>
           <div className="stack-list">
-            {buySignals.map(renderSignalCard)}
-            {riskSignals.map(renderSignalCard)}
+            {buySignals.map(renderSignalCardV2)}
+            {riskSignals.map(renderSignalCardV2)}
             {!buySignals.length && !riskSignals.length && <div className="empty-panel">暂无信号</div>}
           </div>
         </article>
@@ -408,7 +567,7 @@ export function WatchPoolPage() {
             <div className="card-headline"><span className="icon-badge">{tradeSummary.open ?? 0}</span><h2>交易</h2></div>
             <span className="soft-tag">持仓 {tradeSummary.open ?? 0} / 总数 {tradeSummary.total ?? trades.length}</span>
           </div>
-          {trades.length ? <div className="stack-list">{trades.map(renderTradeCard)}</div> : <div className="empty-panel">暂无交易记录</div>}
+          {trades.length ? <div className="stack-list">{trades.map(renderTradeCardV2)}</div> : <div className="empty-panel">暂无交易记录</div>}
         </article>
       )}
 

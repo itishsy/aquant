@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { Button, DatePicker, Dialog, ErrorBlock, Input, Picker, Popup, Selector, SpinLoading, TextArea, Toast } from "antd-mobile";
 import * as echarts from "echarts";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client";
 import { PageShell } from "../components/PageShell";
-import { StockLink } from "../components/StockLink";
+import { StockLink, toXueqiuUrl } from "../components/StockLink";
 import { dateToString, shiftTradeDate, stringToDate, todayString } from "../lib/tradeDates";
 
 type MarketSummary = {
@@ -51,6 +52,12 @@ type WatchDraft = {
   raw_item: any;
 };
 
+type StockViewerState = {
+  type: "hot_stock" | "limit_up";
+  rows: any[];
+  index: number;
+};
+
 const tradingSystemOptions = [
   { label: "平台突破", value: "platform_breakout" },
   { label: "上涨趋势", value: "uptrend" },
@@ -77,6 +84,37 @@ function formatPx(value?: number | null) {
 
 function pctColor(value?: number | null) {
   return value == null ? "#7687a4" : value >= 0 ? "#e34d59" : "#00b578";
+}
+
+function FieldTitle({ title, required, hint }: { title: string; required?: boolean; hint?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+      <span style={{ color: "#18223d", fontWeight: 800, fontSize: 14 }}>
+        {title}
+        {required ? <span style={{ color: "#e34d59", marginLeft: 3 }}>*</span> : null}
+      </span>
+      {hint ? <span style={{ color: "#98a2b3", fontSize: 12, textAlign: "right" }}>{hint}</span> : null}
+    </div>
+  );
+}
+
+function calculateEma(values: number[], period: number) {
+  const alpha = 2 / (period + 1);
+  const result: number[] = [];
+  values.forEach((value, index) => {
+    result.push(index === 0 ? value : value * alpha + result[index - 1] * (1 - alpha));
+  });
+  return result;
+}
+
+function calculateMacd(closes: number[]) {
+  if (!closes.length) return { dif: [], dea: [], hist: [] };
+  const ema12 = calculateEma(closes, 12);
+  const ema26 = calculateEma(closes, 26);
+  const dif = closes.map((_, index) => Number((ema12[index] - ema26[index]).toFixed(4)));
+  const dea = calculateEma(dif, 9).map((value) => Number(value.toFixed(4)));
+  const hist = dif.map((value, index) => Number(((value - dea[index]) * 2).toFixed(4)));
+  return { dif, dea, hist };
 }
 
 function limitHeight(row: any) {
@@ -140,24 +178,29 @@ function LimitUpKlineChart({ stockCode }: { stockCode?: string }) {
     const ma5 = rows.map((row) => row.ma5 ?? null);
     const ma10 = rows.map((row) => row.ma10 ?? null);
     const ma20 = rows.map((row) => row.ma20 ?? null);
+    const closes = rows.map((row) => Number(row.close || 0));
+    const macd = calculateMacd(closes);
 
     chart.setOption({
       animation: false,
       tooltip: { trigger: "axis" },
       legend: { top: 0, itemWidth: 10, itemHeight: 6, textStyle: { fontSize: 10 } },
       grid: [
-        { left: 34, right: 12, top: 28, height: 150 },
-        { left: 34, right: 12, top: 205, height: 52 },
+        { left: 36, right: 12, top: 28, height: 132 },
+        { left: 36, right: 12, top: 184, height: 48 },
+        { left: 36, right: 12, top: 258, height: 56 },
       ],
       xAxis: [
         { type: "category", data: dates, boundaryGap: true, axisLabel: { fontSize: 10, interval: Math.max(1, Math.floor(rows.length / 6)) } },
         { type: "category", data: dates, gridIndex: 1, axisLabel: { show: false } },
+        { type: "category", data: dates, gridIndex: 2, axisLabel: { fontSize: 10, interval: Math.max(1, Math.floor(rows.length / 6)) } },
       ],
       yAxis: [
         { type: "value", scale: true, axisLabel: { fontSize: 10 } },
         { type: "value", gridIndex: 1, axisLabel: { fontSize: 10 } },
+        { type: "value", gridIndex: 2, scale: true, axisLabel: { fontSize: 10 } },
       ],
-      dataZoom: [{ type: "inside", xAxisIndex: [0, 1], start: 55, end: 100 }],
+      dataZoom: [{ type: "inside", xAxisIndex: [0, 1, 2], start: 55, end: 100 }],
       series: [
         {
           name: "日K",
@@ -181,6 +224,32 @@ function LimitUpKlineChart({ stockCode }: { stockCode?: string }) {
             },
           },
         },
+        {
+          name: "MACD",
+          type: "bar",
+          data: macd.hist,
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          itemStyle: { color: (params: any) => (params.data >= 0 ? "#e34d59" : "#00b578") },
+        },
+        {
+          name: "DIF",
+          type: "line",
+          data: macd.dif,
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          symbol: "none",
+          lineStyle: { width: 1, color: "#4b63ee" },
+        },
+        {
+          name: "DEA",
+          type: "line",
+          data: macd.dea,
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          symbol: "none",
+          lineStyle: { width: 1, color: "#f59e0b" },
+        },
       ],
     });
 
@@ -193,12 +262,12 @@ function LimitUpKlineChart({ stockCode }: { stockCode?: string }) {
   }, [rows]);
 
   if (loading) {
-    return <div style={{ height: 280, display: "grid", placeItems: "center" }}><SpinLoading /></div>;
+    return <div style={{ height: 350, display: "grid", placeItems: "center" }}><SpinLoading /></div>;
   }
   if (!rows.length) {
     return <div style={{ height: 120, display: "grid", placeItems: "center", color: "#8792a8" }}>暂无K线数据</div>;
   }
-  return <div ref={chartRef} style={{ width: "100%", height: 280 }} />;
+  return <div ref={chartRef} style={{ width: "100%", height: 350 }} />;
 }
 
 export function MarketPage() {
@@ -223,6 +292,7 @@ export function MarketPage() {
   const [watchCodes, setWatchCodes] = useState<Set<string>>(new Set());
   const [watchDraft, setWatchDraft] = useState<WatchDraft | null>(null);
   const [watchSubmitting, setWatchSubmitting] = useState(false);
+  const [stockViewer, setStockViewer] = useState<StockViewerState | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -313,6 +383,8 @@ export function MarketPage() {
     { title: "今日风口", tag: "财联社", rows: data?.today_tuyeres || [] },
     { title: "话题热榜", tag: "同花顺", rows: data?.topic_list || [] },
   ];
+
+  const hotDisplayRows = useMemo(() => hotStocks.slice(0, 10), [hotStocks]);
 
   const filteredLimitRows = useMemo(() => {
     let rows = limitRows;
@@ -413,6 +485,20 @@ export function MarketPage() {
     });
   }
 
+  function openStockViewer(type: StockViewerState["type"], rows: any[], index = 0) {
+    const validRows = rows.filter((row) => row?.stock_code);
+    if (!validRows.length) return;
+    setStockViewer({ type, rows: validRows, index: Math.min(Math.max(index, 0), validRows.length - 1) });
+  }
+
+  function changeStockViewerIndex(delta: number) {
+    setStockViewer((viewer) => {
+      if (!viewer) return viewer;
+      const nextIndex = Math.min(Math.max(viewer.index + delta, 0), viewer.rows.length - 1);
+      return { ...viewer, index: nextIndex };
+    });
+  }
+
   function addWatchFromMarket(item: any, sourceType: "hot_stock" | "limit_up") {
     setWatchDraft(buildWatchDraft(item, sourceType));
   }
@@ -455,6 +541,14 @@ export function MarketPage() {
       setWatchSubmitting(false);
     }
   }
+
+  const viewerItem = stockViewer ? stockViewer.rows[stockViewer.index] : null;
+  const viewerReason = viewerItem
+    ? stockViewer?.type === "limit_up"
+      ? viewerItem.limit_reason || viewerItem.reason || viewerItem.raw_reason || "暂无入榜原因"
+      : viewerItem.hot_reason || viewerItem.raw_reason || viewerItem.reason || viewerItem.up_reason || "暂无入榜原因"
+    : "";
+  const viewerXueqiuUrl = viewerItem ? toXueqiuUrl(viewerItem.stock_code) : "";
 
   return (
     <PageShell
@@ -600,14 +694,21 @@ export function MarketPage() {
                   <span className="icon-badge">热</span>
                   <h2>热榜{hotPlatform ? ` · ${hotPlatform}` : " · 三平台综合"}</h2>
                 </div>
+                {hotDisplayRows.length ? (
+                  <Button size="small" fill="none" onClick={() => openStockViewer("hot_stock", hotDisplayRows, 0)}>
+                    查看全部
+                  </Button>
+                ) : null}
               </div>
               {hotStocks.length ? (
                 <div className="stack-list">
-                  {hotStocks.slice(0, 10).map((item) => (
-                    <div key={`${item.stock_code}-${item.platform || "all"}`} className="row-card row-card-action">
+                  {hotDisplayRows.map((item, index) => (
+                    <div key={`${item.stock_code}-${item.platform || "all"}`} className="row-card row-card-action" onClick={() => openStockViewer("hot_stock", hotDisplayRows, index)} style={{ cursor: "pointer" }}>
                       <div>
                         <strong>
-                          <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+                          <span onClick={(event) => event.stopPropagation()}>
+                            <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+                          </span>
                         </strong>
                         {hotPlatform ? (
                           <>
@@ -643,6 +744,11 @@ export function MarketPage() {
                   <span className="icon-badge">{limitConcept || limitLadder ? filteredLimitRows.length : (includeSt ? limitTotal : limitTotal - limitRows.filter((row) => (row.stock_name || "").includes("ST")).length)}</span>
                   <h2>涨停榜</h2>
                 </div>
+                {filteredLimitRows.length ? (
+                  <Button size="small" fill="none" onClick={() => openStockViewer("limit_up", filteredLimitRows, 0)}>
+                    查看全部
+                  </Button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => setIncludeSt(!includeSt)}
@@ -676,8 +782,8 @@ export function MarketPage() {
               </div>
               {filteredLimitRows.length ? (
                 <div className="stack-list">
-                  {filteredLimitRows.map((item) => (
-                    <div key={item.stock_code} className="row-card row-card-action" style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => showLimitUpDetail(item)}>
+                  {filteredLimitRows.map((item, index) => (
+                    <div key={item.stock_code} className="row-card row-card-action" style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => openStockViewer("limit_up", filteredLimitRows, index)}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <strong>
                           <span onClick={(event) => event.stopPropagation()}>
@@ -712,93 +818,258 @@ export function MarketPage() {
         </>
       )}
       <Popup
+        visible={!!stockViewer}
+        onMaskClick={() => setStockViewer(null)}
+        bodyStyle={{
+          borderTopLeftRadius: 28,
+          borderTopRightRadius: 28,
+          padding: 0,
+          maxHeight: "94vh",
+          overflow: "hidden",
+          background: "linear-gradient(180deg, #f7f9ff 0%, #ffffff 38%)",
+        }}
+      >
+        {stockViewer && viewerItem ? (
+          <div style={{ display: "flex", flexDirection: "column", maxHeight: "94vh" }}>
+            <div style={{ padding: "10px 18px 8px" }}>
+              <div style={{ width: 42, height: 5, borderRadius: 999, background: "#d9dfef", margin: "0 auto 12px" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <strong style={{ fontSize: 22, color: "#141d36", letterSpacing: "-0.02em" }}>{viewerItem.stock_name || viewerItem.stock_code}</strong>
+                    <span style={{ borderRadius: 999, padding: "5px 9px", color: "#4257d8", background: "#eef2ff", fontSize: 12, fontWeight: 800 }}>
+                      {stockViewer.type === "limit_up" ? "涨停榜" : "热榜"}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 5, color: "#6b7894", fontSize: 13 }}>{viewerItem.stock_code}</div>
+                </div>
+                <span style={{ flexShrink: 0, color: "#8a94a8", fontSize: 12, fontWeight: 800 }}>
+                  {stockViewer.index + 1} / {stockViewer.rows.length}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ overflowY: "auto", padding: "0 18px 92px", WebkitOverflowScrolling: "touch" }}>
+              <div style={{ borderRadius: 24, background: "#fff", boxShadow: "0 12px 36px rgba(31, 43, 77, 0.08)", overflow: "hidden" }}>
+                <div style={{ padding: "12px 14px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong style={{ color: "#18223d", fontSize: 16 }}>走势观察</strong>
+                  <span style={{ color: "#8a94a8", fontSize: 12 }}>K线 / 成交量 / MACD</span>
+                </div>
+                <LimitUpKlineChart stockCode={viewerItem.stock_code} />
+              </div>
+
+              <div style={{ marginTop: 12, borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 30px rgba(31, 43, 77, 0.07)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div className="metric-tile" style={{ padding: 12 }}>
+                    <span>{stockViewer.type === "limit_up" ? "连板" : "来源排名"}</span>
+                    <strong>{stockViewer.type === "limit_up" ? `${limitHeight(viewerItem)}板` : viewerItem.platform_rank ?? viewerItem.rank_no ?? "-"}</strong>
+                  </div>
+                  <div className="metric-tile" style={{ padding: 12 }}>
+                    <span>{stockViewer.type === "limit_up" ? "涨停时间" : "原始分数"}</span>
+                    <strong>{stockViewer.type === "limit_up" ? viewerItem.limit_time || "-" : viewerItem.raw_score ?? "-"}</strong>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 7, color: "#53627c", fontSize: 13, lineHeight: 1.55 }}>
+                  <div><strong style={{ color: "#18223d" }}>来源：</strong>{viewerItem.platform || viewerItem.source || "-"}</div>
+                  <div><strong style={{ color: "#18223d" }}>板块：</strong>{viewerItem.board_name || viewerItem.concept || viewerItem.plate_name || viewerItem.sector || "未分类"}</div>
+                  {viewerItem.last_price != null ? <div><strong style={{ color: "#18223d" }}>价格：</strong>{viewerItem.last_price}{viewerItem.change_pct != null ? ` / ${formatPct(viewerItem.change_pct)}` : ""}</div> : null}
+                  <div style={{ borderRadius: 16, background: "#f7f9ff", padding: "10px 12px", color: "#32415f" }}>
+                    <strong style={{ display: "block", marginBottom: 4, color: "#18223d" }}>入榜原因</strong>
+                    {viewerReason}
+                  </div>
+                </div>
+                <p style={{ margin: "12px 0 0", color: "#8a94a8", fontSize: 12, lineHeight: 1.6 }}>
+                  仅作为交易辅助，请结合个人交易规则确认。个股行情以雪球页面和公开数据源为准。
+                </p>
+              </div>
+            </div>
+
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                padding: "10px 14px calc(10px + env(safe-area-inset-bottom))",
+                background: "rgba(255,255,255,0.94)",
+                borderTop: "1px solid rgba(226,232,240,0.9)",
+                boxShadow: "0 -12px 32px rgba(31,43,77,0.1)",
+                backdropFilter: "blur(14px)",
+              }}
+            >
+              <div style={{ display: "grid", gridTemplateColumns: "0.82fr 0.82fr 1fr 0.92fr", gap: 8 }}>
+                <Button block disabled={stockViewer.index === 0} onClick={() => changeStockViewerIndex(-1)} style={{ borderRadius: 14 }}>上一个</Button>
+                <Button block disabled={stockViewer.index >= stockViewer.rows.length - 1} onClick={() => changeStockViewerIndex(1)} style={{ borderRadius: 14 }}>下一个</Button>
+                {watchCodes.has(viewerItem.stock_code) ? (
+                  <Button block disabled style={{ borderRadius: 14 }}>已观察</Button>
+                ) : (
+                  <Button block color="primary" onClick={() => { setStockViewer(null); addWatchFromMarket(viewerItem, stockViewer.type); }} style={{ borderRadius: 14, fontWeight: 800 }}>+观察</Button>
+                )}
+                <Button block fill="outline" onClick={() => viewerXueqiuUrl && window.open(viewerXueqiuUrl, "_blank")} style={{ borderRadius: 14 }}>雪球</Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Popup>
+
+      <Popup
         visible={!!watchDraft}
         onMaskClick={() => setWatchDraft(null)}
-        bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "18px 18px 22px", maxHeight: "86vh", overflowY: "auto" }}
+        bodyStyle={{
+          borderTopLeftRadius: 28,
+          borderTopRightRadius: 28,
+          padding: 0,
+          maxHeight: "92vh",
+          overflow: "hidden",
+          background: "linear-gradient(180deg, #f7f9ff 0%, #ffffff 34%)",
+        }}
       >
         {watchDraft && (
-          <div style={{ display: "grid", gap: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: "#15213d" }}>{watchDraft.stock_name}</div>
-                <div style={{ marginTop: 4, color: "#72819b", fontSize: 13 }}>{watchDraft.stock_code}</div>
+          <div style={{ display: "flex", flexDirection: "column", maxHeight: "92vh" }}>
+            <div style={{ padding: "10px 18px 8px" }}>
+              <div style={{ width: 42, height: 5, borderRadius: 999, background: "#d9dfef", margin: "0 auto 12px" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: "#141d36", letterSpacing: "-0.02em" }}>{watchDraft.stock_name}</div>
+                  <div style={{ marginTop: 5, color: "#6b7894", fontSize: 13 }}>{watchDraft.stock_code}</div>
+                </div>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    borderRadius: 999,
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: "#4257d8",
+                    background: "#eef2ff",
+                  }}
+                >
+                  {watchDraft.source_type === "limit_up" ? "涨停榜来源" : "人气榜来源"}
+                </span>
               </div>
-              <span className="soft-tag">{watchDraft.source_type === "limit_up" ? "涨停榜" : "人气榜"}</span>
             </div>
 
-            <div style={{ borderRadius: 16, background: "#f6f8ff", padding: 12, color: "#53627c", fontSize: 13, lineHeight: 1.6 }}>
-              <div>来源平台：{watchDraft.source_platform || "-"}</div>
-              <div>来源排名：{watchDraft.source_rank ?? "-"}</div>
-              <div>来源原因：{watchDraft.source_reason || "-"}</div>
-              <div>系统推荐：{tradingSystemLabel(recommendTradingSystem(watchDraft.raw_item, watchDraft.source_type))}</div>
+            <div style={{ overflowY: "auto", padding: "0 18px 14px", WebkitOverflowScrolling: "touch" }}>
+              <div
+                style={{
+                  borderRadius: 22,
+                  background: "linear-gradient(135deg, #1d2948 0%, #4d63ed 100%)",
+                  padding: 15,
+                  color: "#fff",
+                  boxShadow: "0 14px 34px rgba(66, 87, 216, 0.24)",
+                }}
+              >
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12, opacity: 0.9 }}>
+                  <div>
+                    <div style={{ opacity: 0.68 }}>来源平台</div>
+                    <strong style={{ display: "block", marginTop: 3, fontSize: 14 }}>{watchDraft.source_platform || "-"}</strong>
+                  </div>
+                  <div>
+                    <div style={{ opacity: 0.68 }}>来源排名</div>
+                    <strong style={{ display: "block", marginTop: 3, fontSize: 14 }}>{watchDraft.source_rank ?? "-"}</strong>
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ opacity: 0.68 }}>系统推荐</div>
+                    <strong style={{ display: "block", marginTop: 3, fontSize: 15 }}>{tradingSystemLabel(recommendTradingSystem(watchDraft.raw_item, watchDraft.source_type))}</strong>
+                  </div>
+                </div>
+                <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.18)", paddingTop: 10, fontSize: 13, lineHeight: 1.55 }}>
+                  {watchDraft.source_reason || "暂无来源原因"}
+                </div>
+              </div>
+
+              <section style={{ marginTop: 14, display: "grid", gap: 12 }}>
+                <div style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 30px rgba(31, 43, 77, 0.07)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                    <strong style={{ color: "#18223d", fontSize: 16 }}>交易系统</strong>
+                    <span style={{ color: "#8a94a8", fontSize: 12 }}>请选择一种观察框架</span>
+                  </div>
+                  <Selector
+                    columns={3}
+                    options={tradingSystemOptions}
+                    value={[watchDraft.trading_system]}
+                    onChange={(value) => setWatchDraft({ ...watchDraft, trading_system: value[0] as WatchDraft["trading_system"] })}
+                  />
+                </div>
+
+                <div style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 30px rgba(31, 43, 77, 0.07)", display: "grid", gap: 12 }}>
+                  <FieldTitle title="入选理由" required hint="为什么值得进入观察池" />
+                  <TextArea
+                    value={watchDraft.entry_reason}
+                    autoSize={{ minRows: 2, maxRows: 4 }}
+                    placeholder="例如：热榜持续靠前，板块有承接，等待低风险买点"
+                    onChange={(value) => setWatchDraft({ ...watchDraft, entry_reason: value })}
+                    style={{ "--font-size": "14px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: 10 } as CSSProperties}
+                  />
+
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.85fr) minmax(0, 1.15fr)", gap: 10 }}>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <FieldTitle title="关键观察价" required />
+                      <Input
+                        type="number"
+                        value={watchDraft.key_observe_price}
+                        placeholder="12.35"
+                        onChange={(value) => setWatchDraft({ ...watchDraft, key_observe_price: value })}
+                        style={{ "--font-size": "16px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: "10px 12px" } as CSSProperties}
+                      />
+                    </div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <FieldTitle title="失效条件" required />
+                      <Input
+                        value={watchDraft.invalid_condition}
+                        placeholder="跌破关键价且无法收回"
+                        onChange={(value) => setWatchDraft({ ...watchDraft, invalid_condition: value })}
+                        style={{ "--font-size": "14px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: "10px 12px" } as CSSProperties}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 30px rgba(31, 43, 77, 0.07)" }}>
+                  <FieldTitle title="风险标签" hint="可多选，帮助后续复盘" />
+                  <div style={{ marginTop: 10 }}>
+                    <Selector
+                      multiple
+                      columns={3}
+                      options={riskTagOptions}
+                      value={watchDraft.risk_tags}
+                      onChange={(value) => setWatchDraft({ ...watchDraft, risk_tags: value as string[] })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 30px rgba(31, 43, 77, 0.07)", display: "grid", gap: 10 }}>
+                  <FieldTitle title="用户备注" hint="可选" />
+                  <TextArea
+                    value={watchDraft.user_remark}
+                    autoSize={{ minRows: 2, maxRows: 4 }}
+                    placeholder="记录你的观察计划、情绪提醒或复盘线索"
+                    onChange={(value) => setWatchDraft({ ...watchDraft, user_remark: value })}
+                    style={{ "--font-size": "14px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: 10 } as CSSProperties}
+                  />
+                </div>
+
+                <div style={{ borderRadius: 18, padding: "12px 14px", background: "#fff8e8", color: "#8a641f", fontSize: 12, lineHeight: 1.6 }}>
+                  加入自选仅用于后续观察和信号提醒，仅作为交易辅助，请结合个人交易规则确认。
+                </div>
+              </section>
             </div>
 
-            <label style={{ display: "grid", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "#1d2948" }}>用户确认交易系统</span>
-              <Selector
-                options={tradingSystemOptions}
-                value={[watchDraft.trading_system]}
-                onChange={(value) => setWatchDraft({ ...watchDraft, trading_system: value[0] as WatchDraft["trading_system"] })}
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "#1d2948" }}>入选理由</span>
-              <TextArea
-                value={watchDraft.entry_reason}
-                autoSize={{ minRows: 2, maxRows: 4 }}
-                placeholder="说明为什么把它加入观察池"
-                onChange={(value) => setWatchDraft({ ...watchDraft, entry_reason: value })}
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "#1d2948" }}>关键观察价</span>
-              <Input
-                type="number"
-                value={watchDraft.key_observe_price}
-                placeholder="例如 12.35"
-                onChange={(value) => setWatchDraft({ ...watchDraft, key_observe_price: value })}
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "#1d2948" }}>失效条件</span>
-              <TextArea
-                value={watchDraft.invalid_condition}
-                autoSize={{ minRows: 2, maxRows: 4 }}
-                placeholder="例如 跌破关键观察价且无法收回"
-                onChange={(value) => setWatchDraft({ ...watchDraft, invalid_condition: value })}
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "#1d2948" }}>风险标签</span>
-              <Selector
-                multiple
-                options={riskTagOptions}
-                value={watchDraft.risk_tags}
-                onChange={(value) => setWatchDraft({ ...watchDraft, risk_tags: value as string[] })}
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "#1d2948" }}>用户备注</span>
-              <TextArea
-                value={watchDraft.user_remark}
-                autoSize={{ minRows: 2, maxRows: 4 }}
-                placeholder="可记录个人观察计划"
-                onChange={(value) => setWatchDraft({ ...watchDraft, user_remark: value })}
-              />
-            </label>
-
-            <p style={{ margin: 0, color: "#7b879c", fontSize: 12, lineHeight: 1.6 }}>
-              加入自选仅用于后续观察和信号提醒，仅作为交易辅助，请结合个人交易规则确认。
-            </p>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Button block onClick={() => setWatchDraft(null)}>取消</Button>
-              <Button block color="primary" loading={watchSubmitting} onClick={submitWatchDraft}>提交</Button>
+            <div
+              style={{
+                padding: "12px 18px calc(12px + env(safe-area-inset-bottom))",
+                background: "rgba(255,255,255,0.92)",
+                borderTop: "1px solid rgba(226,232,240,0.9)",
+                boxShadow: "0 -10px 28px rgba(31,43,77,0.08)",
+                backdropFilter: "blur(14px)",
+              }}
+            >
+              <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 10 }}>
+                <Button block style={{ borderRadius: 16 }} onClick={() => setWatchDraft(null)}>取消</Button>
+                <Button block color="primary" loading={watchSubmitting} onClick={submitWatchDraft} style={{ borderRadius: 16, fontWeight: 800 }}>
+                  加入自选观察
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -807,3 +1078,4 @@ export function MarketPage() {
     </PageShell>
   );
 }
+
