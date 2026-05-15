@@ -220,7 +220,6 @@ export function MarketPage() {
   const [limitLadder, setLimitLadder] = useState<number | null>(null);
   const [includeSt, setIncludeSt] = useState(false);
   const [hotPlatform, setHotPlatform] = useState("");
-  const [hotPlatformPickerVisible, setHotPlatformPickerVisible] = useState(false);
   const [watchCodes, setWatchCodes] = useState<Set<string>>(new Set());
   const [watchDraft, setWatchDraft] = useState<WatchDraft | null>(null);
   const [watchSubmitting, setWatchSubmitting] = useState(false);
@@ -355,8 +354,18 @@ export function MarketPage() {
       const name = row.concept || row.plate_name || "未分类";
       counts[name] = (counts[name] || 0) + 1;
     });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    // Move "其他"/"未分类" to the end
+    const tail = entries.filter(([n]) => n === "其他" || n === "未分类");
+    const head = entries.filter(([n]) => n !== "其他" && n !== "未分类");
+    return [...head, ...tail].slice(0, 15);
   }, [limitRows, includeSt]);
+
+  const conceptDescription = useMemo(() => {
+    if (!limitConcept) return "";
+    const sector = hotSectors.find((s) => s.name === limitConcept);
+    return sector?.reason || "";
+  }, [hotSectors, limitConcept]);
 
   function showMarketInfoDetail(title: string, item: any) {
     const stocks = item.stocks || [];
@@ -569,26 +578,48 @@ export function MarketPage() {
 
           {tab === "hot" && (
             <>
+            {/* Platform tabs */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              {[
+                { key: "", label: "综合" },
+                { key: "cls", label: "财联社" },
+                { key: "ths", label: "同花顺" },
+                { key: "tgb", label: "淘股吧" },
+              ].map((p) => (
+                <button key={p.key} type="button" onClick={() => setHotPlatform(p.key)}
+                  style={{
+                    flex: 1, padding: "7px 0", border: 0, borderRadius: 12, fontSize: 13, fontWeight: 700,
+                    background: hotPlatform === p.key ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
+                    color: hotPlatform === p.key ? "#fff" : "#64748b",
+                  }}>{p.label}</button>
+              ))}
+            </div>
             <article className="feature-card">
               <div className="card-head">
                 <div className="card-headline">
                   <span className="icon-badge">热</span>
-                  <h2>热榜</h2>
+                  <h2>热榜{hotPlatform ? ` · ${hotPlatform}` : " · 三平台综合"}</h2>
                 </div>
-                <span className="soft-tag" style={{ cursor: "pointer" }} onClick={() => setHotPlatformPickerVisible(true)}>
-                  {hotPlatform ? `${hotPlatform} Top10` : "平台原始榜单"} ▾
-                </span>
               </div>
               {hotStocks.length ? (
                 <div className="stack-list">
-                  {hotStocks.map((item) => (
+                  {hotStocks.slice(0, 10).map((item) => (
                     <div key={`${item.stock_code}-${item.platform || "all"}`} className="row-card row-card-action">
                       <div>
                         <strong>
                           <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
                         </strong>
-                        <p>原始分数：{item.raw_score ?? "-"} / 排名：#{item.platform_rank ?? "-"}</p>
-                        <p>{item.platform || "-"} · {item.board_name || "未分类"}</p>
+                        {hotPlatform ? (
+                          <>
+                            <p>原始分数：{item.raw_score ?? "-"} / 排名：#{item.platform_rank ?? "-"}</p>
+                            <p>{item.board_name || "未分类"}</p>
+                          </>
+                        ) : (
+                          <>
+                            <p>得分：{item.total_score ?? item.raw_score ?? "-"} {item.cross_platform ? "多平台共振" : ""}</p>
+                            <p>{(item.platforms || []).map((p: any) => `${p.platform} #${p.rank}(${p.score})`).join("  ")}</p>
+                          </>
+                        )}
                       </div>
                       {watchCodes.has(item.stock_code) ? (
                         <span style={{ fontSize: 12, color: "#00b578", lineHeight: 1, fontWeight: 700 }}>已自选</span>
@@ -602,29 +633,6 @@ export function MarketPage() {
                 <div className="empty-panel">当前日期暂无热榜数据</div>
               )}
             </article>
-            {!hotPlatform && hotSectors.length > 0 && (
-              <article className="feature-card compact-card">
-                <div className="card-head">
-                  <div className="card-headline"><span className="icon-badge">板</span><h2>热榜板块</h2></div>
-                  <span className="soft-tag">涨停板块 Top5</span>
-                </div>
-                <div className="stack-list">
-                  {hotSectors.map((s, idx) => (
-                    <div key={s.name} className="row-card" style={{ padding: "10px 12px", alignItems: "flex-start" }}>
-                      <span style={{ fontSize: 16, fontWeight: 800, color: idx < 3 ? "#e34d59" : "#4b63ee", minWidth: 20 }}>{idx + 1}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <strong style={{ fontSize: 14 }}>{s.name}</strong>
-                        <p style={{ margin: "1px 0", fontSize: 12, color: "#888" }}>
-                          涨停 {s.count} 只
-                          {s.changePct != null ? ` · ${formatPct(s.changePct)}` : ""}
-                        </p>
-                        {s.reason && <p style={{ margin: "2px 0 0", fontSize: 12, color: "#e34d59", lineHeight: 1.5 }}>{s.reason}</p>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            )}
             </>
           )}
 
@@ -651,12 +659,15 @@ export function MarketPage() {
                   {includeSt ? "含ST" : "不含ST"}
                 </button>
               </div>
-              <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 4, marginBottom: 4, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 4, flexWrap: "wrap" }}>
                 <button type="button" onClick={() => setLimitConcept("")} style={{ flex: "0 0 auto", padding: "4px 10px", border: 0, borderRadius: 12, fontSize: 12, fontWeight: 600, background: !limitConcept ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb", color: !limitConcept ? "#fff" : "#64748b" }}>全部</button>
                 {conceptButtons.map(([name, count]) => (
                   <button key={name} type="button" onClick={() => setLimitConcept(limitConcept === name ? "" : name)} style={{ flex: "0 0 auto", padding: "4px 10px", border: 0, borderRadius: 12, fontSize: 12, fontWeight: 600, background: limitConcept === name ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb", color: limitConcept === name ? "#fff" : "#64748b" }}>{name} {count}</button>
                 ))}
               </div>
+              {conceptDescription && (
+                <div style={{ padding: "6px 10px", borderRadius: 10, background: "#f4f6fb", fontSize: 12, color: "#64748b", lineHeight: 1.5, marginBottom: 4 }}>{conceptDescription}</div>
+              )}
               <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 8 }}>
                 <button type="button" onClick={() => setLimitLadder(null)} style={{ flex: "0 0 auto", padding: "6px 12px", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700, background: limitLadder == null ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb", color: limitLadder == null ? "#fff" : "#64748b" }}>全部</button>
                 {ladderHeights.map((height) => (
@@ -793,21 +804,6 @@ export function MarketPage() {
         )}
       </Popup>
 
-      <Picker
-        columns={[[
-          { label: "三平台素数加权", value: "" },
-          { label: "财联社 cls", value: "cls" },
-          { label: "同花顺 ths", value: "ths" },
-          { label: "淘股吧 tgb", value: "tgb" },
-        ]]}
-        visible={hotPlatformPickerVisible}
-        title="选择热榜来源"
-        onClose={() => setHotPlatformPickerVisible(false)}
-        onConfirm={(value) => {
-          setHotPlatform((value as string[])[0] || "");
-          setHotPlatformPickerVisible(false);
-        }}
-      />
     </PageShell>
   );
 }
