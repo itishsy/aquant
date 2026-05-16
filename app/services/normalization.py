@@ -22,10 +22,9 @@ def normalize_stock_code(value: str) -> str:
             exchange = "BJ"
         else:
             raise ValueError("cannot infer exchange")
-    return f"{code}.{exchange}"
+    return f"{exchange.lower()}{code}"
 
 
 def xueqiu_link(stock_code: str) -> str:
     normalized = normalize_stock_code(stock_code)
-    code, exchange = normalized.split(".")
-    return f"https://xueqiu.com/S/{exchange}{code}"
+    return f"https://xueqiu.com/S/{normalized}"

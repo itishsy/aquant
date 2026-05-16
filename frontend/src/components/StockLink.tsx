@@ -36,16 +36,14 @@ function InfoRow({ label, value }: { label: string; value: any }) {
 
 function formatStockLabel(stockName?: string | null, stockCode?: string | null, info?: Record<string, any>) {
   const name = stockName || stockCode || "";
-  const price = info?.price ?? info?.last_price ?? info?.trigger_price ?? info?.first_buy_price;
-  const change = info?.change_pct;
-  if (price != null && change != null) {
+  const price = info?.last_price ?? info?.price ?? info?.trigger_price ?? info?.first_buy_price;
+  const change = info?.change_pct ?? info?.change;
+  const priceText = price != null ? String(price) : "-";
+  if (change != null) {
     const sign = change >= 0 ? "+" : "";
-    return `${name} (${price}, ${sign}${change}%)`;
+    return `${name} (${priceText}, ${sign}${change}%)`;
   }
-  if (price != null) {
-    return `${name} (${price})`;
-  }
-  return `${name} ${stockCode || ""}`;
+  return `${name} (${priceText}, -%)`;
 }
 
 export function StockLink({ stockCode, stockName, showCode = true, className, info }: StockLinkProps) {

@@ -12,15 +12,11 @@ from app.models import (
     ConfigStrategy,
     ConfigTask,
     MktDaily,
-    MktDailyChance,
-    MktDailyChanceStock,
+    MktDailyPlate,
+    MktDailyPlateStock,
     MktDailyTopic,
     MktDailyTopicStock,
-    MktDailyTuyere,
-    MktDailyTuyereStock,
-    MktHotBoard,
     MktHotStock,
-    MktLimitUpPlate,
     MktLimitUpStock,
     MyNotificationSetting,
     MyUserProfile,
@@ -211,30 +207,42 @@ class PrdMarketDataService:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _hot_stock_code(stock_code: str) -> str:
+        text = str(stock_code or "").strip()
+        lower = text.lower()
+        if lower.startswith(("sh", "sz", "bj")):
+            return lower
+        normalized = normalize_stock_code(text)
+        return f"{normalized[:2].lower()}{normalized[2:]}"
+
     def _daily_chances(self, trade_date: date) -> list[dict]:
         rows = (
-            self.db.query(MktDailyChance)
-            .filter(MktDailyChance.trade_date == trade_date)
-            .order_by(MktDailyChance.rank_no.asc(), MktDailyChance.id.asc())
+            self.db.query(MktDailyPlate)
+            .filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type == "chance")
+            .order_by(MktDailyPlate.rank_no.asc(), MktDailyPlate.id.asc())
             .all()
         )
         result = []
         for row in rows:
             stocks = (
-                self.db.query(MktDailyChanceStock)
-                .filter(MktDailyChanceStock.chance_id == row.id)
-                .order_by(MktDailyChanceStock.id.asc())
+                self.db.query(MktDailyPlateStock)
+                .filter(MktDailyPlateStock.plate_id == row.id)
+                .order_by(MktDailyPlateStock.id.asc())
                 .all()
             )
             result.append({
                 "source": row.platform,
                 "kind": "today_chance",
-                "subject_id": row.subject_id,
-                "subject_name": row.subject_name,
-                "title": row.article_title,
-                "article_id": row.article_id,
-                "article_time": row.article_time,
-                "attention_num": row.attention_num,
+                "subject_id": row.plate_code,
+                "subject_name": row.plate_name,
+                "title": row.plate_name,
+                "description": row.description,
+                "jump_url": row.jump_url,
+                "rank_no": row.rank_no,
+                "article_id": None,
+                "article_time": None,
+                "attention_num": None,
                 "stocks": [
                     {
                         "stock_code": stock.stock_code,
@@ -249,27 +257,30 @@ class PrdMarketDataService:
 
     def _daily_tuyeres(self, trade_date: date) -> list[dict]:
         rows = (
-            self.db.query(MktDailyTuyere)
-            .filter(MktDailyTuyere.trade_date == trade_date)
-            .order_by(MktDailyTuyere.rank_no.asc(), MktDailyTuyere.id.asc())
+            self.db.query(MktDailyPlate)
+            .filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type == "tuyere")
+            .order_by(MktDailyPlate.rank_no.asc(), MktDailyPlate.id.asc())
             .all()
         )
         result = []
         for row in rows:
             stocks = (
-                self.db.query(MktDailyTuyereStock)
-                .filter(MktDailyTuyereStock.tuyere_id == row.id)
-                .order_by(MktDailyTuyereStock.id.asc())
+                self.db.query(MktDailyPlateStock)
+                .filter(MktDailyPlateStock.plate_id == row.id)
+                .order_by(MktDailyPlateStock.id.asc())
                 .all()
             )
             result.append({
                 "source": row.platform,
                 "kind": "today_tuyere",
-                "subject_id": row.subject_id,
-                "subject_name": row.subject_name,
-                "title": row.driver,
-                "driver": row.driver,
-                "attention_num": row.attention_num,
+                "subject_id": row.plate_code,
+                "subject_name": row.plate_name,
+                "title": row.description or row.plate_name,
+                "description": row.description,
+                "jump_url": row.jump_url,
+                "rank_no": row.rank_no,
+                "driver": row.description,
+                "attention_num": None,
                 "stocks": [
                     {
                         "stock_code": stock.stock_code,
@@ -450,37 +461,51 @@ class PrdMarketDataService:
 
     def get_hot_boards(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
         if trade_date:
-            query = self.db.query(MktLimitUpPlate).filter(MktLimitUpPlate.trade_date == trade_date)
-            if platform:
-                query = query.filter(MktLimitUpPlate.platform == platform)
-            query = query.filter(
-                ~MktLimitUpPlate.plate_name.like("%ST%"),
-                MktLimitUpPlate.plate_name != "其他",
-                MktLimitUpPlate.plate_name != "其它",
-                MktLimitUpPlate.plate_name != "未分类",
+            query = self.db.query(MktDailyPlate).filter(
+                MktDailyPlate.trade_date == trade_date,
+                MktDailyPlate.plate_type == "limit_up",
             )
-            return [
-                self._limit_up_plate_board_dict(row, index)
-                for index, row in enumerate(
-                    query.order_by(MktLimitUpPlate.limit_up_count.desc(), MktLimitUpPlate.change_pct.desc()).limit(5).all(),
-                    start=1,
-                )
-            ]
+            if platform:
+                query = query.filter(MktDailyPlate.platform == platform)
+            query = query.filter(
+                ~MktDailyPlate.plate_name.like("%ST%"),
+                MktDailyPlate.plate_name != "其他",
+                MktDailyPlate.plate_name != "其它",
+                MktDailyPlate.plate_name != "未分类",
+            )
+            result = []
+            for index, row in enumerate(query.order_by(MktDailyPlate.rank_no.asc(), MktDailyPlate.id.asc()).limit(3).all(), start=1):
+                item = self._daily_plate_board_dict(row, index)
+                related_count = self.db.query(MktDailyPlateStock).filter(MktDailyPlateStock.plate_id == row.id).count()
+                item["raw_score"] = related_count
+                item["limit_up_count"] = related_count
+                result.append(item)
+            return result
 
-        query = self.db.query(MktHotBoard)
+        query = self.db.query(MktDailyPlate).filter(MktDailyPlate.plate_type.in_(["limit_up", "hot_board"]))
         if trade_date:
-            query = query.filter(MktHotBoard.trade_date == trade_date)
+            query = query.filter(MktDailyPlate.trade_date == trade_date)
+        else:
+            latest = (
+                self.db.query(MktDailyPlate.trade_date)
+                .filter(MktDailyPlate.plate_type.in_(["limit_up", "hot_board"]))
+                .order_by(MktDailyPlate.trade_date.desc())
+                .first()
+            )
+            if latest:
+                query = query.filter(MktDailyPlate.trade_date == latest[0])
         if platform:
-            query = query.filter(MktHotBoard.platform == platform)
-        return [self._board_dict(row) for row in query.order_by(MktHotBoard.platform, MktHotBoard.platform_rank).all()]
+            query = query.filter(MktDailyPlate.platform == platform)
+        return [
+            self._daily_plate_board_dict(row, index)
+            for index, row in enumerate(query.order_by(MktDailyPlate.rank_no.asc(), MktDailyPlate.id.asc()).limit(5).all(), start=1)
+        ]
 
-    def get_hot_stocks(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
+    def get_hot_stocks(self, trade_date: date | None = None) -> list[dict]:
         query = self.db.query(MktHotStock)
         if trade_date:
             query = query.filter(MktHotStock.trade_date == trade_date)
-        if platform:
-            query = query.filter(MktHotStock.platform == platform)
-        rows = query.order_by(MktHotStock.platform, MktHotStock.platform_rank).limit(30 if not platform else 10).all()
+        rows = query.order_by(MktHotStock.score.desc(), MktHotStock.id).all()
         return [self._hot_stock_dict(row) for row in rows]
 
     def get_limit_ups(self, trade_date: date | None = None, platform: str | None = None) -> list[dict]:
@@ -493,7 +518,7 @@ class PrdMarketDataService:
         return [self._limit_up_stock_dict(row) for row in stock_rows]
 
     def get_stock_source_summary(self, stock_code: str, trade_date: date) -> dict:
-        code = normalize_stock_code(stock_code)
+        code = self._hot_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code, trade_date=trade_date).all()
         limit_stock_rows = self.db.query(MktLimitUpStock).filter_by(stock_code=code, trade_date=trade_date).all()
         return {
@@ -504,7 +529,7 @@ class PrdMarketDataService:
         }
 
     def get_latest_source(self, stock_code: str) -> dict:
-        code = normalize_stock_code(stock_code)
+        code = self._hot_stock_code(stock_code)
         hot = self.db.query(MktHotStock).filter_by(stock_code=code).order_by(MktHotStock.trade_date.desc()).first()
         limit_stock_row = self.db.query(MktLimitUpStock).filter_by(stock_code=code).order_by(MktLimitUpStock.trade_date.desc()).first()
         return {
@@ -515,28 +540,7 @@ class PrdMarketDataService:
         }
 
     @staticmethod
-    def _board_dict(row: MktHotBoard) -> dict:
-        return {
-            key: getattr(row, key)
-            for key in [
-                "id",
-                "trade_date",
-                "platform",
-                "board_name",
-                "platform_rank",
-                "raw_score",
-                "change_pct",
-                "leader_stock_code",
-                "leader_stock_name",
-                "reason",
-                "source_url",
-                "source_update_time",
-                "collected_at",
-            ]
-        }
-
-    @staticmethod
-    def _limit_up_plate_board_dict(row: MktLimitUpPlate, rank_no: int) -> dict:
+    def _daily_plate_board_dict(row: MktDailyPlate, rank_no: int) -> dict:
         return {
             "id": row.id,
             "trade_date": row.trade_date,
@@ -545,35 +549,36 @@ class PrdMarketDataService:
             "plate_code": row.plate_code,
             "plate_name": row.plate_name,
             "platform_rank": rank_no,
-            "raw_score": row.limit_up_count,
-            "limit_up_count": row.limit_up_count,
-            "change_pct": row.change_pct,
-            "reason": row.up_reason,
-            "up_reason": row.up_reason,
-            "source_update_time": row.source_update_time,
-            "collected_at": row.collected_at,
+            "raw_score": None,
+            "limit_up_count": None,
+            "change_pct": None,
+            "reason": row.description,
+            "up_reason": row.description,
+            "source_update_time": None,
+            "collected_at": row.created_at,
         }
 
     @staticmethod
     def _hot_stock_dict(row: MktHotStock) -> dict:
         return {
-            key: getattr(row, key)
-            for key in [
-                "id",
-                "trade_date",
-                "platform",
-                "stock_code",
-                "stock_name",
-                "board_name",
-                "platform_rank",
-                "raw_score",
-                "raw_reason",
-                "price",
-                "change_pct",
-                "source_url",
-                "source_update_time",
-                "collected_at",
-            ]
+            "id": row.id,
+            "trade_date": row.trade_date,
+            "stock_code": row.stock_code,
+            "stock_name": row.stock_name,
+            "assoc_plate": row.assoc_plate,
+            "sector_name": row.assoc_plate,
+            "board_name": row.assoc_plate,
+            "cls_rank": row.cls_rank,
+            "ths_rank": row.ths_rank,
+            "tgb_rank": row.tgb_rank,
+            "price": row.price,
+            "change_pct": row.change_pct,
+            "reason": row.reason,
+            "raw_reason": row.reason,
+            "tag": row.tag,
+            "score": row.score,
+            "raw_score": row.score,
+            "created_at": row.created_at,
         }
 
     @staticmethod

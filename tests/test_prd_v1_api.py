@@ -2,8 +2,9 @@ from datetime import date, datetime
 
 import pytest
 
-from app.models import ConfigDictionary, MktHotStock, MktLimitUpPlate, MktLimitUpStock, ReviewForm, WatchPool, WatchPoolStatusLog, WatchSignal, WatchTrade
+from app.models import ConfigDictionary, MktDailyPlate, MktDailyPlateStock, MktHotStock, MktLimitUpStock, ReviewForm, WatchPool, WatchPoolStatusLog, WatchSignal, WatchTrade
 from app.services.prd_v1 import PrdWatchPoolService, SeedService
+from app.services.tasks import TaskService
 
 
 def test_common_xueqiu_url_enveloped(client):
@@ -12,7 +13,7 @@ def test_common_xueqiu_url_enveloped(client):
     payload = response.json()
     assert payload["success"] is True
     assert payload["code"] == "SUCCESS"
-    assert payload["data"]["xueqiu_url"] == "https://xueqiu.com/S/SH603019"
+    assert payload["data"]["xueqiu_url"] == "https://xueqiu.com/S/sh603019"
 
 
 def test_common_dictionaries_include_watch_pool_codes_and_are_idempotent(client, db_session):
@@ -65,12 +66,15 @@ def test_h5_market_uses_raw_hot_stock_fields(client, db_session):
     db_session.add(
         MktHotStock(
             trade_date=trade_date,
-            platform="mock",
-            stock_code="603019.SH",
+            stock_code="sh603019",
             stock_name="中科曙光",
-            platform_rank=1,
-            raw_score=98.0,
-            raw_reason="平台原始原因",
+            assoc_plate="算力",
+            cls_rank=1,
+            price=49.5,
+            change_pct=3.2,
+            reason="平台原始原因",
+            score=71,
+            tag="算力",
         )
     )
     db_session.add(
@@ -89,37 +93,42 @@ def test_h5_market_uses_raw_hot_stock_fields(client, db_session):
             limit_reason="平台涨停原因",
         )
     )
+    db_session.flush()
+    plate = MktDailyPlate(
+        trade_date=trade_date,
+        plate_type="limit_up",
+        platform="mock",
+        plate_code="p1",
+        plate_name="AI应用",
+        article_title="AI应用",
+        description="涨停板块描述",
+        jump_url="https://example.com/plate/p1",
+        up_reason="上榜理由来自涨停板块表",
+    )
+    st_plate = MktDailyPlate(
+        trade_date=trade_date,
+        plate_type="limit_up",
+        platform="mock",
+        plate_code="p2",
+        plate_name="ST板块",
+        up_reason="应排除 ST",
+    )
     db_session.add_all(
         [
-            MktLimitUpPlate(
-                trade_date=trade_date,
-                source="mock",
-                platform="mock",
-                plate_code="p1",
-                plate_name="AI应用",
-                limit_up_count=8,
-                change_pct=2.5,
-                up_reason="上榜理由来自涨停板块表",
-            ),
-            MktLimitUpPlate(
-                trade_date=trade_date,
-                source="mock",
-                platform="mock",
-                plate_code="p2",
-                plate_name="ST板块",
-                limit_up_count=99,
-                change_pct=9.9,
-                up_reason="应排除 ST",
-            ),
+            plate,
+            st_plate,
         ]
     )
+    db_session.flush()
+    db_session.add(MktDailyPlateStock(plate_id=plate.id, stock_code="603019.SH", stock_name="中科曙光"))
     db_session.commit()
 
-    response = client.get(f"/api/h5/market/hot-stocks?trade_date={trade_date}&platform=mock")
+    response = client.get(f"/api/h5/market/hot-stocks?trade_date={trade_date}")
     assert response.status_code == 200
     item = response.json()["data"]["list"][0]
-    assert item["platform_rank"] == 1
-    assert item["raw_score"] == 98.0
+    assert item["cls_rank"] == 1
+    assert item["raw_score"] == 71
+    assert item["assoc_plate"] == "算力"
     assert "total_score" not in item
 
     limit_response = client.get(f"/api/h5/market/limit-ups?trade_date={trade_date}")
@@ -134,9 +143,103 @@ def test_h5_market_uses_raw_hot_stock_fields(client, db_session):
     assert board_response.status_code == 200
     boards = board_response.json()["data"]["list"]
     assert boards[0]["board_name"] == "AI应用"
-    assert boards[0]["limit_up_count"] == 8
+    assert boards[0]["limit_up_count"] == 1
     assert boards[0]["up_reason"] == "上榜理由来自涨停板块表"
     assert all("ST" not in item["board_name"] for item in boards)
+
+
+def test_limit_up_collection_ignores_st_and_other_plates(monkeypatch, db_session):
+    trade_date = date(2026, 5, 15)
+
+    class FakeProvider:
+        def get_limit_up_analysis(self, day):
+            return {
+                "plates": [
+                    {"platform": "cls", "plate_code": "st", "plate_name": "ST\u80a1", "limit_up_count": 99, "up_reason": "ignored"},
+                    {"platform": "cls", "plate_code": "other", "plate_name": "\u5176\u4ed6", "limit_up_count": 88, "up_reason": "ignored"},
+                    {"platform": "cls", "plate_code": "ai", "plate_name": "AI", "limit_up_count": 7, "up_reason": "AI reason"},
+                    {"platform": "cls", "plate_code": "robot", "plate_name": "Robot", "limit_up_count": 5, "up_reason": "Robot reason"},
+                    {"platform": "cls", "plate_code": "chip", "plate_name": "Chip", "limit_up_count": 3, "up_reason": "Chip reason"},
+                    {"platform": "cls", "plate_code": "low", "plate_name": "Low", "limit_up_count": 1, "up_reason": "Low reason"},
+                ],
+                "stocks": [
+                    {"platform": "cls", "source": "real", "stock_code": "600001.SH", "stock_name": "A", "plate_code": "ai", "plate_name": "AI", "limit_reason": "AI reason"},
+                    {"platform": "cls", "source": "real", "stock_code": "600002.SH", "stock_name": "B", "plate_code": "robot", "plate_name": "Robot"},
+                    {"platform": "cls", "source": "real", "stock_code": "600003.SH", "stock_name": "C", "plate_code": "chip", "plate_name": "Chip"},
+                    {"platform": "cls", "source": "real", "stock_code": "600004.SH", "stock_name": "D", "plate_code": "st", "plate_name": "ST\u80a1"},
+                ],
+            }
+
+    monkeypatch.setattr("app.services.tasks.ProviderFactory.create", lambda: FakeProvider())
+    log = TaskService(db_session).collect_limit_up_daily(trade_date)
+    assert log.run_status == "success"
+
+    rows = (
+        db_session.query(MktDailyPlate)
+        .filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type == "limit_up")
+        .order_by(MktDailyPlate.rank_no.asc())
+        .all()
+    )
+    assert [row.plate_name for row in rows] == ["AI", "Robot", "Chip"]
+    assert [row.rank_no for row in rows] == [1, 2, 3]
+    assert rows[0].description == "AI reason"
+    assert db_session.query(MktDailyPlateStock).count() == 3
+
+
+def test_hot_stock_collection_merges_platforms_and_requires_quote(monkeypatch, db_session):
+    trade_date = date(2026, 5, 15)
+
+    class FakeProvider:
+        def get_hot_stock_rank(self, day):
+            return [
+                {"stock_code": "sh600001", "stock_name": "Alpha", "rank_field": "cls_rank", "rank": 1, "price": 10.0, "change_pct": 2.0, "reason": "cls reason", "tag": "cls tag"},
+                {"stock_code": "600001.SH", "stock_name": "Alpha", "rank_field": "ths_rank", "rank": 2, "reason": "ths reason", "tag": "ths tag"},
+                {"stock_code": "sz000003", "stock_name": "Gamma", "rank_field": "ths_rank", "rank": 4, "price": 0, "change_pct": 0, "reason": "", "tag": "zero quote"},
+                {"stock_code": "sz000002", "stock_name": "Beta", "rank_field": "tgb_rank", "rank": 3, "reason": "skip no quote"},
+            ]
+
+        def get_stock_quote(self, stock_code):
+            if stock_code == "sh600001":
+                return {"price": 10.1, "change_pct": 2.1}
+            if stock_code == "sz000003":
+                return {"price": 8.8, "change_pct": 1.5}
+            return {"price": None, "change_pct": None}
+
+        def get_assoc_plates(self, stock_code):
+            if stock_code == "sz000003":
+                return [
+                    {"plate_name": "Robot", "assoc_desc": "robot desc"},
+                    {"plate_name": "Chip", "assoc_desc": "chip desc"},
+                    {"plate_name": "IgnoredThird", "assoc_desc": "third desc"},
+                ]
+            return [{"plate_name": "AI应用", "assoc_desc": "assoc reason"}]
+
+    db_session.add(MktDailyPlate(trade_date=trade_date, plate_type="chance", platform="cls", plate_code="p1", plate_name="AI应用"))
+    db_session.add(MktHotStock(trade_date=trade_date, stock_code="sh600001", stock_name="Old", price=1, change_pct=1, reason="old", tag="old"))
+    db_session.commit()
+
+    monkeypatch.setattr("app.services.tasks.ProviderFactory.create", lambda: FakeProvider())
+    log = TaskService(db_session).collect_hot_stock_rank(trade_date)
+    assert log.run_status == "success"
+
+    rows = db_session.query(MktHotStock).filter(MktHotStock.trade_date == trade_date).all()
+    assert len(rows) == 2
+    row = next(item for item in rows if item.stock_code == "sh600001")
+    assert row.stock_code == "sh600001"
+    assert row.cls_rank == 1
+    assert row.ths_rank == 2
+    assert row.tgb_rank is None
+    assert row.price == 10.0
+    assert row.change_pct == 2.0
+    assert row.assoc_plate == "AI应用"
+    assert "cls reason" in row.reason and "ths reason" in row.reason
+    assert row.score == 138
+
+    fallback = next(item for item in rows if item.stock_code == "sz000003")
+    assert fallback.price == 8.8
+    assert fallback.change_pct == 1.5
+    assert fallback.assoc_plate == "Robot,Chip"
+    assert "未匹配板块" not in fallback.assoc_plate
 
 
 def test_h5_watch_pool_manual_add_only_and_idempotent(client):
@@ -208,7 +311,7 @@ def test_watch_pool_duplicate_add_updates_existing_row(db_session):
     first = service.add_watch(_watch_payload(stock_name="First"))
     second = service.add_watch(_watch_payload(stock_name="Second", entry_reason="updated reason"))
     assert first.id == second.id
-    assert db_session.query(WatchPool).filter(WatchPool.stock_code == "603019.SH").count() == 1
+    assert db_session.query(WatchPool).filter(WatchPool.stock_code == "sh603019").count() == 1
     assert second.stock_name == "Second"
     assert second.entry_reason == "updated reason"
 

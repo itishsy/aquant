@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from app.models import (
     ConfigNotificationRecord,
     MktDaily,
-    MktHotBoard,
+    MktDailyPlate,
+    MktDailyPlateStock,
     MktHotStock,
     MktLimitUpStock,
     ReviewForm,
@@ -54,7 +55,7 @@ class MockDataService:
         counts = {
             "stock_basic": self._init_stock_basic(),
             "mkt_daily": self._init_market(dates),
-            "mkt_hot_board": self._init_hot_boards(dates[0]),
+            "mkt_daily_plate_hot_board": self._init_hot_boards(dates[0]),
             "mkt_hot_stock": self._init_hot_stocks(dates[0]),
             "mkt_limit_up_stock": self._init_limit_ups(dates[0]),
             "watch_pool": 0,
@@ -123,44 +124,55 @@ class MockDataService:
             ("东方财富", "金融", 3, 70.0, "低估值板块轮动修复", "601318.SH", "中国平安"),
         ]
         for platform, name, rank, score, reason, leader_code, leader_name in rows:
-            row = self.db.query(MktHotBoard).filter_by(trade_date=day, platform=platform, board_name=name).first()
+            plate_code = f"mock-hot-board:{platform}:{rank}"
+            row = self.db.query(MktDailyPlate).filter_by(
+                trade_date=day,
+                plate_type="hot_board",
+                platform=platform,
+                plate_code=plate_code,
+            ).first()
             if not row:
-                row = MktHotBoard(trade_date=day, platform=platform, board_name=name)
+                row = MktDailyPlate(
+                    trade_date=day,
+                    plate_type="hot_board",
+                    platform=platform,
+                    plate_code=plate_code,
+                )
                 self.db.add(row)
                 created += 1
-            row.platform_rank = rank
-            row.raw_score = score
-            row.change_pct = round(4.5 - rank * 0.7, 2)
-            row.amount = 580.0 - rank * 35
-            row.leader_stock_code = leader_code
-            row.leader_stock_name = leader_name
-            row.leading_stocks = [{"stock_code": leader_code, "stock_name": leader_name}]
-            row.reason = reason
-            row.source_url = f"mock://hot-board/{platform}/{name}"
-            row.source_update_time = datetime.combine(day, datetime.min.time()).replace(hour=15, minute=10)
-            row.raw_payload = {"platform_rank": rank, "raw_score": score, "reason": reason}
+            row.rank_no = rank
+            row.plate_name = name
+            row.description = reason
+            self.db.flush()
+            existing_stock = self.db.query(MktDailyPlateStock).filter_by(plate_id=row.id, stock_code=leader_code).first()
+            if not existing_stock:
+                self.db.add(MktDailyPlateStock(
+                    plate_id=row.id,
+                    stock_code=leader_code,
+                    stock_name=leader_name,
+                    change_pct=round(4.5 - rank * 0.7, 2),
+                ))
         return created
 
     def _init_hot_stocks(self, day: date) -> int:
         created = 0
-        platforms = ["财联社", "同花顺", "东方财富"]
-        for platform_index, platform in enumerate(platforms):
-            for rank, (code, name, sector) in enumerate(self.STOCKS[:10], start=1):
-                row = self.db.query(MktHotStock).filter_by(trade_date=day, platform=platform, stock_code=code).first()
-                if not row:
-                    row = MktHotStock(trade_date=day, platform=platform, stock_code=code, stock_name=name)
-                    self.db.add(row)
-                    created += 1
-                row.stock_name = name
-                row.board_name = sector
-                row.platform_rank = rank
-                row.raw_score = max(1.0, 100 - rank * 4 - platform_index * 2)
-                row.raw_reason = f"{platform} 原始榜单第 {rank}，{sector} 方向关注度较高。"
-                row.price = round(18 + rank * 1.35, 2)
-                row.change_pct = round(5.2 - rank * 0.35, 2)
-                row.source_url = f"mock://hot-stock/{platform}/{code}"
-                row.source_update_time = datetime.combine(day, datetime.min.time()).replace(hour=15, minute=15)
-                row.raw_payload = {"rank_no": rank, "raw_score": row.raw_score, "hot_reason": row.raw_reason}
+        for rank, (code, name, sector) in enumerate(self.STOCKS[:10], start=1):
+            stock_code = code.split(".")[-1].lower() + code.split(".")[0]
+            row = self.db.query(MktHotStock).filter_by(trade_date=day, stock_code=stock_code).first()
+            if not row:
+                row = MktHotStock(trade_date=day, stock_code=stock_code, stock_name=name)
+                self.db.add(row)
+                created += 1
+            row.stock_name = name
+            row.assoc_plate = sector
+            row.cls_rank = rank
+            row.ths_rank = rank if rank <= 8 else None
+            row.tgb_rank = rank if rank <= 6 else None
+            row.price = round(18 + rank * 1.35, 2)
+            row.change_pct = round(5.2 - rank * 0.35, 2)
+            row.reason = f"{sector} 方向关注度较高。"
+            row.tag = sector
+            row.score = sum({1: 71, 2: 67, 3: 61, 4: 59, 5: 53, 6: 47, 7: 43, 8: 41, 9: 37, 10: 31}.get(r, 0) for r in [row.cls_rank, row.ths_rank, row.tgb_rank] if r)
         return created
 
     def _init_limit_ups(self, day: date) -> int:

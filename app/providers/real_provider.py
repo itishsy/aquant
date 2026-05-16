@@ -109,14 +109,79 @@ class RealMarketProvider(
 
     @staticmethod
     def _eastmoney_secid(stock_code: str) -> str:
-        code, exchange = normalize_stock_code(stock_code).split(".")
+        normalized = normalize_stock_code(stock_code)
+        exchange = normalized[:2].upper()
+        code = normalized[2:]
         market = {"SH": "1", "SZ": "0", "BJ": "0"}[exchange]
         return f"{market}.{code}"
 
     @staticmethod
     def _cls_secu_code(stock_code: str) -> str:
-        code, exchange = normalize_stock_code(stock_code).split(".")
-        return f"{exchange.lower()}{code}"
+        normalized = normalize_stock_code(stock_code)
+        return f"{normalized[:2].lower()}{normalized[2:]}"
+
+    @staticmethod
+    def _to_hot_code(raw: str) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return ""
+        lower = text.lower()
+        if lower.startswith(("sh", "sz", "bj")):
+            return lower
+        code = text.split(".")[0]
+        market = "sh" if code.startswith("6") else "bj" if code.startswith(("4", "8")) else "sz"
+        return f"{market}{code}"
+
+    @staticmethod
+    def _should_skip_hot_stock(stock_code: str, stock_name: str) -> bool:
+        code = stock_code[2:] if stock_code[:2].lower() in {"sh", "sz", "bj"} else stock_code
+        return "ST" in (stock_name or "").upper() or code.startswith(("688", "5", "9"))
+
+    def get_stock_quote(self, stock_code: str) -> dict[str, float | None]:
+        secu_code = self._cls_secu_code(stock_code)
+        try:
+            item = self._get_json(
+                "https://x-quote.cls.cn/quote/stock/basic"
+                "?app=CailianpressWeb&fields=change_px,last_px"
+                f"&os=web&secu_code={secu_code}&sv=8.4.6&sign=b5b52db3c934bd745706e82b6923a589",
+                referer="https://www.cls.cn/",
+            )
+        except Exception:
+            try:
+                rows = self._get_json(
+                    "https://x-quote.cls.cn/v2/quote/a/web/stocks/basic"
+                    "?app=CailianpressWeb&fields=secu_name,secu_code,trade_status,change,change_px,last_px"
+                    f"&os=web&secu_codes={secu_code}&sv=8.4.6&sign=7ddfd2eef7564087ff01a1782c724f43",
+                    referer="https://www.cls.cn/",
+                )
+                item = (rows or [{}])[0] if isinstance(rows, list) else rows or {}
+            except Exception:
+                return {"price": None, "change_pct": None}
+        item = (item or [{}])[0] if isinstance(item, list) else item or {}
+        if isinstance(item, dict) and item.get("last_px") is None and isinstance(item.get(secu_code), dict):
+            item = item[secu_code]
+        return {
+            "price": self._number(item.get("last_px")) if item.get("last_px") is not None else None,
+            "change_pct": (
+                self._pct(item.get("change"))
+                if item.get("change") is not None
+                else self._number(item.get("change_px")) if item.get("change_px") is not None else None
+            ),
+        }
+
+    def get_assoc_plates(self, stock_code: str) -> list[dict]:
+        secu_code = self._cls_secu_code(stock_code)
+        try:
+            payload = self._get_json(
+                "https://x-quote.cls.cn/web_quote/stock/assoc_plate"
+                f"?app=CailianpressWeb&os=web&secu_code={secu_code}&sv=8.4.6"
+                "&sign=5a72c03e0e5064d7fe89612922705f22",
+                referer="https://www.cls.cn/",
+            )
+        except Exception:
+            return []
+        rows = payload.get("secu_list") if isinstance(payload, dict) else []
+        return [{"plate_name": item.get("secu_name") or "", "assoc_desc": item.get("assoc_desc") or ""} for item in (rows or []) if item.get("secu_name")]
 
     @staticmethod
     def _simplify_cls_stock(item: dict[str, Any]) -> dict:
@@ -134,6 +199,9 @@ class RealMarketProvider(
             "subject_id": item.get("subject_id"),
             "subject_name": item.get("subject_name") or "",
             "title": item.get("article_name") or item.get("driver") or "",
+            "article_title": item.get("article_name") or "",
+            "description": item.get("subject_description") or item.get("description") or item.get("article_name") or item.get("driver") or "",
+            "jump_url": item.get("jump_url") or item.get("url"),
             "driver": item.get("driver") or "",
             "article_id": item.get("article_id"),
             "article_time": item.get("article_time"),
@@ -433,20 +501,21 @@ class RealMarketProvider(
         price: float | None = None,
         change_pct: float | None = None,
     ) -> None:
-        if rank > 20:
+        stock_code = self._to_hot_code(raw_code)
+        if not stock_code or self._should_skip_hot_stock(stock_code, name):
             return
-        stock_code = self._to_code(raw_code)
-        if stock_code.split(".")[0].startswith(("8", "4")):
-            return
+        rank_field = {"cls": "cls_rank", "ths": "ths_rank", "tgb": "tgb_rank"}[platform]
         rows.append(
             {
                 "trade_date": trade_date,
                 "platform": platform,
-                "platform_rank": rank,
+                "rank_field": rank_field,
+                "rank": rank,
                 "stock_code": stock_code,
                 "stock_name": name,
-                "sector_name": sector,
-                "rank_score": MockProvider.PRIME_SCORES.get(rank, 1),
+                "assoc_plate": sector,
+                "reason": (raw_payload or {}).get("reason") or "",
+                "tag": (raw_payload or {}).get("tag_text") or "",
                 "price": price,
                 "change_pct": change_pct,
                 "raw_payload": raw_payload or {},
@@ -459,16 +528,22 @@ class RealMarketProvider(
             "&sign=f7f970ee36fc102317eeea2e5a6eb178",
             referer="https://www.cls.cn/",
         )
-        for idx, item in enumerate(items[:20], start=1):
+        rank = 0
+        for item in items:
             stock = item.get("stock", {})
             stock_id = stock.get("StockID") or stock.get("stock_id") or ""
             if len(stock_id) >= 8:
                 price = stock.get("last") or stock.get("Last") or stock.get("last_px")
                 change = stock.get("RiseRange") or stock.get("change") or stock.get("change_pct")
-                self._append_hot(rows, trade_date, "cls", idx, stock_id, stock.get("name", ""),
+                before = len(rows)
+                self._append_hot(rows, trade_date, "cls", rank + 1, stock_id, stock.get("name", ""),
                     raw_payload=item,
                     price=float(price) if price else None,
                     change_pct=float(change) if change else None)
+                if len(rows) > before:
+                    rank += 1
+                if rank >= 10:
+                    break
 
     def _append_ths_hot(self, rows: list[dict], trade_date: date) -> None:
         payload = self._get_json(
@@ -476,39 +551,52 @@ class RealMarketProvider(
             "?stock_type=a&type=day&list_type=normal",
             referer="https://dq.10jqka.com.cn/",
         )
-        items = payload.get("stock_list", [])
-        for idx, item in enumerate(items[:20], start=1):
+        items = payload.get("stock_list") or payload.get("data") or []
+        rank = 0
+        for item in items:
             tag = item.get("tag", {}) or {}
             sector = ",".join(tag.get("concept_tag", []) or [])
+            tag_text = tag.get("popularity_tag") or ""
             price = item.get("price") or item.get("last_price")
             change = item.get("change") or item.get("change_pct")
+            before = len(rows)
             self._append_hot(
-                rows, trade_date, "ths", idx,
+                rows, trade_date, "ths", int(item.get("order") or rank + 1),
                 item.get("code", ""), item.get("name", ""),
-                sector=sector, raw_payload=item,
+                sector=sector, raw_payload={**item, "reason": item.get("analyse_title") or "", "tag_text": tag_text},
                 price=float(price) if price else None,
                 change_pct=float(change) if change else None)
+            if len(rows) > before:
+                rank += 1
+            if rank >= 10:
+                break
 
     def _append_tgb_hot(self, rows: list[dict], trade_date: date) -> None:
         items = self._get_json(
-            "https://www.taoguba.com.cn/new/nrnt/getNoticeStock?type=D",
+            "https://www.tgb.cn/new/nrnt/getNoticeStock?type=D",
             data_key="dto",
             referer="https://www.taoguba.com.cn/",
         )
-        for idx, item in enumerate(items[:20], start=1):
+        rank = 0
+        for item in items:
             full_code = item.get("fullCode", "")
             concepts = ",".join(gn.get("gnName", "") for gn in item.get("gnList", []) if gn.get("gnName"))
             if len(full_code) >= 8:
+                before = len(rows)
                 self._append_hot(
                     rows,
                     trade_date,
                     "tgb",
-                    idx,
+                    int(item.get("ranking") or rank + 1),
                     full_code,
                     item.get("stockName", ""),
                     sector=concepts,
-                    raw_payload=item,
+                    raw_payload={**item, "reason": item.get("reason") or "", "tag_text": item.get("linkingBoard") or ""},
                 )
+                if len(rows) > before:
+                    rank += 1
+                if rank >= 10:
+                    break
 
     def get_limit_up_list(self, trade_date: date) -> list[dict]:
         payload = self._get_json(

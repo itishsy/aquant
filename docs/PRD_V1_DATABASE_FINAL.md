@@ -3,7 +3,7 @@
 Active migration baseline:
 
 - `alembic/versions/20260505_0001_prd_v1_baseline.py`
-- Latest incremental migration: `alembic/versions/20260514_0009_watch_pool_lifecycle_upgrade.py`
+- Latest incremental migration: `alembic/versions/20260516_0018_drop_deleted_market_tables.py`
 
 This is a development reset baseline. Rebuild local development databases from this migration.
 
@@ -13,15 +13,25 @@ This is a development reset baseline. Rebuild local development databases from t
 
 - `stock_basic`
 - `mkt_daily`
-- `mkt_hot_board`
 - `mkt_hot_stock`
+- `mkt_daily_plate`
+- `mkt_daily_plate_stock`
 - `mkt_limit_up_stock`
-- `mkt_limit_up_plate`
 - `mkt_stock_kline_daily`
 - `mkt_stock_kline_15m`
 
 Market data tables retain source/platform traceability fields such as `source`, `platform`, `source_url`, `source_update_time`, and `collected_at` where applicable.
 Limit-up ladder display is now calculated from `mkt_limit_up_stock.ladder_height` / `board_count`; no standalone ladder table is active.
+
+`mkt_daily_plate` / `mkt_daily_plate_stock` are the active structured tables for daily plate/theme data. They keep the existing table structure unchanged and use `plate_type` to distinguish source categories:
+
+- `plate_type = chance`: data migrated/collected from CLS `today_chances`; `subject_name -> plate_name`, `subject_id -> plate_code`, and `article_title` is retained as the plate display name/reason.
+- `plate_type = tuyere`: data from CLS `today_tuyeres`.
+- `plate_type = limit_up`: plate-level data from CLS `up_down_analysis.plate_stock`; collection and migration first exclude plate names `ST股` / `其他` / `其它`, then keep the top 3 plates by related limit-up stock count, with `rank_no` rewritten as `1`, `2`, `3`; `description` stores the board reason from upstream `up_reason` or aggregated stock `limit_reason` / `reason_tags`.
+- `plate_type = hot_board`: replacement storage for hot-board/sector ranking data after `mkt_hot_board` was removed.
+- `mkt_daily_plate_stock`: related stocks for each daily plate/theme row.
+
+Legacy tables may remain in existing databases for rollback and audit, but new collection and H5 market reads use `mkt_daily_plate` and `mkt_daily_plate_stock`.
 
 ### Watch, Signals, Trades
 
@@ -112,10 +122,10 @@ Watch-pool records are manually created. Trade records use `watch_trade` as the 
 ## Key Unique Constraints
 
 - `mkt_daily`: `trade_date + source`
-- `mkt_hot_board`: `trade_date + platform + board_name`
 - `mkt_hot_stock`: `trade_date + platform + stock_code`
+- `mkt_daily_plate`: `trade_date + plate_type + platform + plate_code`
+- `mkt_daily_plate_stock`: `plate_id + stock_code`
 - `mkt_limit_up_stock`: `trade_date + source + stock_code`
-- `mkt_limit_up_plate`: `trade_date + source + plate_code`
 - `mkt_stock_kline_daily`: `stock_code + trade_date + source`
 - `mkt_stock_kline_15m`: `stock_code + kline_time + source`
 - `watch_signal`: `stock_code + buy_point_type + signal_type + trigger_date`
@@ -165,6 +175,12 @@ The following old MVP/v1.1 tables are no longer active PRD v1 models:
 - `user_trading_score`
 - `mkt_limit_up_ladder`
 - `mkt_limit_up_ladder_stock`
+- `mkt_daily_chance`
+- `mkt_daily_chance_stock`
+- `mkt_daily_tuyere`
+- `mkt_daily_tuyere_stock`
+- `mkt_hot_board`
+- `mkt_limit_up_plate`
 
 Old migration files were archived to `alembic/archive_old/`.
 

@@ -136,15 +136,20 @@ class MockProvider(
         for platform in platforms:
             for idx, stock_code in enumerate(mapping[platform], start=1):
                 stock = self.STOCKS[stock_code]
+                hot_code = stock_code.split(".")[-1].lower() + stock_code.split(".")[0] if "." in stock_code else stock_code.lower()
                 rows.append(
                     {
                         "trade_date": trade_date,
                         "platform": platform,
-                        "platform_rank": idx,
-                        "stock_code": stock_code,
+                        "rank_field": {"platform_a": "cls_rank", "platform_b": "ths_rank", "platform_c": "tgb_rank"}[platform],
+                        "rank": idx,
+                        "stock_code": hot_code,
                         "stock_name": stock["name"],
-                        "sector_name": stock["sector"],
-                        "rank_score": self.PRIME_SCORES[idx],
+                        "assoc_plate": stock["sector"],
+                        "reason": f"{stock['sector']} mock reason",
+                        "tag": stock["sector"],
+                        "price": 10 + idx,
+                        "change_pct": 1.5 + idx / 10,
                     }
                 )
         return rows

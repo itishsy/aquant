@@ -182,8 +182,8 @@ def hot_boards(trade_date: date | None = None, platform: str | None = None, page
 
 
 @router.get("/market/hot-stocks")
-def hot_stocks(trade_date: date | None = None, platform: str | None = None, page_no: int = 1, page_size: int = 20, db: Session = Depends(get_db), user=Depends(require_login)):
-    rows = PrdMarketDataService(db).get_hot_stocks(trade_date, platform)
+def hot_stocks(trade_date: date | None = None, page_no: int = 1, page_size: int = 20, db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = PrdMarketDataService(db).get_hot_stocks(trade_date)
     return ok(page(rows[(page_no - 1) * page_size : page_no * page_size], page_no, page_size, len(rows)))
 
 

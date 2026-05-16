@@ -180,8 +180,9 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
+  min-width: 34px;
   height: 34px;
+  padding: 0 8px;
   color: #4a66f2;
   font-size: 16px;
   font-weight: 800;

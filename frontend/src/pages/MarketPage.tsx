@@ -82,6 +82,175 @@ function formatPx(value?: number | null) {
   return ` ${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
+/** 排名对应素数权重，与后端 `MockProvider.PRIME_SCORES` 一致，用于跨平台综合得分。 */
+const HOT_RANK_PRIMES: Record<number, number> = {
+  1: 71,
+  2: 67,
+  3: 61,
+  4: 59,
+  5: 53,
+  6: 47,
+  7: 43,
+  8: 41,
+  9: 37,
+  10: 31,
+  11: 29,
+  12: 23,
+  13: 19,
+  14: 17,
+  15: 13,
+  16: 11,
+  17: 7,
+  18: 5,
+  19: 3,
+  20: 2,
+};
+
+function hotRankPrimeScore(rank: number | null | undefined): number {
+  if (rank == null || Number.isNaN(Number(rank))) return HOT_RANK_PRIMES[20];
+  const r = Math.max(1, Math.min(20, Math.floor(Number(rank))));
+  return HOT_RANK_PRIMES[r] ?? HOT_RANK_PRIMES[20];
+}
+
+const HOT_UI_PLATFORM_ORDER = ["cls", "ths", "tgb"] as const;
+
+function normalizeHotListPlatformKey(platform: string): string {
+  const key = `${platform || ""}`.trim();
+  const map: Record<string, string> = {
+    cls: "cls",
+    ths: "ths",
+    tgb: "tgb",
+    财联社: "cls",
+    同花顺: "ths",
+    东方财富: "tgb",
+    mock: "mock",
+    platform_a: "cls",
+    platform_b: "ths",
+    platform_c: "tgb",
+  };
+  return map[key] || key;
+}
+
+function hotPlatformLabel(platform: string): string {
+  return normalizeHotListPlatformKey(platform || "");
+}
+
+function formatHotCardAmount(item: { amount?: number | null; price?: number | null }): string {
+  if (item.amount != null && !Number.isNaN(Number(item.amount))) return `${Number(item.amount).toFixed(2)}亿`;
+  if (item.price != null && !Number.isNaN(Number(item.price))) return `${Number(item.price).toFixed(2)}元`;
+  return "-";
+}
+
+type HotStockAgg = any;
+
+function aggregateHotStocks(flat: any[]): HotStockAgg[] {
+  if (!flat.length) return [];
+  const byCode = new Map<string, any[]>();
+  for (const row of flat) {
+    const code = row.stock_code;
+    if (!code) continue;
+    const expanded =
+      row.cls_rank || row.ths_rank || row.tgb_rank
+        ? [
+            row.cls_rank ? { ...row, platform: "cls", platform_rank: row.cls_rank, raw_score: hotRankPrimeScore(row.cls_rank), raw_reason: row.reason } : null,
+            row.ths_rank ? { ...row, platform: "ths", platform_rank: row.ths_rank, raw_score: hotRankPrimeScore(row.ths_rank), raw_reason: row.reason } : null,
+            row.tgb_rank ? { ...row, platform: "tgb", platform_rank: row.tgb_rank, raw_score: hotRankPrimeScore(row.tgb_rank), raw_reason: row.reason } : null,
+          ].filter(Boolean)
+        : [row];
+    const list = byCode.get(code) || [];
+    list.push(...expanded);
+    byCode.set(code, list);
+  }
+  const out: HotStockAgg[] = [];
+  for (const rows of byCode.values()) {
+    const best = rows.reduce((a, b) => {
+      const ar = a.platform_rank ?? 99;
+      const br = b.platform_rank ?? 99;
+      return ar <= br ? a : b;
+    });
+    const byNorm = new Map<string, any>();
+    for (const r of rows) {
+      const nk = normalizeHotListPlatformKey(r.platform);
+      const prev = byNorm.get(nk);
+      const rank = r.platform_rank ?? 99;
+      if (!prev || (prev.platform_rank ?? 99) > rank) byNorm.set(nk, r);
+    }
+    const orderedKeys: string[] = [];
+    for (const p of HOT_UI_PLATFORM_ORDER) {
+      if (byNorm.has(p)) orderedKeys.push(p);
+    }
+    for (const k of [...byNorm.keys()].sort()) {
+      if (!orderedKeys.includes(k)) orderedKeys.push(k);
+    }
+    let composite = 0;
+    const parts: string[] = [];
+    for (const k of orderedKeys) {
+      const r = byNorm.get(k)!;
+      const rawRank = r.platform_rank;
+      const scoreRank = rawRank == null ? 20 : Math.max(1, Math.min(20, Math.floor(Number(rawRank))));
+      composite += hotRankPrimeScore(scoreRank);
+      parts.push(`${k}#${rawRank == null ? "-" : scoreRank}`);
+    }
+    const sector =
+      rows.map((r) => r.sector_name || r.board_name).find((s) => s && String(s).trim()) || best.board_name || "";
+    out.push({
+      ...best,
+      sector_name: sector,
+      board_name: sector || best.board_name,
+      composite_prime_score: composite,
+      score: composite,
+      platform_rank_line: parts.join(" "),
+      hot_aggregate_rows: rows,
+    });
+  }
+  return out;
+}
+
+function hotPlatformOptions(rows: any[]) {
+  const seen = new Map<string, string>();
+  for (const row of rows) {
+    if (row.cls_rank) seen.set("cls", "cls");
+    if (row.ths_rank) seen.set("ths", "ths");
+    if (row.tgb_rank) seen.set("tgb", "tgb");
+    const key = normalizeHotListPlatformKey(row.platform);
+    if (!key || seen.has(key)) continue;
+    seen.set(key, hotPlatformLabel(row.platform));
+  }
+  return [...seen.entries()]
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => {
+      const ai = HOT_UI_PLATFORM_ORDER.indexOf(a.key as any);
+      const bi = HOT_UI_PLATFORM_ORDER.indexOf(b.key as any);
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      return a.key.localeCompare(b.key);
+    });
+}
+
+function sortHotComposite(rows: HotStockAgg[]): HotStockAgg[] {
+  return [...rows].sort((a, b) => {
+    const ds = (b.composite_prime_score || 0) - (a.composite_prime_score || 0);
+    if (ds !== 0) return ds;
+    const ar = a.platform_rank ?? 99;
+    const br = b.platform_rank ?? 99;
+    return ar - br;
+  });
+}
+
+function filterAndSortHotByPlatform(rows: HotStockAgg[], platform: string): HotStockAgg[] {
+  const want = normalizeHotListPlatformKey(platform);
+  const filtered = rows.filter((row) => {
+    const subs = row.hot_aggregate_rows || [row];
+    return subs.some((r: any) => normalizeHotListPlatformKey(r.platform) === want);
+  });
+  return filtered.sort((a, b) => {
+    const subsA = a.hot_aggregate_rows || [a];
+    const subsB = b.hot_aggregate_rows || [b];
+    const ra = subsA.find((r: any) => normalizeHotListPlatformKey(r.platform) === want)?.platform_rank ?? 999;
+    const rb = subsB.find((r: any) => normalizeHotListPlatformKey(r.platform) === want)?.platform_rank ?? 999;
+    return ra - rb;
+  });
+}
+
 function pctColor(value?: number | null) {
   return value == null ? "#7687a4" : value >= 0 ? "#e34d59" : "#00b578";
 }
@@ -144,7 +313,7 @@ function buildWatchDraft(item: any, sourceType: "hot_stock" | "limit_up"): Watch
     source_rank: item.platform_rank,
     source_score: item.raw_score,
     source_reason: sourceReason,
-    sector_name: item.board_name || item.concept || item.plate_name,
+    sector_name: item.sector_name || item.board_name || item.concept || item.plate_name,
     trading_system: tradingSystem,
     entry_reason: sourceReason || (sourceType === "limit_up" ? "涨停榜手动加入观察" : "人气榜手动加入观察"),
     key_observe_price: price ? String(price) : "",
@@ -280,7 +449,7 @@ export function MarketPage() {
   const [tab, setTab] = useState("overview");
   const [data, setData] = useState<MarketSummary | null>(null);
   const [review, setReview] = useState<any>(null);
-  const [hotStocks, setHotStocks] = useState<any[]>([]);
+  const [hotStocksRaw, setHotStocksRaw] = useState<any[]>([]);
   const [hotSectors, setHotSectors] = useState<any[]>([]);
   const [limitRows, setLimitRows] = useState<any[]>([]);
   const [limitLadderRows, setLimitLadderRows] = useState<any[]>([]);
@@ -330,14 +499,9 @@ export function MarketPage() {
         setData(null);
         setError("市场数据加载失败，请稍后重试");
       });
-
     apiGet<any>(`/market/review?trade_date=${tradeDate}`)
       .then((row) => setReview(row))
       .catch(() => setReview(null));
-
-    apiGet<any>(`/h5/market/hot-stocks?trade_date=${tradeDate}&page_size=50${hotPlatform ? `&platform=${hotPlatform}` : ""}`)
-      .then((hot) => setHotStocks(hot.list || hot || []))
-      .catch(() => setHotStocks([]));
 
     apiGet<any>(`/h5/market/hot-boards?trade_date=${tradeDate}&page_size=5`)
       .then((boards) => setHotSectors((boards.list || boards || []).map((row: any) => ({
@@ -361,7 +525,14 @@ export function MarketPage() {
         setLimitTotal(0);
       })
       .finally(() => setLoading(false));
-  }, [tradeDate, refreshKey, hotPlatform]);
+  }, [tradeDate, refreshKey]);
+
+  useEffect(() => {
+    if (!tradeDate) return;
+    apiGet<any>(`/h5/market/hot-stocks?trade_date=${tradeDate}&page_size=1000`)
+      .then((hot) => setHotStocksRaw(hot.list || hot || []))
+      .catch(() => setHotStocksRaw([]));
+  }, [tradeDate]);
 
   useEffect(() => {
     const nextDate = new URLSearchParams(location.search).get("trade_date");
@@ -384,7 +555,14 @@ export function MarketPage() {
     { title: "话题热榜", tag: "同花顺", rows: data?.topic_list || [] },
   ];
 
-  const hotDisplayRows = useMemo(() => hotStocks.slice(0, 10), [hotStocks]);
+  const hotAggregated = useMemo(() => aggregateHotStocks(hotStocksRaw), [hotStocksRaw]);
+  const hotPlatforms = useMemo(() => hotPlatformOptions(hotStocksRaw), [hotStocksRaw]);
+
+  const hotDisplayRows = useMemo(() => {
+    if (!hotAggregated.length) return [];
+    if (!hotPlatform) return sortHotComposite(hotAggregated).slice(0, 10);
+    return filterAndSortHotByPlatform(hotAggregated, hotPlatform).slice(0, 10);
+  }, [hotAggregated, hotPlatform]);
 
   const filteredLimitRows = useMemo(() => {
     let rows = limitRows;
@@ -427,10 +605,9 @@ export function MarketPage() {
       counts[name] = (counts[name] || 0) + 1;
     });
     const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    // Move "其他"/"未分类" to the end
-    const tail = entries.filter(([n]) => n === "其他" || n === "未分类");
-    const head = entries.filter(([n]) => n !== "其他" && n !== "未分类");
-    return [...head, ...tail].slice(0, 15);
+    // Only show concepts with more than 2 stocks, and exclude "其他"/"未分类"
+    const filtered = entries.filter(([n, count]) => count > 2 && n !== "其他" && n !== "未分类");
+    return filtered.slice(0, 15);
   }, [limitRows, includeSt]);
 
   const conceptDescription = useMemo(() => {
@@ -559,7 +736,7 @@ export function MarketPage() {
       onNextDate={() => changeTradeDate(shiftTradeDate(tradeDate, 1))}
       segments={[
         { key: "overview", label: "大盘", onClick: () => setTab("overview") },
-        { key: "hot", label: "热榜", onClick: () => setTab("hot") },
+        { key: "hot", label: "人气榜", onClick: () => setTab("hot") },
         { key: "limit", label: "涨停榜", onClick: () => setTab("limit") },
       ]}
       activeSegment={tab}
@@ -672,55 +849,75 @@ export function MarketPage() {
 
           {tab === "hot" && (
             <>
-            {/* Platform tabs */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-              {[
-                { key: "", label: "综合" },
-                { key: "cls", label: "财联社" },
-                { key: "ths", label: "同花顺" },
-                { key: "tgb", label: "淘股吧" },
-              ].map((p) => (
-                <button key={p.key} type="button" onClick={() => setHotPlatform(p.key)}
-                  style={{
-                    flex: 1, padding: "7px 0", border: 0, borderRadius: 12, fontSize: 13, fontWeight: 700,
-                    background: hotPlatform === p.key ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
-                    color: hotPlatform === p.key ? "#fff" : "#64748b",
-                  }}>{p.label}</button>
-              ))}
-            </div>
             <article className="feature-card">
               <div className="card-head">
-                <div className="card-headline">
-                  <span className="icon-badge">热</span>
-                  <h2>热榜{hotPlatform ? ` · ${hotPlatform}` : " · 三平台综合"}</h2>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setHotPlatform("")}
+                    style={{
+                      padding: "4px 10px",
+                      border: `1px solid ${!hotPlatform ? "#5570ff" : "#ddd"}`,
+                      borderRadius: 12,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: !hotPlatform ? "#eef2ff" : "#fff",
+                      color: !hotPlatform ? "#5570ff" : "#999",
+                    }}
+                  >
+                    综合
+                  </button>
+                  {hotPlatforms.map((p) => (
+                    <button key={p.key} type="button" onClick={() => setHotPlatform(hotPlatform === p.key ? "" : p.key)}
+                    style={{
+                      padding: "4px 10px",
+                      border: `1px solid ${hotPlatform === p.key ? "#5570ff" : "#ddd"}`,
+                      borderRadius: 12,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: hotPlatform === p.key ? "#eef2ff" : "#fff",
+                      color: hotPlatform === p.key ? "#5570ff" : "#999",
+                    }}>{p.label}</button>
+                  ))}
+                  <span style={{ alignSelf: "center", color: "#98a2b3", fontSize: 11, fontWeight: 700 }}>
+                    {hotStocksRaw.length}条 / {hotPlatforms.length}平台
+                  </span>
                 </div>
+                <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
                 {hotDisplayRows.length ? (
-                  <Button size="small" fill="none" onClick={() => openStockViewer("hot_stock", hotDisplayRows, 0)}>
-                    查看全部
-                  </Button>
+                  <button
+                  type="button"
+                  onClick={() => openStockViewer("hot_stock", hotDisplayRows, 0)}
+                  style={{
+                    padding: "4px 10px",
+                    border: "1px solid #ddd",
+                    borderRadius: 12,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: "#fff",
+                    color: "#999",
+                  }}
+                > K线
+                </button>
                 ) : null}
+                </div>
               </div>
-              {hotStocks.length ? (
+              {hotStocksRaw.length ? (
                 <div className="stack-list">
                   {hotDisplayRows.map((item, index) => (
-                    <div key={`${item.stock_code}-${item.platform || "all"}`} className="row-card row-card-action" onClick={() => openStockViewer("hot_stock", hotDisplayRows, index)} style={{ cursor: "pointer" }}>
-                      <div>
-                        <strong>
+                    <div key={item.stock_code} className="row-card row-card-action" onClick={() => openStockViewer("hot_stock", hotDisplayRows, index)} style={{ cursor: "pointer" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <strong style={{ display: "block", lineHeight: 1.45 }}>
                           <span onClick={(event) => event.stopPropagation()}>
                             <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
                           </span>
                         </strong>
-                        {hotPlatform ? (
-                          <>
-                            <p>原始分数：{item.raw_score ?? "-"} / 排名：#{item.platform_rank ?? "-"}</p>
-                            <p>{item.board_name || "未分类"}</p>
-                          </>
-                        ) : (
-                          <>
-                            <p>得分：{item.total_score ?? item.raw_score ?? "-"} {item.cross_platform ? "多平台共振" : ""}</p>
-                            <p>{(item.platforms || []).map((p: any) => `${p.platform} #${p.rank}(${p.score})`).join("  ")}</p>
-                          </>
-                        )}
+                        <p style={{ margin: "6px 0 0", color: "#73809a", fontSize: 12, lineHeight: 1.5 }}>
+                          {item.composite_prime_score} {item.platform_rank_line}
+                        </p>
+                        <p style={{ margin: "4px 0 0", color: "#73809a", fontSize: 12, lineHeight: 1.5 }}>
+                          {item.sector_name || item.board_name || "未分类"}
+                        </p>
                       </div>
                       {watchCodes.has(item.stock_code) ? (
                         <span style={{ fontSize: 12, color: "#00b578", lineHeight: 1, fontWeight: 700 }}>已自选</span>
@@ -739,34 +936,43 @@ export function MarketPage() {
 
           {tab === "limit" && (
             <article className="feature-card">
-              <div className="card-head">
-                <div className="card-headline">
-                  <span className="icon-badge">{limitConcept || limitLadder ? filteredLimitRows.length : (includeSt ? limitTotal : limitTotal - limitRows.filter((row) => (row.stock_name || "").includes("ST")).length)}</span>
-                  <h2>涨停榜</h2>
+                <div className="card-head">
+                  <div className="card-headline">
+                    <span className="icon-badge">{includeSt ? limitTotal : limitTotal - limitRows.filter((row) => (row.stock_name || "").includes("ST")).length}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => setIncludeSt(!includeSt)}
+                      style={{
+                        padding: "4px 10px",
+                        border: `1px solid ${includeSt ? "#e34d59" : "#ddd"}`,
+                        borderRadius: 12,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: includeSt ? "#fff4f4" : "#fff",
+                        color: includeSt ? "#e34d59" : "#999",
+                      }}
+                    >
+                      {includeSt ? "含ST" : "不含ST"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openStockViewer("limit_up", filteredLimitRows, 0)}
+                      style={{
+                        padding: "4px 10px",
+                        border: "1px solid #ddd",
+                        borderRadius: 12,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: "#fff",
+                        color: "#999",
+                      }}
+                    > 查看全部
+                    </button>
+                  </div>
                 </div>
-                {filteredLimitRows.length ? (
-                  <Button size="small" fill="none" onClick={() => openStockViewer("limit_up", filteredLimitRows, 0)}>
-                    查看全部
-                  </Button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => setIncludeSt(!includeSt)}
-                  style={{
-                    padding: "4px 10px",
-                    border: `1px solid ${includeSt ? "#e34d59" : "#ddd"}`,
-                    borderRadius: 12,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    background: includeSt ? "#fff4f4" : "#fff",
-                    color: includeSt ? "#e34d59" : "#999",
-                  }}
-                >
-                  {includeSt ? "含ST" : "不含ST"}
-                </button>
-              </div>
               <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 4, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => setLimitConcept("")} style={{ flex: "0 0 auto", padding: "4px 10px", border: 0, borderRadius: 12, fontSize: 12, fontWeight: 600, background: !limitConcept ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb", color: !limitConcept ? "#fff" : "#64748b" }}>全部</button>
                 {conceptButtons.map(([name, count]) => (
                   <button key={name} type="button" onClick={() => setLimitConcept(limitConcept === name ? "" : name)} style={{ flex: "0 0 auto", padding: "4px 10px", border: 0, borderRadius: 12, fontSize: 12, fontWeight: 600, background: limitConcept === name ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb", color: limitConcept === name ? "#fff" : "#64748b" }}>{name} {count}</button>
                 ))}
@@ -774,12 +980,15 @@ export function MarketPage() {
               {conceptDescription && (
                 <div style={{ padding: "6px 10px", borderRadius: 10, background: "#f4f6fb", fontSize: 12, color: "#64748b", lineHeight: 1.5, marginBottom: 4 }}>{conceptDescription}</div>
               )}
+              {!limitConcept && (
               <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 8 }}>
-                <button type="button" onClick={() => setLimitLadder(null)} style={{ flex: "0 0 auto", padding: "6px 12px", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700, background: limitLadder == null ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb", color: limitLadder == null ? "#fff" : "#64748b" }}>全部</button>
-                {ladderHeights.map((height) => (
-                  <button key={String(height)} type="button" onClick={() => setLimitLadder(limitLadder === height ? null : height)} style={{ flex: "0 0 auto", padding: "6px 12px", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700, background: limitLadder === height ? "linear-gradient(135deg, #e34d59, #c0392b)" : "#f4f6fb", color: limitLadder === height ? "#fff" : "#e34d59" }}>{height}板 {ladderCounts[height]}</button>
+                {ladderHeights.map((height) => ( 
+                  height < 2 ? null : (
+                    <button key={String(height)} type="button" onClick={() => setLimitLadder(limitLadder === height ? null : height)} style={{ flex: "0 0 auto", padding: "6px 12px", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700, background: limitLadder === height ? "linear-gradient(135deg, #e34d59, #c0392b)" : "#f4f6fb", color: limitLadder === height ? "#fff" : "#e34d59" }}>{height}板 {ladderCounts[height]}</button>
+                  )
                 ))}
               </div>
+              )}
               {filteredLimitRows.length ? (
                 <div className="stack-list">
                   {filteredLimitRows.map((item, index) => (
@@ -861,8 +1070,14 @@ export function MarketPage() {
               <div style={{ marginTop: 12, borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 30px rgba(31, 43, 77, 0.07)" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
                   <div className="metric-tile" style={{ padding: 12 }}>
-                    <span>{stockViewer.type === "limit_up" ? "连板" : "来源排名"}</span>
-                    <strong>{stockViewer.type === "limit_up" ? `${limitHeight(viewerItem)}板` : viewerItem.platform_rank ?? viewerItem.rank_no ?? "-"}</strong>
+                    <span>{stockViewer.type === "limit_up" ? "连板" : viewerItem.composite_prime_score != null ? "综合素数分" : "来源排名"}</span>
+                    <strong>
+                      {stockViewer.type === "limit_up"
+                        ? `${limitHeight(viewerItem)}板`
+                        : viewerItem.composite_prime_score != null
+                          ? viewerItem.composite_prime_score
+                          : viewerItem.platform_rank ?? viewerItem.rank_no ?? "-"}
+                    </strong>
                   </div>
                   <div className="metric-tile" style={{ padding: 12 }}>
                     <span>{stockViewer.type === "limit_up" ? "涨停时间" : "原始分数"}</span>
@@ -871,8 +1086,17 @@ export function MarketPage() {
                 </div>
                 <div style={{ display: "grid", gap: 7, color: "#53627c", fontSize: 13, lineHeight: 1.55 }}>
                   <div><strong style={{ color: "#18223d" }}>来源：</strong>{viewerItem.platform || viewerItem.source || "-"}</div>
-                  <div><strong style={{ color: "#18223d" }}>板块：</strong>{viewerItem.board_name || viewerItem.concept || viewerItem.plate_name || viewerItem.sector || "未分类"}</div>
-                  {viewerItem.last_price != null ? <div><strong style={{ color: "#18223d" }}>价格：</strong>{viewerItem.last_price}{viewerItem.change_pct != null ? ` / ${formatPct(viewerItem.change_pct)}` : ""}</div> : null}
+                  {stockViewer.type === "hot_stock" && viewerItem.platform_rank_line ? (
+                    <div><strong style={{ color: "#18223d" }}>各平台：</strong>{viewerItem.platform_rank_line}</div>
+                  ) : null}
+                  <div><strong style={{ color: "#18223d" }}>板块：</strong>{viewerItem.sector_name || viewerItem.board_name || viewerItem.concept || viewerItem.plate_name || viewerItem.sector || "未分类"}</div>
+                  {(viewerItem.last_price != null || viewerItem.price != null) ? (
+                    <div>
+                      <strong style={{ color: "#18223d" }}>价格：</strong>
+                      {viewerItem.last_price ?? viewerItem.price}
+                      {viewerItem.change_pct != null ? ` / ${formatPct(viewerItem.change_pct)}` : ""}
+                    </div>
+                  ) : null}
                   <div style={{ borderRadius: 16, background: "#f7f9ff", padding: "10px 12px", color: "#32415f" }}>
                     <strong style={{ display: "block", marginBottom: 4, color: "#18223d" }}>入榜原因</strong>
                     {viewerReason}
@@ -905,7 +1129,7 @@ export function MarketPage() {
                 ) : (
                   <Button block color="primary" onClick={() => { setStockViewer(null); addWatchFromMarket(viewerItem, stockViewer.type); }} style={{ borderRadius: 14, fontWeight: 800 }}>+观察</Button>
                 )}
-                <Button block fill="outline" onClick={() => viewerXueqiuUrl && window.open(viewerXueqiuUrl, "_blank")} style={{ borderRadius: 14 }}>雪球</Button>
+                <Button block fill="outline" onClick={() => { if (viewerXueqiuUrl) window.open(viewerXueqiuUrl, "_blank"); }} style={{ borderRadius: 14 }}>雪球</Button>
               </div>
             </div>
           </div>

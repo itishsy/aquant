@@ -9,15 +9,11 @@ from sqlalchemy.orm import Session
 from app.models import (
     ConfigTaskLog,
     MktDaily,
-    MktDailyChance,
-    MktDailyChanceStock,
+    MktDailyPlate,
+    MktDailyPlateStock,
     MktDailyTopic,
     MktDailyTopicStock,
-    MktDailyTuyere,
-    MktDailyTuyereStock,
-    MktHotBoard,
     MktHotStock,
-    MktLimitUpPlate,
     MktLimitUpStock,
 )
 from app.providers.factory import ProviderFactory
@@ -31,49 +27,118 @@ class TaskService:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _is_ignored_limit_up_plate(plate_name: str | None) -> bool:
+        return (plate_name or "").strip() in {"ST\u80a1", "\u5176\u4ed6", "\u5176\u5b83"}
+
+    @staticmethod
+    def _append_text(existing: str | None, value: str | None) -> str:
+        parts = [part.strip() for part in (existing or "").split("；") if part.strip()]
+        for part in [p.strip() for p in (value or "").replace(",", "；").split("；") if p.strip()]:
+            if part not in parts:
+                parts.append(part)
+        return "；".join(parts)
+
+    @staticmethod
+    def _hot_stock_code(stock_code: str | None) -> str:
+        text = str(stock_code or "").strip()
+        lower = text.lower()
+        if lower.startswith(("sh", "sz", "bj")):
+            return lower
+        if "." in text:
+            code, market = text.split(".", 1)
+            return f"{market.lower()}{code}"
+        market = "sh" if text.startswith("6") else "bj" if text.startswith(("4", "8")) else "sz"
+        return f"{market}{text}" if text else ""
+
+    @staticmethod
+    def _hot_score(row: MktHotStock) -> int:
+        prime_scores = {1: 71, 2: 67, 3: 61, 4: 59, 5: 53, 6: 47, 7: 43, 8: 41, 9: 37, 10: 31}
+        total = 0
+        for rank in (row.cls_rank, row.ths_rank, row.tgb_rank):
+            if rank and 1 <= rank <= 10:
+                total += prime_scores.get(rank, 0)
+        return total
+
+    @staticmethod
+    def _hot_score_from_ranks(cls_rank: int | None, ths_rank: int | None, tgb_rank: int | None) -> int:
+        prime_scores = {1: 71, 2: 67, 3: 61, 4: 59, 5: 53, 6: 47, 7: 43, 8: 41, 9: 37, 10: 31}
+        return sum(prime_scores.get(rank, 0) for rank in (cls_rank, ths_rank, tgb_rank) if rank and 1 <= rank <= 10)
+
+    def _quote_for_hot_stock(self, provider, stock_code: str) -> dict:
+        if hasattr(provider, "get_stock_quote"):
+            return provider.get_stock_quote(stock_code) or {}
+        return {}
+
+    @staticmethod
+    def _missing_hot_price(value) -> bool:
+        try:
+            return value is None or float(value) <= 0
+        except (TypeError, ValueError):
+            return True
+
+    @staticmethod
+    def _missing_hot_change(value) -> bool:
+        return value is None
+
+    def _matched_assoc_plates(self, trade_date: date, assoc_rows: list[dict]) -> tuple[str, str]:
+        names = [str(item.get("plate_name") or "").strip() for item in assoc_rows if item.get("plate_name")]
+        desc = next((str(item.get("assoc_desc") or "").strip() for item in assoc_rows if item.get("assoc_desc")), "")
+        if not names:
+            return "", desc
+        recent = (
+            self.db.query(MktDailyPlate.plate_name)
+            .filter(MktDailyPlate.trade_date <= trade_date)
+            .order_by(MktDailyPlate.trade_date.desc(), MktDailyPlate.id.desc())
+            .limit(30)
+            .all()
+        )
+        matched = []
+        for row in recent:
+            if row.plate_name in names and row.plate_name not in matched:
+                matched.append(row.plate_name)
+        return ",".join(matched or names[:2]), desc
+
     def _replace_market_structured_rows(self, trade_date: date, snapshot: dict) -> int:
-        existing_chance_ids = [
-            row.id for row in self.db.query(MktDailyChance.id).filter(MktDailyChance.trade_date == trade_date).all()
-        ]
-        existing_tuyere_ids = [
-            row.id for row in self.db.query(MktDailyTuyere.id).filter(MktDailyTuyere.trade_date == trade_date).all()
+        existing_plate_ids = [
+            row.id
+            for row in self.db.query(MktDailyPlate.id)
+            .filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type.in_(["chance", "tuyere"]))
+            .all()
         ]
         existing_topic_ids = [
             row.id for row in self.db.query(MktDailyTopic.id).filter(MktDailyTopic.trade_date == trade_date).all()
         ]
-        if existing_chance_ids:
-            self.db.query(MktDailyChanceStock).filter(MktDailyChanceStock.chance_id.in_(existing_chance_ids)).delete(synchronize_session=False)
-        if existing_tuyere_ids:
-            self.db.query(MktDailyTuyereStock).filter(MktDailyTuyereStock.tuyere_id.in_(existing_tuyere_ids)).delete(synchronize_session=False)
+        if existing_plate_ids:
+            self.db.query(MktDailyPlateStock).filter(MktDailyPlateStock.plate_id.in_(existing_plate_ids)).delete(synchronize_session=False)
         if existing_topic_ids:
             self.db.query(MktDailyTopicStock).filter(MktDailyTopicStock.topic_id.in_(existing_topic_ids)).delete(synchronize_session=False)
 
-        self.db.query(MktDailyChance).filter(MktDailyChance.trade_date == trade_date).delete(synchronize_session=False)
-        self.db.query(MktDailyTuyere).filter(MktDailyTuyere.trade_date == trade_date).delete(synchronize_session=False)
+        self.db.query(MktDailyPlate).filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type.in_(["chance", "tuyere"])).delete(synchronize_session=False)
         self.db.query(MktDailyTopic).filter(MktDailyTopic.trade_date == trade_date).delete(synchronize_session=False)
         self.db.flush()
 
         affected = 0
         now = datetime.utcnow()
         for rank_no, item in enumerate(snapshot.get("today_chances") or [], start=1):
-            row = MktDailyChance(
+            subject_id = item.get("subject_id")
+            plate_code = str(subject_id or "")
+            plate_name = item.get("subject_name") or item.get("title") or ""
+            row = MktDailyPlate(
                 trade_date=trade_date,
-                source="real",
+                plate_type="chance",
                 platform=item.get("source") or "cls",
                 rank_no=rank_no,
-                subject_id=item.get("subject_id"),
-                subject_name=item.get("subject_name") or "",
-                article_id=item.get("article_id"),
-                article_title=item.get("title") or "",
-                article_time=item.get("article_time"),
-                attention_num=item.get("attention_num"),
-                source_update_time=now,
+                plate_code=plate_code or f"chance:{rank_no}",
+                plate_name=plate_name,
+                description=item.get("description") or item.get("title") or "",
+                jump_url=item.get("jump_url"),
             )
             self.db.add(row)
             self.db.flush()
             for stock in item.get("stocks") or []:
-                self.db.add(MktDailyChanceStock(
-                    chance_id=row.id,
+                self.db.add(MktDailyPlateStock(
+                    plate_id=row.id,
                     stock_code=stock.get("stock_code") or "",
                     stock_name=stock.get("stock_name") or "",
                     change_pct=stock.get("change_pct"),
@@ -82,22 +147,25 @@ class TaskService:
             affected += 1
 
         for rank_no, item in enumerate(snapshot.get("today_tuyeres") or [], start=1):
-            row = MktDailyTuyere(
+            subject_id = item.get("subject_id")
+            plate_code = str(subject_id or "")
+            plate_name = item.get("subject_name") or item.get("title") or ""
+            driver = item.get("driver") or item.get("title") or ""
+            row = MktDailyPlate(
                 trade_date=trade_date,
-                source="real",
+                plate_type="tuyere",
                 platform=item.get("source") or "cls",
                 rank_no=rank_no,
-                subject_id=item.get("subject_id"),
-                subject_name=item.get("subject_name") or "",
-                driver=item.get("driver") or item.get("title") or "",
-                attention_num=item.get("attention_num"),
-                source_update_time=now,
+                plate_code=plate_code or f"tuyere:{rank_no}",
+                plate_name=plate_name,
+                description=item.get("description") or driver,
+                jump_url=item.get("jump_url"),
             )
             self.db.add(row)
             self.db.flush()
             for stock in item.get("stocks") or []:
-                self.db.add(MktDailyTuyereStock(
-                    tuyere_id=row.id,
+                self.db.add(MktDailyPlateStock(
+                    plate_id=row.id,
                     stock_code=stock.get("stock_code") or "",
                     stock_name=stock.get("stock_name") or "",
                     change_pct=stock.get("change_pct"),
@@ -199,37 +267,38 @@ class TaskService:
         def _do() -> int:
             provider = ProviderFactory.create()
             sectors = provider.get_sector_daily(trade_date)
+            existing_ids = [
+                row.id
+                for row in self.db.query(MktDailyPlate.id)
+                .filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type == "hot_board")
+                .all()
+            ]
+            if existing_ids:
+                self.db.query(MktDailyPlateStock).filter(MktDailyPlateStock.plate_id.in_(existing_ids)).delete(synchronize_session=False)
+            self.db.query(MktDailyPlate).filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type == "hot_board").delete(synchronize_session=False)
+            self.db.flush()
+
             count = 0
-            for item in sectors:
-                existing = (
-                    self.db.query(MktHotBoard)
-                    .filter(
-                        MktHotBoard.trade_date == trade_date,
-                        MktHotBoard.platform == "cls",
-                        MktHotBoard.board_name == item["sector_name"],
-                    )
-                    .first()
+            for rank_no, item in enumerate(sectors, start=1):
+                plate_name = item.get("sector_name") or item.get("board_name") or ""
+                row = MktDailyPlate(
+                    trade_date=trade_date,
+                    plate_type="hot_board",
+                    platform=item.get("platform") or "cls",
+                    rank_no=rank_no,
+                    plate_code=item.get("sector_code") or item.get("board_code") or f"hot_board:{rank_no}",
+                    plate_name=plate_name,
+                    description=item.get("reason") or "",
                 )
-                if existing:
-                    existing.change_pct = item.get("change_pct")
-                    existing.leader_stock_code = item.get("leader_stock_code")
-                    existing.leader_stock_name = item.get("leader_stock_name")
-                    existing.source_update_time = datetime.utcnow()
-                else:
-                    self.db.add(
-                        MktHotBoard(
-                            trade_date=trade_date,
-                            platform="cls",
-                            board_name=item["sector_name"],
-                            platform_rank=count + 1,
-                            change_pct=item.get("change_pct"),
-                            leader_stock_code=item.get("leader_stock_code"),
-                            leader_stock_name=item.get("leader_stock_name"),
-                            raw_score=item.get("fund_strength"),
-                            source_update_time=datetime.utcnow(),
-                            raw_payload=_serialize(item),
-                        )
-                    )
+                self.db.add(row)
+                self.db.flush()
+                if item.get("leader_stock_code"):
+                    self.db.add(MktDailyPlateStock(
+                        plate_id=row.id,
+                        stock_code=item.get("leader_stock_code") or "",
+                        stock_name=item.get("leader_stock_name") or "",
+                        change_pct=item.get("change_pct"),
+                    ))
                 count += 1
             self.db.commit()
             return count
@@ -240,39 +309,56 @@ class TaskService:
         def _do() -> int:
             provider = ProviderFactory.create()
             stocks = provider.get_hot_stock_rank(trade_date)
-            count = 0
+            merged: dict[str, dict] = {}
             for item in stocks:
-                existing = (
-                    self.db.query(MktHotStock)
-                    .filter(
-                        MktHotStock.trade_date == trade_date,
-                        MktHotStock.platform == item["platform"],
-                        MktHotStock.stock_code == item["stock_code"],
-                    )
-                    .first()
-                )
-                if existing:
-                    existing.platform_rank = item["platform_rank"]
-                    existing.raw_score = item.get("rank_score")
-                    existing.price = item.get("price")
-                    existing.change_pct = item.get("change_pct")
-                    existing.source_update_time = datetime.utcnow()
+                stock_code = self._hot_stock_code(item.get("stock_code"))
+                if not stock_code:
+                    continue
+                quote = {}
+                raw_price = item.get("price")
+                raw_change = item.get("change_pct")
+                should_quote = self._missing_hot_price(raw_price) or raw_change is None or raw_change == 0
+                if should_quote:
+                    quote = self._quote_for_hot_stock(provider, stock_code)
+                price = quote.get("price") if self._missing_hot_price(raw_price) else raw_price
+                if raw_change is None or raw_change == 0:
+                    change_pct = quote.get("change_pct") if quote.get("change_pct") is not None else raw_change
                 else:
-                    self.db.add(
-                        MktHotStock(
-                            trade_date=trade_date,
-                            platform=item["platform"],
-                            stock_code=item["stock_code"],
-                            stock_name=item["stock_name"],
-                            board_name=item.get("sector_name"),
-                            platform_rank=item["platform_rank"],
-                            raw_score=item.get("rank_score"),
-                            price=item.get("price"),
-                            change_pct=item.get("change_pct"),
-                            raw_payload=item.get("raw_payload", {}),
-                            source_update_time=datetime.utcnow(),
-                        )
-                    )
+                    change_pct = raw_change
+                if self._missing_hot_price(price) or self._missing_hot_change(change_pct):
+                    continue
+                row = merged.setdefault(
+                    stock_code,
+                    {
+                        "stock_code": stock_code,
+                        "stock_name": item.get("stock_name") or "",
+                        "assoc_plate": "",
+                        "cls_rank": None,
+                        "ths_rank": None,
+                        "tgb_rank": None,
+                        "price": price,
+                        "change_pct": change_pct,
+                        "reason": "",
+                        "tag": "",
+                    },
+                )
+                row["stock_name"] = item.get("stock_name") or row["stock_name"]
+                row["price"] = row["price"] if not self._missing_hot_price(row["price"]) else price
+                row["change_pct"] = row["change_pct"] if row["change_pct"] is not None else change_pct
+                row[item["rank_field"]] = item["rank"]
+                row["reason"] = self._append_text(row["reason"], item.get("reason"))
+                row["tag"] = self._append_text(row["tag"], item.get("tag"))
+                row["assoc_plate"] = self._append_text(row["assoc_plate"], item.get("assoc_plate"))
+
+            self.db.query(MktHotStock).filter(MktHotStock.trade_date == trade_date).delete(synchronize_session=False)
+            count = 0
+            for data in merged.values():
+                assoc_rows = provider.get_assoc_plates(data["stock_code"]) if hasattr(provider, "get_assoc_plates") else []
+                assoc_plate, assoc_desc = self._matched_assoc_plates(trade_date, assoc_rows)
+                data["assoc_plate"] = assoc_plate or data["assoc_plate"]
+                data["reason"] = data["reason"] or assoc_desc or data["assoc_plate"]
+                data["score"] = self._hot_score_from_ranks(data["cls_rank"], data["ths_rank"], data["tgb_rank"])
+                self.db.add(MktHotStock(trade_date=trade_date, **data))
                 count += 1
             self.db.commit()
             return count
@@ -285,25 +371,44 @@ class TaskService:
             if hasattr(provider, "get_limit_up_analysis"):
                 analysis = provider.get_limit_up_analysis(trade_date)
                 self.db.query(MktLimitUpStock).filter(MktLimitUpStock.trade_date == trade_date).delete(synchronize_session=False)
-                self.db.query(MktLimitUpPlate).filter(MktLimitUpPlate.trade_date == trade_date).delete(synchronize_session=False)
+                existing_plate_ids = [
+                    row.id for row in self.db.query(MktDailyPlate.id).filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type == "limit_up").all()
+                ]
+                if existing_plate_ids:
+                    self.db.query(MktDailyPlateStock).filter(MktDailyPlateStock.plate_id.in_(existing_plate_ids)).delete(synchronize_session=False)
+                self.db.query(MktDailyPlate).filter(MktDailyPlate.trade_date == trade_date, MktDailyPlate.plate_type == "limit_up").delete(synchronize_session=False)
                 self.db.flush()
 
                 now = datetime.utcnow()
                 count = 0
-                for item in analysis.get("plates") or []:
-                    self.db.add(MktLimitUpPlate(
+                plate_id_by_code: dict[str, int] = {}
+                eligible_plates = [
+                    item for item in (analysis.get("plates") or [])
+                    if not self._is_ignored_limit_up_plate(item.get("plate_name"))
+                ]
+                top_plates = sorted(
+                    eligible_plates,
+                    key=lambda row: (row.get("limit_up_count") or 0, row.get("change_pct") or 0),
+                    reverse=True,
+                )[:3]
+                for rank_no, item in enumerate(top_plates, start=1):
+                    plate_code = item.get("plate_code") or ""
+                    plate_name = item.get("plate_name") or ""
+                    row = MktDailyPlate(
                         trade_date=trade_date,
-                        source=item.get("source") or "real",
+                        plate_type="limit_up",
                         platform=item.get("platform") or "cls",
-                        plate_code=item.get("plate_code") or "",
-                        plate_name=item.get("plate_name") or "",
-                        change_pct=item.get("change_pct"),
-                        limit_up_count=item.get("limit_up_count"),
-                        up_reason=item.get("up_reason") or "",
-                        source_update_time=now,
-                    ))
+                        rank_no=rank_no,
+                        plate_code=plate_code,
+                        plate_name=plate_name,
+                        description=item.get("up_reason") or "",
+                    )
+                    self.db.add(row)
+                    self.db.flush()
+                    plate_id_by_code[plate_code] = row.id
                     count += 1
                 for item in analysis.get("stocks") or []:
+                    plate_code = item.get("plate_code") or ""
                     self.db.add(MktLimitUpStock(
                         trade_date=trade_date,
                         source=item.get("source") or "real",
@@ -326,6 +431,15 @@ class TaskService:
                         ladder_height=item.get("ladder_height"),
                         source_update_time=now,
                     ))
+                    plate_id = plate_id_by_code.get(plate_code)
+                    if plate_id:
+                        self.db.add(MktDailyPlateStock(
+                            plate_id=plate_id,
+                            stock_code=item.get("stock_code") or "",
+                            stock_name=item.get("stock_name") or "",
+                            change_pct=item.get("change_pct"),
+                            last_price=item.get("last_price"),
+                        ))
                     count += 1
                 self.db.commit()
                 return count
