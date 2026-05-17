@@ -77,6 +77,18 @@ function formatPct(value?: number | null) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+function getStockPriceInfo(item: any) {
+  const price = item?.price ?? item?.last_price ?? item?.trigger_price ?? item?.first_buy_price;
+  const change = item?.change_pct;
+  if (price != null && change != null) {
+    return <span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>({price}, {change >= 0 ? "+" : ""}{change}%)</span>;
+  }
+  if (price != null) {
+    return <span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>({price})</span>;
+  }
+  return <span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>{item?.stock_code}</span>;
+}
+
 function formatPx(value?: number | null) {
   if (value == null) return "";
   return ` ${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
@@ -369,7 +381,7 @@ function LimitUpKlineChart({ stockCode }: { stockCode?: string }) {
         { type: "value", gridIndex: 1, axisLabel: { fontSize: 10 } },
         { type: "value", gridIndex: 2, scale: true, axisLabel: { fontSize: 10 } },
       ],
-      dataZoom: [{ type: "inside", xAxisIndex: [0, 1, 2], start: 55, end: 100 }],
+      dataZoom: [{ type: "inside", xAxisIndex: [0, 1, 2] }],
       series: [
         {
           name: "日K",
@@ -908,9 +920,7 @@ export function MarketPage() {
                     <div key={item.stock_code} className="row-card row-card-action" onClick={() => openStockViewer("hot_stock", hotDisplayRows, index)} style={{ cursor: "pointer" }}>
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <strong style={{ display: "block", lineHeight: 1.45 }}>
-                          <span onClick={(event) => event.stopPropagation()}>
-                            <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
-                          </span>
+                          {item.stock_name}{getStockPriceInfo(item)}
                         </strong>
                         <p style={{ margin: "6px 0 0", color: "#73809a", fontSize: 12, lineHeight: 1.5 }}>
                           {item.composite_prime_score} {item.platform_rank_line}
@@ -995,9 +1005,7 @@ export function MarketPage() {
                     <div key={item.stock_code} className="row-card row-card-action" style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => openStockViewer("limit_up", filteredLimitRows, index)}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <strong>
-                          <span onClick={(event) => event.stopPropagation()}>
-                            <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
-                          </span>
+                          {item.stock_name}{getStockPriceInfo(item)}
                           <span style={{ fontSize: 11, fontWeight: 400, color: "#999", marginLeft: 4 }}>{item.limit_time}</span>
                         </strong>
                         <p style={{ margin: "2px 0" }}>
@@ -1033,78 +1041,42 @@ export function MarketPage() {
           borderTopLeftRadius: 28,
           borderTopRightRadius: 28,
           padding: 0,
-          maxHeight: "94vh",
+          height: "82vh",
           overflow: "hidden",
           background: "linear-gradient(180deg, #f7f9ff 0%, #ffffff 38%)",
         }}
       >
         {stockViewer && viewerItem ? (
-          <div style={{ display: "flex", flexDirection: "column", maxHeight: "94vh" }}>
-            <div style={{ padding: "10px 18px 8px" }}>
-              <div style={{ width: 42, height: 5, borderRadius: 999, background: "#d9dfef", margin: "0 auto 12px" }} />
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: 22, color: "#141d36", letterSpacing: "-0.02em" }}>{viewerItem.stock_name || viewerItem.stock_code}</strong>
-                    <span style={{ borderRadius: 999, padding: "5px 9px", color: "#4257d8", background: "#eef2ff", fontSize: 12, fontWeight: 800 }}>
-                      {stockViewer.type === "limit_up" ? "涨停榜" : "热榜"}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 5, color: "#6b7894", fontSize: 13 }}>{viewerItem.stock_code}</div>
+          <div style={{ display: "flex", flexDirection: "column", height: "82vh" }}>
+            <div style={{ padding: "6px 14px 4px" }}>
+              <div style={{ width: 32, height: 4, borderRadius: 999, background: "#d9dfef", margin: "0 auto 8px" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <strong style={{ fontSize: 18, color: "#141d36" }}>{viewerItem.stock_name || viewerItem.stock_code}</strong>
+                  <span style={{ color: "#8892a8", fontSize: 12 }}>
+                    {viewerItem.sector_name || viewerItem.board_name || viewerItem.concept || viewerItem.plate_name || viewerItem.assoc_plate || ""}
+                  </span>
                 </div>
-                <span style={{ flexShrink: 0, color: "#8a94a8", fontSize: 12, fontWeight: 800 }}>
-                  {stockViewer.index + 1} / {stockViewer.rows.length}
-                </span>
+                <span style={{ color: "#8a94a8", fontSize: 12 }}>{stockViewer.index + 1} / {stockViewer.rows.length}</span>
               </div>
             </div>
 
             <div style={{ overflowY: "auto", padding: "0 18px 92px", WebkitOverflowScrolling: "touch" }}>
               <div style={{ borderRadius: 24, background: "#fff", boxShadow: "0 12px 36px rgba(31, 43, 77, 0.08)", overflow: "hidden" }}>
                 <div style={{ padding: "12px 14px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <strong style={{ color: "#18223d", fontSize: 16 }}>走势观察</strong>
-                  <span style={{ color: "#8a94a8", fontSize: 12 }}>K线 / 成交量 / MACD</span>
+                  <strong style={{ color: "#18223d", fontSize: 16 }}>日K线</strong>
+                  <span style={{ color: "#8a94a8", fontSize: 12 }}>日K线</span>
                 </div>
                 <LimitUpKlineChart stockCode={viewerItem.stock_code} />
               </div>
 
               <div style={{ marginTop: 12, borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 30px rgba(31, 43, 77, 0.07)" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-                  <div className="metric-tile" style={{ padding: 12 }}>
-                    <span>{stockViewer.type === "limit_up" ? "连板" : viewerItem.composite_prime_score != null ? "综合素数分" : "来源排名"}</span>
-                    <strong>
-                      {stockViewer.type === "limit_up"
-                        ? `${limitHeight(viewerItem)}板`
-                        : viewerItem.composite_prime_score != null
-                          ? viewerItem.composite_prime_score
-                          : viewerItem.platform_rank ?? viewerItem.rank_no ?? "-"}
-                    </strong>
+                  <div style={{ borderRadius: 12, background: "#fff4f4", padding: "10px 12px", lineHeight: 1.6 }}>
+                    <span style={{ fontSize: 11, color: "#c0392b", fontWeight: 700 }}>
+                      {stockViewer.type === "limit_up" ? "涨停原因" : "入榜原因"}
+                    </span>
+                    <div style={{ fontSize: 14, color: "#c0392b", marginTop: 4, wordBreak: "break-word" }}>{viewerReason}</div>
                   </div>
-                  <div className="metric-tile" style={{ padding: 12 }}>
-                    <span>{stockViewer.type === "limit_up" ? "涨停时间" : "原始分数"}</span>
-                    <strong>{stockViewer.type === "limit_up" ? viewerItem.limit_time || "-" : viewerItem.raw_score ?? "-"}</strong>
-                  </div>
-                </div>
-                <div style={{ display: "grid", gap: 7, color: "#53627c", fontSize: 13, lineHeight: 1.55 }}>
-                  <div><strong style={{ color: "#18223d" }}>来源：</strong>{viewerItem.platform || viewerItem.source || "-"}</div>
-                  {stockViewer.type === "hot_stock" && viewerItem.platform_rank_line ? (
-                    <div><strong style={{ color: "#18223d" }}>各平台：</strong>{viewerItem.platform_rank_line}</div>
-                  ) : null}
-                  <div><strong style={{ color: "#18223d" }}>板块：</strong>{viewerItem.sector_name || viewerItem.board_name || viewerItem.concept || viewerItem.plate_name || viewerItem.sector || "未分类"}</div>
-                  {(viewerItem.last_price != null || viewerItem.price != null) ? (
-                    <div>
-                      <strong style={{ color: "#18223d" }}>价格：</strong>
-                      {viewerItem.last_price ?? viewerItem.price}
-                      {viewerItem.change_pct != null ? ` / ${formatPct(viewerItem.change_pct)}` : ""}
-                    </div>
-                  ) : null}
-                  <div style={{ borderRadius: 16, background: "#f7f9ff", padding: "10px 12px", color: "#32415f" }}>
-                    <strong style={{ display: "block", marginBottom: 4, color: "#18223d" }}>入榜原因</strong>
-                    {viewerReason}
-                  </div>
-                </div>
-                <p style={{ margin: "12px 0 0", color: "#8a94a8", fontSize: 12, lineHeight: 1.6 }}>
-                  仅作为交易辅助，请结合个人交易规则确认。个股行情以雪球页面和公开数据源为准。
-                </p>
               </div>
             </div>
 
@@ -1127,7 +1099,7 @@ export function MarketPage() {
                 {watchCodes.has(viewerItem.stock_code) ? (
                   <Button block disabled style={{ borderRadius: 14 }}>已观察</Button>
                 ) : (
-                  <Button block color="primary" onClick={() => { setStockViewer(null); addWatchFromMarket(viewerItem, stockViewer.type); }} style={{ borderRadius: 14, fontWeight: 800 }}>+观察</Button>
+                  <Button block color="primary" onClick={() => { addWatchFromMarket(viewerItem, stockViewer.type); }} style={{ borderRadius: 14, fontWeight: 800 }}>+观察</Button>
                 )}
                 <Button block fill="outline" onClick={() => { if (viewerXueqiuUrl) window.open(viewerXueqiuUrl, "_blank"); }} style={{ borderRadius: 14 }}>雪球</Button>
               </div>
