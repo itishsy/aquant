@@ -39,14 +39,30 @@ class Macd15BullishDivergenceStrategy(StrategyBase):
         near_support = closes[-1] <= min(closes[-6:]) * 1.03 or closes[-2] <= min(closes[-6:]) * 1.02
         if not all([price_lower, macd_higher, dif_turning, golden_cross_near, volume_ok, near_support]):
             return None
+
+        last_bar = bars[-1]
+        trigger_time = _value(last_bar, "kline_time") if hasattr(last_bar, "kline_time") else None
+
         return {
             "signal_type": "buy",
             "signal_text": "买入观察信号",
             "strategy_name": self.name,
             "signal_level": "A",
+            "buy_point_type": "b15_divergence",
             "trigger_price": closes[-1],
+            "trigger_time": trigger_time,
             "trigger_reason": "15 分钟价格接近新低但 MACD 未同步新低，出现底背离观察条件。",
             "risk_desc": "若跌破参考支撑或数据不完整，应重新评估。",
+            "trigger_signature": ":".join(
+                str(x)
+                for x in [
+                    context["watch_id"],
+                    context["stock_code"],
+                    self.name,
+                    "b15_divergence",
+                    trigger_time.isoformat() if trigger_time else "",
+                ]
+            ),
             "raw_snapshot": {
                 "closes": closes,
                 "volumes": volumes,

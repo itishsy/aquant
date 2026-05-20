@@ -223,7 +223,7 @@ export function WatchPoolPage() {
       Toast.show({ content: "请填写调整原因" });
       return;
     }
-    await apiPut(`/h5/watch-pool/${editing.watch_id}`, {
+    const updated = await apiPut<any>(`/h5/watch-pool/${editing.watch_id}`, {
       trading_system: editing.trading_system,
       entry_reason: editing.entry_reason,
       key_observe_price: Number(editing.key_observe_price),
@@ -234,7 +234,8 @@ export function WatchPoolPage() {
     });
     Toast.show({ content: "观察参数已调整" });
     setEditing(null);
-    load();
+    setWatchDetail(updated);
+    setItems((prev) => prev.map((item) => item.watch_id === updated.watch_id ? updated : item));
   }
 
   async function confirmBuy() {
@@ -483,7 +484,7 @@ export function WatchPoolPage() {
           {item.user_remark ? <InfoLine label="备注" value={item.user_remark} /> : null}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-          <Button block fill="outline" onClick={() => openEdit(item)} style={{ borderRadius: 14 }}>调整</Button>
+          <Button block fill="outline" onClick={() => { setWatchDetail(item); openEdit(item); }} style={{ borderRadius: 14 }}>调整</Button>
           <Button block fill="outline" onClick={() => toggleMonitor(item)} style={{ borderRadius: 14 }}>{monitorOff ? "开启监控" : "关闭监控"}</Button>
           <Button block fill="outline" onClick={() => markInvalid(item)} style={{ borderRadius: 14 }}>失效</Button>
         </div>
@@ -558,21 +559,6 @@ export function WatchPoolPage() {
         </article>
       )}
 
-      <Popup visible={Boolean(editing)} onMaskClick={() => setEditing(null)} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: "86vh", overflowY: "auto" }}>
-        {editing && (
-          <div style={{ display: "grid", gap: 12 }}>
-            <div><h3 style={{ margin: 0 }}>调整观察参数</h3><p style={{ margin: "4px 0 0", color: "#72819b" }}>{editing.stock_name} {editing.stock_code}</p></div>
-            <Selector options={tradingSystemOptions.filter((item) => item.value)} value={[editing.trading_system]} onChange={(value) => setEditing({ ...editing, trading_system: value[0] })} />
-            <TextArea value={editing.entry_reason} rows={3} placeholder="入选理由" onChange={(value) => setEditing({ ...editing, entry_reason: value })} />
-            <Input type="number" value={editing.key_observe_price} placeholder="关键观察价" onChange={(value) => setEditing({ ...editing, key_observe_price: value })} />
-            <TextArea value={editing.invalid_condition} rows={3} placeholder="失效条件" onChange={(value) => setEditing({ ...editing, invalid_condition: value })} />
-            <Selector multiple options={Object.entries(riskTagLabels).map(([value, label]) => ({ value, label }))} value={editing.risk_tags} onChange={(value) => setEditing({ ...editing, risk_tags: value as string[] })} />
-            <TextArea value={editing.user_remark} rows={3} placeholder="用户备注" onChange={(value) => setEditing({ ...editing, user_remark: value })} />
-            <TextArea value={editing.adjust_reason} rows={2} placeholder="本次调整原因，必填" onChange={(value) => setEditing({ ...editing, adjust_reason: value })} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}><Button block onClick={() => setEditing(null)}>取消</Button><Button block color="primary" onClick={saveEdit}>保存</Button></div>
-          </div>
-        )}
-      </Popup>
 
       <Popup visible={Boolean(buyForm)} onMaskClick={() => setBuyForm(null)} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: "86vh", overflowY: "auto" }}>
         {buyForm && (
@@ -592,8 +578,8 @@ export function WatchPoolPage() {
         )}
       </Popup>
 
-      <Popup visible={Boolean(watchDetail)} onMaskClick={() => setWatchDetail(null)} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: "86vh", overflowY: "auto" }}>
-        {watchDetail && (
+      <Popup visible={Boolean(watchDetail)} onMaskClick={() => { setWatchDetail(null); setEditing(null); }} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: "86vh", overflowY: "auto" }}>
+        {watchDetail && !(editing && editing.watch_id === watchDetail.watch_id) && (
           <div style={{ display: "grid", gap: 12 }}>
             <div>
               <h3 style={{ margin: 0, fontSize: 18 }}>{watchDetail.stock_name} <span style={{ fontSize: 13, color: "#888" }}>{watchDetail.stock_code}</span></h3>
@@ -618,8 +604,26 @@ export function WatchPoolPage() {
             </div>
             <p style={{ fontSize: 12, color: "#888" }}>仅作为交易辅助，请结合个人交易规则确认。</p>
             <div style={{ display: "flex", gap: 8 }}>
-              <Button block fill="outline" onClick={() => { openEdit(watchDetail); setWatchDetail(null); }}>编辑</Button>
-              <Button block fill="outline" onClick={() => setWatchDetail(null)}>关闭</Button>
+              <Button block fill="outline" onClick={() => openEdit(watchDetail)}>编辑</Button>
+              <Button block fill="outline" onClick={() => { setWatchDetail(null); setEditing(null); }}>关闭</Button>
+            </div>
+          </div>
+        )}
+
+        {watchDetail && (editing && editing.watch_id === watchDetail.watch_id) && editing && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div><h3 style={{ margin: 0 }}>调整观察参数</h3><p style={{ margin: "4px 0 0", color: "#72819b" }}>{editing.stock_name} {editing.stock_code}</p></div>
+            <Selector options={tradingSystemOptions.filter((item) => item.value)} value={[editing.trading_system]} onChange={(value) => setEditing({ ...editing, trading_system: value[0] })} />
+            <TextArea value={editing.entry_reason} rows={3} placeholder="入选理由" onChange={(value) => setEditing({ ...editing, entry_reason: value })} />
+            <Input type="number" value={editing.key_observe_price} placeholder="关键观察价" onChange={(value) => setEditing({ ...editing, key_observe_price: value })} />
+            <TextArea value={editing.invalid_condition} rows={3} placeholder="失效条件" onChange={(value) => setEditing({ ...editing, invalid_condition: value })} />
+            <div><span style={{ color: "#98a2b3", fontSize: 11, fontWeight: 700 }}>风险标签</span></div>
+            <Selector multiple options={Object.entries(riskTagLabels).map(([value, label]) => ({ value, label }))} value={editing.risk_tags} onChange={(value) => setEditing({ ...editing, risk_tags: value as string[] })} />
+            <TextArea value={editing.user_remark} rows={3} placeholder="用户备注" onChange={(value) => setEditing({ ...editing, user_remark: value })} />
+            <TextArea value={editing.adjust_reason} rows={2} placeholder="本次调整原因，必填" onChange={(value) => setEditing({ ...editing, adjust_reason: value })} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Button block onClick={() => setEditing(null)}>取消</Button>
+              <Button block color="primary" onClick={saveEdit}>保存</Button>
             </div>
           </div>
         )}
