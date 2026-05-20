@@ -38,11 +38,11 @@ def _watch(**overrides) -> WatchPool:
         stock_code="000001.SZ",
         stock_name="Ping An",
         pool_status="watching",
-        lifecycle_status="watching",
+        waiting="watching",
         trading_system="platform_breakout",
         signal_enabled=True,
         monitor_enabled=True,
-        is_blacklist=False,
+        
         active=True,
         buy_point_types=["platform_breakout_confirm"],
         reason="manual",
@@ -118,6 +118,6 @@ def test_signal_engine_updates_watch_status_after_signal_generated(db_session):
     assert signal.trigger_signature == "sig-platform-breakout"
 
     db_session.refresh(watch)
-    assert watch.lifecycle_status == "buy_pending_confirm"
-    assert watch.pool_status == "buy_pending_confirm"
+    assert watch.status == "buy_pending_confirm"
+    assert watch.status == "buy_pending_confirm"
     assert watch.latest_signal_id == signal.signal_id

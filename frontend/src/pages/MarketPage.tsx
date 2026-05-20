@@ -37,11 +37,7 @@ type MarketSummary = {
 type WatchDraft = {
   stock_code: string;
   stock_name: string;
-  source_type: "hot_stock" | "limit_up";
-  source_platform?: string;
-  source_rank?: number;
-  source_score?: number;
-  source_reason: string;
+  entry_source_type: "hot_stock" | "limit_up";
   sector_name?: string;
   trading_system: "platform_breakout" | "uptrend" | "relay";
   entry_reason: string;
@@ -320,11 +316,7 @@ function buildWatchDraft(item: any, sourceType: "hot_stock" | "limit_up"): Watch
   return {
     stock_code: item.stock_code,
     stock_name: item.stock_name,
-    source_type: sourceType,
-    source_platform: item.platform,
-    source_rank: item.platform_rank,
-    source_score: item.raw_score,
-    source_reason: sourceReason,
+    entry_source_type: sourceType,
     sector_name: item.sector_name || item.board_name || item.concept || item.plate_name,
     trading_system: tradingSystem,
     entry_reason: sourceReason || (sourceType === "limit_up" ? "涨停榜手动加入观察" : "人气榜手动加入观察"),
@@ -704,13 +696,8 @@ export function MarketPage() {
         stock_code: watchDraft.stock_code,
         stock_name: watchDraft.stock_name,
         sector_name: watchDraft.sector_name,
-        labels: watchDraft.source_type === "limit_up" ? ["relay"] : ["popularity"],
-        source_type: watchDraft.source_type,
-        entry_source: watchDraft.source_type,
-        source_platform: watchDraft.source_platform,
-        source_rank: watchDraft.source_rank,
-        source_score: watchDraft.source_score,
-        source_reason: watchDraft.source_reason,
+        labels: watchDraft.entry_source_type === "limit_up" ? ["relay"] : ["popularity"],
+        entry_source: watchDraft.entry_source_type === "limit_up" ? "limit_up" : "hot_stock",
         trading_system: watchDraft.trading_system,
         entry_reason: watchDraft.entry_reason,
         reason: watchDraft.entry_reason,
@@ -1140,7 +1127,7 @@ export function MarketPage() {
                     background: "#eef2ff",
                   }}
                 >
-                  {watchDraft.source_type === "limit_up" ? "涨停榜来源" : "人气榜来源"}
+                  {watchDraft.entry_source_type === "limit_up" ? "涨停榜来源" : "人气榜来源"}
                 </span>
               </div>
             </div>
@@ -1155,22 +1142,18 @@ export function MarketPage() {
                   boxShadow: "0 14px 34px rgba(66, 87, 216, 0.24)",
                 }}
               >
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12, opacity: 0.9 }}>
+                <div style={{ display: "grid", gap: 10, fontSize: 12, opacity: 0.9 }}>
                   <div>
-                    <div style={{ opacity: 0.68 }}>来源平台</div>
-                    <strong style={{ display: "block", marginTop: 3, fontSize: 14 }}>{watchDraft.source_platform || "-"}</strong>
+                    <div style={{ opacity: 0.68 }}>来源</div>
+                    <strong style={{ display: "block", marginTop: 3, fontSize: 14 }}>{watchDraft.entry_source_type === "limit_up" ? "涨停榜" : "人气榜"}</strong>
                   </div>
                   <div>
-                    <div style={{ opacity: 0.68 }}>来源排名</div>
-                    <strong style={{ display: "block", marginTop: 3, fontSize: 14 }}>{watchDraft.source_rank ?? "-"}</strong>
-                  </div>
-                  <div style={{ gridColumn: "1 / -1" }}>
                     <div style={{ opacity: 0.68 }}>系统推荐</div>
-                    <strong style={{ display: "block", marginTop: 3, fontSize: 15 }}>{tradingSystemLabel(recommendTradingSystem(watchDraft.raw_item, watchDraft.source_type))}</strong>
+                    <strong style={{ display: "block", marginTop: 3, fontSize: 15 }}>{tradingSystemLabel(recommendTradingSystem(watchDraft.raw_item, watchDraft.entry_source_type))}</strong>
                   </div>
                 </div>
                 <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.18)", paddingTop: 10, fontSize: 13, lineHeight: 1.55 }}>
-                  {watchDraft.source_reason || "暂无来源原因"}
+                  {watchDraft.entry_reason || "暂无来源原因"}
                 </div>
               </div>
 

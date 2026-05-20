@@ -101,14 +101,14 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
           )}
 
           {/* Watch pool info */}
-          {ctx.pool_status != null && (
+          {ctx.status != null && (
             <div style={{ padding: "8px 12px", borderRadius: 10, background: "#f4f6fb", marginBottom: 10 }}>
-              <InfoRow label="自选状态" value={ctx.lifecycle_status || ctx.pool_status} />
+              <InfoRow label="自选状态" value={ctx.status || ctx.status} />
               <InfoRow label="交易系统" value={ctx.trading_system} />
               <InfoRow label="标签" value={(ctx.labels || []).join(" / ")} />
-              <InfoRow label="来源平台" value={ctx.source_platform} />
-              <InfoRow label="来源排名" value={ctx.source_rank} />
-              <InfoRow label="入选理由" value={ctx.entry_reason || ctx.reason || ctx.source_reason} />
+              <InfoRow label="来源平台" value={ctx} />
+              <InfoRow label="来源排名" value={ctx} />
+              <InfoRow label="入选理由" value={ctx.entry_reason || ctx.reason || ctx} />
               <InfoRow label="关键观察价" value={ctx.key_observe_price} />
               <InfoRow label="失效条件" value={ctx.invalid_condition} />
             </div>

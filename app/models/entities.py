@@ -255,8 +255,7 @@ class MktStockKline15m(TimestampMixin, SystemBase):
 class WatchPool(TimestampMixin, SystemBase):
     __tablename__ = "watch_pool"
     __table_args__ = (
-        Index("ix_watch_pool_code_status", "stock_code", "pool_status"),
-        Index("ix_watch_pool_code_lifecycle", "stock_code", "lifecycle_status"),
+        Index("ix_watch_pool_code_status", "stock_code", "status"),
         Index("ix_watch_pool_trading_system", "trading_system"),
     )
 
@@ -266,7 +265,7 @@ class WatchPool(TimestampMixin, SystemBase):
     sector_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reason: Mapped[str] = mapped_column(Text, default="")
     labels: Mapped[list] = mapped_column(JSON, default=list)
-    pool_status: Mapped[str] = mapped_column(String(32), default="watching", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="watching", index=True)
     monitor_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     operation_strategies: Mapped[list] = mapped_column(JSON, default=list)
     buy_point_types: Mapped[list] = mapped_column(JSON, default=list)
@@ -274,23 +273,14 @@ class WatchPool(TimestampMixin, SystemBase):
     entry_reason: Mapped[str] = mapped_column(Text, default="")
     trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
     system_recommendation: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    lifecycle_status: Mapped[str] = mapped_column(String(32), default="watching", index=True)
     key_observe_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     invalid_condition: Mapped[str] = mapped_column(Text, default="")
     risk_tags: Mapped[list] = mapped_column(JSON, default=list)
     signal_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     latest_signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     user_remark: Mapped[str] = mapped_column(Text, default="")
-    source_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    source_platform: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    source_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    source_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    source_reason: Mapped[str] = mapped_column(Text, default="")
-    xueqiu_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     remark: Mapped[str] = mapped_column(Text, default="")
-    is_blacklist: Mapped[bool] = mapped_column(Boolean, default=False)
-    blacklist_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     added_trade_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

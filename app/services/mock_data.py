@@ -218,7 +218,7 @@ class MockDataService:
         for code, name, sector, price in samples:
             row = (
                 self.db.query(WatchPool)
-                .filter(WatchPool.stock_code == code, WatchPool.pool_status.in_(["watching", "triggered", "holding"]))
+                .filter(WatchPool.stock_code == code, WatchPool.status.in_(["watching", "triggered", "holding"]))
                 .first()
             )
             if not row:
@@ -232,10 +232,10 @@ class MockDataService:
                     monitor_enabled=True,
                     operation_strategies=["趋势交易"],
                     buy_point_types=["B15 底背离买点", "支撑买点"],
-                    source_type="manual",
-                    source_platform="mock",
-                    source_reason="模拟用户从市场页查看后手动添加",
-                    xueqiu_url=xueqiu_link(code),
+                    
+                    
+                    
+                    
                     entry_price=price,
                     added_trade_date=day,
                 )

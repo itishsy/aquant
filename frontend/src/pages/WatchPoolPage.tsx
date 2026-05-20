@@ -1,46 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button, Dialog, ErrorBlock, Input, Popup, Selector, SpinLoading, TextArea, Toast } from "antd-mobile";
-import * as echarts from "echarts";
 import { apiDelete, apiGet, apiPost, apiPut } from "../api/client";
 import { PageShell } from "../components/PageShell";
 import { StockLink } from "../components/StockLink";
 
-function WatchKlineChart({ stockCode }: { stockCode?: string }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [rows, setRows] = useState<any[]>([]);
-
-  useEffect(() => {
-    if (!stockCode) return;
-    apiGet<any[]>(`/h5/market/stocks/${encodeURIComponent(stockCode)}/kline-daily?limit=100`)
-      .then((data) => setRows(data || []))
-      .catch(() => setRows([]));
-  }, [stockCode]);
-
-  useEffect(() => {
-    if (!ref.current || !rows.length) return;
-    const chart = echarts.init(ref.current);
-    const dates = rows.map((d: any) => d.trade_date);
-    chart.setOption({
-      animation: false,
-      tooltip: { trigger: "axis" },
-      grid: { left: 44, right: 8, top: 8, bottom: 0 },
-      xAxis: { type: "category", data: dates, boundaryGap: true, axisLabel: { show: false }, axisTick: { show: false } },
-      yAxis: { type: "value", scale: true, splitLine: { lineStyle: { color: "#f0f0f0" } }, axisLabel: { fontSize: 10 } },
-      dataZoom: [{ type: "inside" }],
-      series: [{
-        name: "K线", type: "candlestick",
-        data: rows.map((d: any) => [d.open, d.close, d.low, d.high]),
-        itemStyle: { color: "#e34d59", color0: "#00b578", borderColor: "#e34d59", borderColor0: "#00b578" },
-      }],
-    });
-    const r = () => chart.resize();
-    window.addEventListener("resize", r);
-    return () => { window.removeEventListener("resize", r); chart.dispose(); };
-  }, [rows]);
-
-  if (!rows.length) return <div style={{ height: 200, display: "grid", placeItems: "center", color: "#888" }}>暂无K线数据</div>;
-  return <div ref={ref} style={{ width: "100%", height: 280 }} />;
-}
 
 const ASSISTANT_NOTE = "仅作为交易辅助，请结合个人交易规则确认。";
 
@@ -132,7 +95,7 @@ function InfoLine({ label, value }: { label: string; value: any }) {
 }
 
 function nextAction(item: any) {
-  const status = item.lifecycle_status || item.pool_status;
+  const status = item.status;
   if (!item.monitor_enabled || item.signal_enabled === false) return "监控关闭，等待手动开启";
   if (status === "watching") return "等待策略信号触发";
   if (status === "signal_generated") return "复核信号质量";
@@ -160,7 +123,6 @@ export function WatchPoolPage() {
   const [buyForm, setBuyForm] = useState<any | null>(null);
   const [sellForm, setSellForm] = useState<any | null>(null);
   const [watchDetail, setWatchDetail] = useState<any>(null);
-  const [watchViewer, setWatchViewer] = useState<{ items: any[]; index: number } | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -169,7 +131,7 @@ export function WatchPoolPage() {
     try {
       const params = new URLSearchParams();
       if (tradingSystem) params.set("trading_system", tradingSystem);
-      if (lifecycleStatus) params.set("lifecycle_status", lifecycleStatus);
+      if (lifecycleStatus) params.set("status", lifecycleStatus);
       const watchPath = `/h5/watch-pool${params.toString() ? `?${params.toString()}` : ""}`;
       const [watchItems, signalItems, tradeItems, watchSum, signalSum, tradeSum] = await Promise.all([
         apiGet<any[]>(watchPath),
@@ -199,7 +161,7 @@ export function WatchPoolPage() {
 
   const buySignals = useMemo(() => signals.filter((item) => item.signal_type === "buy"), [signals]);
   const riskSignals = useMemo(() => signals.filter((item) => item.signal_type !== "buy"), [signals]);
-  const watchingItems = useMemo(() => items.filter((i) => i.pool_status === "watching" || i.pool_status === "观察中"), [items]);
+  const watchingItems = useMemo(() => items.filter((i) => i.status === "watching" || i.status === "观察中"), [items]);
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayNew = useMemo(() => items.filter((item) => String(item.created_at || "").slice(0, 10) === todayStr).length, [items, todayStr]);
   const todaySignals = useMemo(() => signals.filter((s) => (s.trigger_date || "").slice(0, 10) === todayStr).length, [signals, todayStr]);
@@ -491,9 +453,9 @@ export function WatchPoolPage() {
   }
 
   function renderWatchCard(item: any) {
-    const status = item.lifecycle_status || item.pool_status;
+    const status = item.status;
     const monitorOff = item.monitor_enabled === false || item.signal_enabled === false;
-    const source = `${item.entry_source || item.source_type || item.source_platform || "manual"}${item.source_rank ? ` #${item.source_rank}` : ""}`;
+    const source = `${item.entry_source || item || item || "manual"}${item ? ` #${item}` : ""}`;
     const riskText = (item.risk_tags || []).map((tag: string) => riskTagLabels[tag] || tag).join(" / ") || "暂无";
     return (
       <div key={item.watch_id} style={{ borderRadius: 24, background: "#fff", padding: 15, boxShadow: "0 12px 30px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
@@ -514,7 +476,7 @@ export function WatchPoolPage() {
           <MiniStat label="来源" value={source} />
         </div>
         <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
-          <InfoLine label="入选理由" value={item.entry_reason || item.reason || item.source_reason || "用户手动关注"} />
+          <InfoLine label="入选理由" value={item.entry_reason || item.reason || item || "用户手动关注"} />
           <InfoLine label="失效条件" value={item.invalid_condition || "-"} />
           <InfoLine label="风险标签" value={riskText} />
           <InfoLine label="下一步" value={nextAction(item)} />
@@ -555,21 +517,16 @@ export function WatchPoolPage() {
           </div>
           {watchingItems.length ? (
             <div className="stack-list">
-              {watchingItems.map((item, idx) => (
-                <div key={item.watch_id} className="row-card" style={{ padding: "10px 12px", alignItems: "flex-start" }}>
+              {watchingItems.map((item) => (
+                <div key={item.watch_id} className="row-card" style={{ padding: "10px 12px", cursor: "pointer" }}
+                  onClick={() => setWatchDetail(item)}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong style={{ fontSize: 15, cursor: "pointer" }}
-                      onClick={() => setWatchViewer({ items: watchingItems, index: idx })}>
-                      {item.stock_name} {getWatchPriceInfo(item)}
-                    </strong>
+                    <strong style={{ fontSize: 15 }}>{item.stock_name} {getWatchPriceInfo(item)}</strong>
                     <p style={{ margin: "3px 0 0", fontSize: 12, color: "#888" }}>
-                      {item.sector_name || "未分类"} · 入选：{String(item.created_at || "").slice(0, 10) || "-"}
+                      {item.sector_name || "未分类"} · {String(item.created_at || "").slice(0, 10) || "-"}
                     </p>
-                    {item.reason && <p style={{ margin: "2px 0 0", fontSize: 12, color: "#aaa" }}>{item.reason}</p>}
                   </div>
-                  <span style={{ fontSize: 11, color: "#4b63ee", fontWeight: 700, whiteSpace: "nowrap" }}>
-                    {(item.operation_strategies || item.trading_system ? (item.operation_strategies || []).join("/") || item.trading_system : "趋势交易")}
-                  </span>
+                  <span style={{ fontSize: 11, color: "#4b63ee", fontWeight: 700 }}>详情</span>
                 </div>
               ))}
             </div>
@@ -635,58 +592,35 @@ export function WatchPoolPage() {
         )}
       </Popup>
 
-      <Popup visible={Boolean(watchViewer)} onMaskClick={() => setWatchViewer(null)}
-        bodyStyle={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 0, height: "80vh", overflow: "hidden", background: "linear-gradient(180deg, #f7f9ff 0%, #ffffff 38%)" }}>
-        {watchViewer && (() => {
-          const item = watchViewer.items[watchViewer.index];
-          const xueqiuCode = item?.stock_code?.replace(".", "").toLowerCase() || "";
-          const xueqiuUrl = xueqiuCode ? `https://xueqiu.com/S/${xueqiuCode}` : "";
-          return (
-            <div style={{ display: "flex", flexDirection: "column", height: "80vh" }}>
-              <div style={{ padding: "6px 14px 4px" }}>
-                <div style={{ width: 32, height: 4, borderRadius: 999, background: "#d9dfef", margin: "0 auto 8px" }} />
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <strong style={{ fontSize: 18 }}>{item?.stock_name || "-"}</strong>
-                    <span style={{ fontSize: 12, color: "#888", marginLeft: 6 }}>{item?.stock_code}</span>
-                  </div>
-                  <span style={{ fontSize: 12, color: "#888" }}>{watchViewer.index + 1} / {watchViewer.items.length}</span>
-                </div>
-              </div>
-              <div style={{ flex: 1, overflowY: "auto", padding: "0 8px" }}>
-                {item && <WatchKlineChart stockCode={item.stock_code} />}
-              </div>
-              <div style={{ padding: "10px 14px", borderTop: "1px solid #eee", display: "grid", gridTemplateColumns: "0.8fr 0.8fr 1fr 1fr", gap: 8 }}>
-                <Button size="small" block disabled={watchViewer.index === 0} onClick={() => setWatchViewer((v) => v ? { ...v, index: v.index - 1 } : null)} style={{ borderRadius: 14 }}>上一个</Button>
-                <Button size="small" block disabled={watchViewer.index >= watchViewer.items.length - 1} onClick={() => setWatchViewer((v) => v ? { ...v, index: v.index + 1 } : null)} style={{ borderRadius: 14 }}>下一个</Button>
-                <Button size="small" block fill="outline" onClick={() => { openEdit(item); setWatchViewer(null); }} style={{ borderRadius: 14 }}>编辑</Button>
-                <Button size="small" block fill="outline" onClick={() => window.open(xueqiuUrl, "_blank")} style={{ borderRadius: 14 }}>雪球</Button>
-              </div>
-            </div>
-          );
-        })()}
-      </Popup>
-
       <Popup visible={Boolean(watchDetail)} onMaskClick={() => setWatchDetail(null)} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: "86vh", overflowY: "auto" }}>
         {watchDetail && (
           <div style={{ display: "grid", gap: 12 }}>
             <div>
               <h3 style={{ margin: 0, fontSize: 18 }}>{watchDetail.stock_name} <span style={{ fontSize: 13, color: "#888" }}>{watchDetail.stock_code}</span></h3>
-              <p style={{ margin: "4px 0 0", color: "#72819b", fontSize: 13 }}>状态：{watchDetail.pool_status || "观察中"}</p>
+              <p style={{ margin: "4px 0 0", color: "#72819b", fontSize: 13 }}>状态：{watchDetail.status || "观察中"} · {watchDetail.monitor_enabled !== false ? "监控开启" : "已暂停"}</p>
             </div>
-            <div style={{ display: "grid", gap: 4, fontSize: 13, color: "#555" }}>
-              {watchDetail.sector_name && <div>板块：{watchDetail.sector_name}</div>}
-              <div>标签：{(watchDetail.labels || []).join(" / ") || "-"}</div>
-              <div>操作策略：{(watchDetail.operation_strategies || []).join(",") || "-"}</div>
-              <div>买点类型：{(watchDetail.buy_point_types || []).join(",") || "-"}</div>
-              {watchDetail.source_platform && <div>来源：{watchDetail.source_platform} {watchDetail.source_rank ? `#${watchDetail.source_rank}` : ""}</div>}
-              {watchDetail.reason && <div>理由：{watchDetail.reason}</div>}
-              {watchDetail.entry_price && <div>入选价：{watchDetail.entry_price}</div>}
-              {watchDetail.remark && <div>备注：{watchDetail.remark}</div>}
-              <div>监控：{watchDetail.monitor_enabled !== false ? "开启" : "暂停"}</div>
+            <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#555" }}>
+              {watchDetail.sector_name && <div><strong style={{ color: "#333" }}>板块：</strong>{watchDetail.sector_name}</div>}
+              <div><strong style={{ color: "#333" }}>标签：</strong>{(watchDetail.labels || []).join(" / ") || "-"}</div>
+              <div><strong style={{ color: "#333" }}>交易体系：</strong>{watchDetail.trading_system || "-"}</div>
+              <div><strong style={{ color: "#333" }}>操作策略：</strong>{(watchDetail.operation_strategies || []).join(",") || "-"}</div>
+              <div><strong style={{ color: "#333" }}>买点类型：</strong>{(watchDetail.buy_point_types || []).join(",") || "-"}</div>
+              <div><strong style={{ color: "#333" }}>入选来源：</strong>{watchDetail.entry_source || "手动"}</div>
+              <div><strong style={{ color: "#333" }}>入选时间：</strong>{String(watchDetail.created_at || "").slice(0, 10) || "-"}</div>
+              {watchDetail.entry_reason && <div><strong style={{ color: "#333" }}>入选理由：</strong>{watchDetail.entry_reason}</div>}
+              {watchDetail.reason && <div><strong style={{ color: "#333" }}>原始原因：</strong>{watchDetail.reason}</div>}
+              {watchDetail.key_observe_price != null && <div><strong style={{ color: "#333" }}>关键观察价：</strong>{watchDetail.key_observe_price}</div>}
+              {watchDetail.invalid_condition && <div><strong style={{ color: "#333" }}>失效条件：</strong>{watchDetail.invalid_condition}</div>}
+              {watchDetail.entry_price && <div><strong style={{ color: "#333" }}>入选价：</strong>{watchDetail.entry_price}</div>}
+              {watchDetail.risk_tags?.length > 0 && <div><strong style={{ color: "#333" }}>风险标签：</strong>{watchDetail.risk_tags.join(", ")}</div>}
+              {watchDetail.remark && <div><strong style={{ color: "#333" }}>备注：</strong>{watchDetail.remark}</div>}
+              {watchDetail.user_remark && <div><strong style={{ color: "#333" }}>用户备注：</strong>{watchDetail.user_remark}</div>}
             </div>
             <p style={{ fontSize: 12, color: "#888" }}>仅作为交易辅助，请结合个人交易规则确认。</p>
-            <Button block fill="outline" onClick={() => setWatchDetail(null)}>关闭</Button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button block fill="outline" onClick={() => { openEdit(watchDetail); setWatchDetail(null); }}>编辑</Button>
+              <Button block fill="outline" onClick={() => setWatchDetail(null)}>关闭</Button>
+            </div>
           </div>
         )}
       </Popup>

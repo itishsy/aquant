@@ -39,7 +39,7 @@ def test_common_dictionaries_include_watch_pool_codes_and_are_idempotent(client,
         "uptrend": "上涨趋势",
         "relay": "追涨接力",
     }
-    assert set(by_type["watch_lifecycle_status"]) == {
+    assert set(by_type["watch_waiting"]) == {
         "watching",
         "signal_generated",
         "waiting_buy_point",
@@ -253,17 +253,17 @@ def test_h5_watch_pool_manual_add_only_and_idempotent(client):
         "labels": ["人气"],
         "operation_strategies": ["趋势交易"],
         "buy_point_types": ["B15 底背离买点"],
-        "source_platform": "mock",
-        "source_rank": 1,
-        "source_score": 98,
-        "source_reason": "平台原始原因",
+        
+        
+        
+        
     }
     first = client.post("/api/h5/watch-pool", json=payload)
     second = client.post("/api/h5/watch-pool", json={**payload, "labels": ["趋势"]})
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["data"]["watch_id"] == second.json()["data"]["watch_id"]
-    assert second.json()["data"]["pool_status"] == "watching"
+    assert second.json()["data"]["status"] == "watching"
     assert second.json()["data"]["monitor_enabled"] is True
 
 
@@ -275,7 +275,7 @@ def _watch_payload(**overrides):
         "entry_reason": "manual selected from hot list",
         "key_observe_price": 50.0,
         "invalid_condition": "close below 48",
-        "source_type": "manual",
+        
         "labels": ["trend"],
     }
     payload.update(overrides)
@@ -320,8 +320,8 @@ def test_watch_pool_mark_invalid_writes_status_log(db_session):
     service = PrdWatchPoolService(db_session)
     watch = service.add_watch(_watch_payload(stock_code="000001.SZ"))
     invalid = service.mark_invalid(watch.id, {"invalid_reason": "setup failed"})
-    assert invalid.lifecycle_status == "invalid"
-    assert invalid.pool_status == "invalid"
+    assert invalid.status == "invalid"
+    assert invalid.status == "invalid"
 
     log = (
         db_session.query(WatchPoolStatusLog)
@@ -343,17 +343,17 @@ def test_watch_pool_blacklist_requires_explicit_confirmation(db_session):
 
     restored = service.add_watch(_watch_payload(stock_code="000002.SZ", confirm_blacklist_risk=True))
     assert restored.id == watch.id
-    assert restored.lifecycle_status == "watching"
-    assert restored.pool_status == "watching"
-    assert restored.is_blacklist is False
+    assert restored.status == "watching"
+    assert restored.status == "watching"
+    assert restored is False
 
 
 def test_h5_signal_confirm_buy_creates_watch_trade_and_execution(client, db_session):
     watch = WatchPool(stock_code="603019.SH", stock_name="中科曙光", reason="用户手动加入", pool_status="watching", monitor_enabled=True, active=True)
     db_session.add(watch)
     db_session.flush()
-    watch.pool_status = "buy_pending_confirm"
-    watch.lifecycle_status = "buy_pending_confirm"
+    watch.status = "buy_pending_confirm"
+    watch.status = "buy_pending_confirm"
     signal = WatchSignal(
         watch_id=watch.id,
         stock_code="603019.SH",
@@ -392,8 +392,8 @@ def test_h5_confirm_sell_generates_trade_review(client, db_session):
     watch = WatchPool(stock_code="603019.SH", stock_name="中科曙光", reason="用户手动加入", pool_status="watching", monitor_enabled=True, active=True)
     db_session.add(watch)
     db_session.flush()
-    watch.pool_status = "buy_pending_confirm"
-    watch.lifecycle_status = "buy_pending_confirm"
+    watch.status = "buy_pending_confirm"
+    watch.status = "buy_pending_confirm"
     signal = WatchSignal(
         watch_id=watch.id,
         stock_code="603019.SH",
@@ -426,7 +426,7 @@ def test_watch_pool_filters_update_invalid_and_signal_abandon(client, db_session
     service = PrdWatchPoolService(db_session)
     watch = service.add_watch(_watch_payload(stock_code="000001.SZ", trading_system="platform_breakout", stock_name="Ping An"))
 
-    filtered = client.get("/api/h5/watch-pool", params={"lifecycle_status": "watching", "trading_system": "platform_breakout", "keyword": "Ping"})
+    filtered = client.get("/api/h5/watch-pool", params={"status": "watching", "trading_system": "platform_breakout", "keyword": "Ping"})
     assert filtered.status_code == 200
     assert filtered.json()["data"][0]["watch_id"] == watch.id
 
@@ -457,11 +457,11 @@ def test_watch_pool_filters_update_invalid_and_signal_abandon(client, db_session
 
     invalid = client.post(f"/api/h5/watch-pool/{watch.id}/invalid", json={"invalid_reason": "setup failed"})
     assert invalid.status_code == 200
-    assert invalid.json()["data"]["lifecycle_status"] == "invalid"
+    assert invalid.json()["data"]["status"] == "invalid"
 
 
 def test_confirm_buy_requires_pending_confirm_and_buy_point_and_stop_loss(client, db_session):
-    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", pool_status="watching", lifecycle_status="watching", monitor_enabled=True, active=True)
+    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", pool_status="watching", waiting="watching", monitor_enabled=True, active=True)
     db_session.add(watch)
     db_session.flush()
     signal = WatchSignal(
@@ -491,7 +491,7 @@ def test_confirm_buy_requires_pending_confirm_and_buy_point_and_stop_loss(client
 
 
 def test_confirm_sell_rejects_partial_exit(client, db_session):
-    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", pool_status="trading", lifecycle_status="trading", monitor_enabled=False, active=True)
+    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", pool_status="trading", waiting="trading", monitor_enabled=False, active=True)
     trade = WatchTrade(watch_id=1, stock_code="000001.SZ", stock_name="Ping An", first_buy_price=10, average_buy_price=10, total_buy_amount=100, remaining_amount=100, trade_status="open")
     db_session.add(watch)
     db_session.flush()

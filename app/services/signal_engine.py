@@ -51,8 +51,8 @@ class SignalEngine:
             "in_watch_pool": True,
             "monitor_enabled": watch_item.monitor_enabled,
             "signal_enabled": watch_item.signal_enabled,
-            "pool_status": watch_item.pool_status,
-            "lifecycle_status": watch_item.lifecycle_status,
+            "status": watch_item.status,
+            "status": watch_item.status,
             "trading_system": watch_item.trading_system,
             "kline_daily": daily,
             "kline_15m": intraday,
@@ -161,8 +161,8 @@ class SignalEngine:
 
         watch = self.db.query(WatchPool).filter(WatchPool.id == context["watch_id"]).first()
         if watch:
-            watch.lifecycle_status = signal_status
-            watch.pool_status = signal_status
+            watch.status = signal_status
+            watch.status = signal_status
             watch.latest_signal_id = entity.signal_id
         self.db.commit()
         self.db.refresh(entity)
@@ -172,10 +172,10 @@ class SignalEngine:
         watch_items = (
             self.db.query(WatchPool)
             .filter(
-                WatchPool.lifecycle_status == self.ACTIVE_SCAN_STATUS,
+                WatchPool.status == self.ACTIVE_SCAN_STATUS,
                 WatchPool.signal_enabled.is_(True),
                 WatchPool.monitor_enabled.is_(True),
-                WatchPool.is_blacklist.is_(False),
+                WatchPool,
                 WatchPool.trading_system.isnot(None),
                 WatchPool.trading_system != "",
             )

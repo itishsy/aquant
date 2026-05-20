@@ -40,8 +40,7 @@ def _watch_dict(row: WatchPool) -> dict:
         "stock_name": row.stock_name,
         "sector_name": row.sector_name,
         "labels": row.labels,
-        "pool_status": row.pool_status,
-        "lifecycle_status": row.lifecycle_status,
+        "status": row.status,
         "entry_source": row.entry_source,
         "entry_reason": row.entry_reason,
         "trading_system": row.trading_system,
@@ -53,12 +52,13 @@ def _watch_dict(row: WatchPool) -> dict:
         "latest_signal_id": row.latest_signal_id,
         "user_remark": row.user_remark,
         "monitor_enabled": row.monitor_enabled,
-        "source_platform": row.source_platform,
-        "source_rank": row.source_rank,
-        "source_score": row.source_score,
-        "source_reason": row.source_reason,
+        "reason": row.reason,
+        "operation_strategies": row.operation_strategies,
+        "buy_point_types": row.buy_point_types,
+        "entry_price": row.entry_price,
+        "remark": row.remark,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
         "risk_note": ASSISTANT_NOTE,
-        "xueqiu_url": row.xueqiu_url or xueqiu_link(row.stock_code),
     }
 
 
@@ -228,19 +228,16 @@ def stock_kline_daily(stock_code: str, limit: int = 60, db: Session = Depends(ge
 
 @router.get("/watch-pool")
 def list_watch_pool(
-    pool_status: str | None = None,
-    lifecycle_status: str | None = None,
+    status: str | None = None,
     trading_system: str | None = None,
     keyword: str | None = None,
     db: Session = Depends(get_db),
     user=Depends(require_login),
 ):
     query = db.query(WatchPool)
-    if pool_status:
-        query = query.filter(WatchPool.pool_status == pool_status)
-    if lifecycle_status:
-        query = query.filter(WatchPool.lifecycle_status == lifecycle_status)
-    if not pool_status and not lifecycle_status:
+    if status:
+        query = query.filter(WatchPool.status == status)
+    else:
         query = query.filter(WatchPool.active.is_(True))
     if trading_system:
         query = query.filter(WatchPool.trading_system == trading_system)
@@ -423,9 +420,9 @@ def abandon_signal(signal_id: int, payload: dict | None = None, db: Session = De
     if row.watch_id:
         watch = db.query(WatchPool).filter(WatchPool.id == row.watch_id).first()
         if watch:
-            old_status = watch.lifecycle_status or watch.pool_status
-            watch.lifecycle_status = "waiting_buy_point"
-            watch.pool_status = "waiting_buy_point"
+            old_status = watch.status or watch.status
+            watch.status = "waiting_buy_point"
+            watch.status = "waiting_buy_point"
             db.add(
                 WatchPoolStatusLog(
                     watch_id=watch.id,
@@ -530,9 +527,9 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
     if signal.watch_id:
         watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first()
         if watch:
-            old_status = watch.lifecycle_status or watch.pool_status
-            watch.pool_status = "trading"
-            watch.lifecycle_status = "trading"
+            old_status = watch.status or watch.status
+            watch.status = "trading"
+            watch.status = "trading"
             watch.monitor_enabled = False
             watch.signal_enabled = False
             db.add(
@@ -648,9 +645,9 @@ def confirm_sell(trade_id: int, payload: dict, db: Session = Depends(get_db), us
     if trade.watch_id:
         watch = db.query(WatchPool).filter(WatchPool.id == trade.watch_id).first()
         if watch:
-            old_status = watch.lifecycle_status or watch.pool_status
-            watch.lifecycle_status = "pending_review"
-            watch.pool_status = "pending_review"
+            old_status = watch.status or watch.status
+            watch.status = "pending_review"
+            watch.status = "pending_review"
             watch.monitor_enabled = False
             watch.signal_enabled = False
             db.add(
