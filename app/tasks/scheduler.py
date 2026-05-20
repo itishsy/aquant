@@ -25,6 +25,17 @@ def build_scheduler() -> BackgroundScheduler:
         coalesce=True,
         misfire_grace_time=1800,
     )
+    scheduler.add_job(
+        run_watch_signal_scan,
+        trigger="interval",
+        minutes=15,
+        id="scan_watch_signals",
+        name="Scan watch-pool signals",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
     return scheduler
 
 
@@ -35,5 +46,13 @@ def run_daily_collect_all() -> None:
         today = date.today()
         for fn in [svc.collect_market_daily, svc.collect_hot_sector_rank, svc.collect_hot_stock_rank, svc.collect_limit_up_daily]:
             fn(today)
+    finally:
+        db.close()
+
+
+def run_watch_signal_scan() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).scan_watch_signals(date.today())
     finally:
         db.close()

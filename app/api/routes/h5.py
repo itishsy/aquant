@@ -10,8 +10,10 @@ from app.api.deps import require_login
 from app.api.response import ok, page
 from app.core.database import get_db
 from app.models import (
-    MktDaily,
     ConfigNotificationRecord,
+    ConfigTask,
+    ConfigTaskLog,
+    MktDaily,
     MyNotificationSetting,
     MyUserPreference,
     MyUserProfile,
@@ -156,6 +158,61 @@ def _review_dict(row: ReviewForm) -> dict:
         "improvement_plan": row.improvement_plan,
         "payload": row.payload,
         "assistant_note": ASSISTANT_NOTE,
+    }
+
+
+TASK_LABELS = {
+    "collect_market_daily": "大盘数据采集",
+    "collect_hot_sector_rank": "热门板块采集",
+    "collect_hot_stock_rank": "热门个股采集",
+    "collect_limit_up_daily": "涨停数据采集",
+    "update_watch_daily_kline": "自选日 K 更新",
+    "update_watch_15m_kline": "自选 15 分钟 K 更新",
+    "scan_watch_signals": "观察信号扫描",
+    "scan_trade_risk_signals": "持仓风险扫描",
+    "generate_weekly_review_form": "周复盘生成",
+    "generate_monthly_review_form": "月复盘生成",
+    "remind_pending_review_form": "复盘提醒",
+    "aggregate_review_metrics": "复盘指标汇总",
+}
+
+MODULE_LABELS = {
+    "market": "数据采集",
+    "kline": "K 线更新",
+    "signal": "信号监控",
+    "review": "复盘任务",
+}
+
+
+def _task_log_dict(row: ConfigTaskLog | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "log_id": row.log_id,
+        "task_id": row.task_id,
+        "task_name": row.task_name,
+        "run_status": row.run_status,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+        "affected_rows": row.affected_rows,
+        "error_message": row.error_message,
+    }
+
+
+def _task_dict(row: ConfigTask, latest_log: ConfigTaskLog | None = None) -> dict:
+    return {
+        "task_id": row.task_id,
+        "task_name": row.task_name,
+        "task_label": TASK_LABELS.get(row.task_name, row.task_name),
+        "task_type": row.task_type,
+        "owner_module": row.owner_module,
+        "owner_label": MODULE_LABELS.get(row.owner_module, row.owner_module or "其他任务"),
+        "cron_expression": row.cron_expression,
+        "enabled": row.enabled,
+        "running": row.running,
+        "retry_times": row.retry_times,
+        "timeout_seconds": row.timeout_seconds,
+        "latest_log": _task_log_dict(latest_log),
     }
 
 
@@ -911,6 +968,74 @@ def my_system_summary(db: Session = Depends(get_db), user=Depends(require_login)
 @router.get("/me/backend-entry")
 def backend_entry(user=Depends(require_login)):
     return ok({"enabled": True, "entry_url": "/admin", "label": "后台管理"})
+
+
+@router.get("/me/tasks")
+def my_tasks(db: Session = Depends(get_db), user=Depends(require_login)):
+    SeedService(db).init_defaults()
+    tasks = db.query(ConfigTask).order_by(ConfigTask.owner_module, ConfigTask.task_id).all()
+    latest_logs: dict[str, ConfigTaskLog] = {}
+    for log in db.query(ConfigTaskLog).order_by(ConfigTaskLog.started_at.desc()).limit(300).all():
+        latest_logs.setdefault(log.task_name, log)
+    rows = [_task_dict(task, latest_logs.get(task.task_name)) for task in tasks]
+    failed = sum(1 for item in rows if item["latest_log"] and item["latest_log"]["run_status"] == "failed")
+    running = sum(1 for item in rows if item["running"])
+    enabled = sum(1 for item in rows if item["enabled"])
+    return ok({
+        "summary": {
+            "total": len(rows),
+            "enabled": enabled,
+            "running": running,
+            "failed": failed,
+        },
+        "groups": [
+            {"module": module, "label": label, "tasks": [item for item in rows if item["owner_module"] == module]}
+            for module, label in MODULE_LABELS.items()
+            if any(item["owner_module"] == module for item in rows)
+        ],
+        "tasks": rows,
+    })
+
+
+@router.get("/me/task-logs")
+def my_task_logs(limit: int = 50, db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = db.query(ConfigTaskLog).order_by(ConfigTaskLog.started_at.desc()).limit(min(max(limit, 1), 100)).all()
+    return ok([_task_log_dict(row) for row in rows])
+
+
+@router.post("/me/tasks/{task_id}/run")
+def run_my_task(task_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    from app.services.tasks import TaskService
+
+    SeedService(db).init_defaults()
+    task = db.query(ConfigTask).filter(ConfigTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.running:
+        raise HTTPException(status_code=409, detail="task is running")
+    svc = TaskService(db)
+    fn_map = {
+        "collect_market_daily": svc.collect_market_daily,
+        "collect_hot_sector_rank": svc.collect_hot_sector_rank,
+        "collect_hot_stock_rank": svc.collect_hot_stock_rank,
+        "collect_limit_up_daily": svc.collect_limit_up_daily,
+        "update_watch_daily_kline": svc.update_watch_daily_kline,
+        "update_watch_15m_kline": svc.update_watch_15m_kline,
+        "scan_watch_signals": svc.scan_watch_signals,
+        "scan_trade_risk_signals": svc.scan_trade_risk_signals,
+        "generate_weekly_review_form": svc.generate_weekly_review_form,
+        "generate_monthly_review_form": svc.generate_monthly_review_form,
+        "remind_pending_review_form": svc.remind_pending_review_form,
+        "aggregate_review_metrics": svc.aggregate_review_metrics,
+    }
+    fn = fn_map.get(task.task_name)
+    if not fn:
+        raise HTTPException(status_code=400, detail=f"unsupported task: {task.task_name}")
+    log = fn(date.today())
+    return ok({
+        "task": _task_dict(task, log),
+        "log": _task_log_dict(log),
+    })
 
 
 @router.get("/notifications")

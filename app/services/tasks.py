@@ -7,6 +7,7 @@ from typing import Callable
 from sqlalchemy.orm import Session
 
 from app.models import (
+    ConfigTask,
     ConfigTaskLog,
     MktDaily,
     MktDailyPlate,
@@ -201,7 +202,15 @@ class TaskService:
         return affected
 
     def _run(self, task_name: str, fn: Callable[[], int]) -> ConfigTaskLog:
-        log = ConfigTaskLog(task_name=task_name, run_status="running", started_at=datetime.utcnow())
+        task = self.db.query(ConfigTask).filter(ConfigTask.task_name == task_name).first()
+        log = ConfigTaskLog(
+            task_id=task.task_id if task else None,
+            task_name=task_name,
+            run_status="running",
+            started_at=datetime.utcnow(),
+        )
+        if task:
+            task.running = True
         self.db.add(log)
         self.db.commit()
         try:
@@ -212,6 +221,8 @@ class TaskService:
             log.run_status = "failed"
             log.error_message = str(exc)
         finally:
+            if task:
+                task.running = False
             log.finished_at = datetime.utcnow()
             self.db.commit()
         return log
@@ -479,7 +490,9 @@ class TaskService:
         return self._run("update_watch_15m_kline", lambda: 0)
 
     def scan_watch_signals(self, trade_date: date) -> ConfigTaskLog:
-        return self._run("scan_watch_signals", lambda: 0)
+        from app.services.signal_engine import SignalEngine
+
+        return self._run("scan_watch_signals", lambda: len(SignalEngine(self.db).scan()))
 
     def scan_trade_risk_signals(self, trade_date: date) -> ConfigTaskLog:
         return self._run("scan_trade_risk_signals", lambda: 0)

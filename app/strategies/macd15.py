@@ -41,7 +41,7 @@ class Macd15BullishDivergenceStrategy(StrategyBase):
             return None
 
         last_bar = bars[-1]
-        trigger_time = _value(last_bar, "kline_time") if hasattr(last_bar, "kline_time") else None
+        trigger_time = getattr(last_bar, "kline_time", None)
 
         return {
             "signal_type": "buy",
