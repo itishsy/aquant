@@ -36,6 +36,17 @@ def build_scheduler() -> BackgroundScheduler:
         coalesce=True,
         misfire_grace_time=300,
     )
+    scheduler.add_job(
+        run_watch_auto_remove,
+        trigger="interval",
+        minutes=15,
+        id="auto_remove_watch_pool",
+        name="Auto remove watch-pool items",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
     return scheduler
 
 
@@ -54,5 +65,13 @@ def run_watch_signal_scan() -> None:
     db: Session = SystemSessionLocal()
     try:
         TaskService(db).scan_watch_signals(date.today())
+    finally:
+        db.close()
+
+
+def run_watch_auto_remove() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).auto_remove_watch_pool(date.today())
     finally:
         db.close()

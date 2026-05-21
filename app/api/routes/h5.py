@@ -48,6 +48,7 @@ def _watch_dict(row: WatchPool) -> dict:
         "trading_system": row.trading_system,
         "system_recommendation": row.system_recommendation,
         "key_observe_price": row.key_observe_price,
+        "auto_remove_price": row.auto_remove_price,
         "invalid_condition": row.invalid_condition,
         "risk_tags": row.risk_tags,
         "signal_enabled": row.signal_enabled,
@@ -169,6 +170,7 @@ TASK_LABELS = {
     "update_watch_daily_kline": "自选日 K 更新",
     "update_watch_15m_kline": "自选 15 分钟 K 更新",
     "scan_watch_signals": "观察信号扫描",
+    "auto_remove_watch_pool": "自动剔除",
     "scan_trade_risk_signals": "持仓风险扫描",
     "generate_weekly_review_form": "周复盘生成",
     "generate_monthly_review_form": "月复盘生成",
@@ -179,7 +181,7 @@ TASK_LABELS = {
 MODULE_LABELS = {
     "market": "数据采集",
     "kline": "K 线更新",
-    "signal": "信号监控",
+    "signal": "自选监控",
     "review": "复盘任务",
 }
 
@@ -343,6 +345,14 @@ def mark_watch_invalid(watch_id: int, payload: dict, db: Session = Depends(get_d
 @router.delete("/watch-pool/{watch_id}")
 def remove_watch(watch_id: int, remove_reason: str = "用户剔除", db: Session = Depends(get_db), user=Depends(require_login)):
     return ok(_watch_dict(PrdWatchPoolService(db).remove_watch(watch_id, remove_reason)))
+
+
+@router.delete("/watch-pool/{watch_id}/hard-delete")
+def hard_delete_watch(watch_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    try:
+        return ok(PrdWatchPoolService(db).hard_delete_watch(watch_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post("/watch-pool/{watch_id}/restore")
@@ -1022,6 +1032,7 @@ def run_my_task(task_id: int, db: Session = Depends(get_db), user=Depends(requir
         "update_watch_daily_kline": svc.update_watch_daily_kline,
         "update_watch_15m_kline": svc.update_watch_15m_kline,
         "scan_watch_signals": svc.scan_watch_signals,
+        "auto_remove_watch_pool": svc.auto_remove_watch_pool,
         "scan_trade_risk_signals": svc.scan_trade_risk_signals,
         "generate_weekly_review_form": svc.generate_weekly_review_form,
         "generate_monthly_review_form": svc.generate_monthly_review_form,

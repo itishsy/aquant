@@ -22,6 +22,11 @@ from app.models import (
     MyUserProfile,
     WatchPool,
     WatchPoolStatusLog,
+    WatchSignal,
+    WatchSignalPerformance,
+    WatchTrade,
+    WatchTradeExecution,
+    ReviewTrade,
 )
 from app.services.normalization import normalize_stock_code, xueqiu_link
 
@@ -128,6 +133,7 @@ class SeedService:
         ("update_watch_daily_kline", "market"),
         ("update_watch_15m_kline", "market"),
         ("scan_watch_signals", "signal"),
+        ("auto_remove_watch_pool", "signal"),
         ("scan_trade_risk_signals", "signal"),
         ("generate_weekly_review_form", "review"),
         ("generate_monthly_review_form", "review"),
@@ -680,6 +686,7 @@ class PrdWatchPoolService:
         entry_source = payload.get("entry_source") or "manual"
         entry_reason = payload.get("entry_reason") or payload.get("reason") or ""
         key_observe_price = payload.get("key_observe_price", payload.get("entry_price"))
+        auto_remove_price = payload.get("auto_remove_price")
         trading_system = payload["trading_system"]
         entity = WatchPool(
             stock_code=code,
@@ -691,6 +698,7 @@ class PrdWatchPoolService:
             trading_system=trading_system,
             system_recommendation=payload.get("system_recommendation") or self.recommend_trading_system(entry_source, payload),
             key_observe_price=key_observe_price,
+            auto_remove_price=None if auto_remove_price in {None, ""} else float(auto_remove_price),
             invalid_condition=payload.get("invalid_condition"),
             risk_tags=payload.get("risk_tags") or [],
             signal_enabled=payload.get("signal_enabled", True),
@@ -744,6 +752,39 @@ class PrdWatchPoolService:
 
     def remove_watch(self, watch_id: int, reason: str) -> WatchPool:
         return self.transition(watch_id, "removed", reason, operation_type="remove_watch")
+
+    def hard_delete_watch(self, watch_id: int) -> dict:
+        entity = self.get_watch(watch_id)
+        signal_ids = [
+            row[0]
+            for row in self.db.query(WatchSignal.signal_id)
+            .filter(WatchSignal.watch_id == watch_id)
+            .all()
+        ]
+        trade_ids = [
+            row[0]
+            for row in self.db.query(WatchTrade.id)
+            .filter(WatchTrade.watch_id == watch_id)
+            .all()
+        ]
+        deleted = {
+            "watch_id": watch_id,
+            "stock_code": entity.stock_code,
+            "stock_name": entity.stock_name,
+            "signals": len(signal_ids),
+            "trades": len(trade_ids),
+        }
+        if signal_ids:
+            self.db.query(WatchSignalPerformance).filter(WatchSignalPerformance.signal_id.in_(signal_ids)).delete(synchronize_session=False)
+            self.db.query(WatchSignal).filter(WatchSignal.signal_id.in_(signal_ids)).delete(synchronize_session=False)
+        if trade_ids:
+            self.db.query(WatchTradeExecution).filter(WatchTradeExecution.trade_id.in_(trade_ids)).delete(synchronize_session=False)
+            self.db.query(ReviewTrade).filter(ReviewTrade.trade_id.in_(trade_ids)).delete(synchronize_session=False)
+            self.db.query(WatchTrade).filter(WatchTrade.id.in_(trade_ids)).delete(synchronize_session=False)
+        self.db.query(WatchPoolStatusLog).filter(WatchPoolStatusLog.watch_id == watch_id).delete(synchronize_session=False)
+        self.db.delete(entity)
+        self.db.commit()
+        return deleted
 
     def restore_watch(self, watch_id: int) -> WatchPool:
         return self.transition(watch_id, "watching", "restore to watching", operation_type="restore_watch")
@@ -913,6 +954,9 @@ class PrdWatchPoolService:
         if "key_observe_price" in payload or "entry_price" in payload:
             entity.key_observe_price = payload.get("key_observe_price", payload.get("entry_price"))
             entity.entry_price = entity.key_observe_price
+        if "auto_remove_price" in payload:
+            value = payload.get("auto_remove_price")
+            entity.auto_remove_price = None if value in {None, ""} else float(value)
         if "invalid_condition" in payload:
             entity.invalid_condition = payload["invalid_condition"]
         if "user_remark" in payload or "remark" in payload:
@@ -937,6 +981,7 @@ class PrdWatchPoolService:
             "entry_source": entity.entry_source,
             "entry_reason": entity.entry_reason,
             "key_observe_price": entity.key_observe_price,
+            "auto_remove_price": entity.auto_remove_price,
             "invalid_condition": entity.invalid_condition,
             "risk_tags": entity.risk_tags or [],
             "signal_enabled": entity.signal_enabled,

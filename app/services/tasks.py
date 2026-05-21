@@ -16,6 +16,8 @@ from app.models import (
     MktDailyTopicStock,
     MktHotStock,
     MktLimitUpStock,
+    WatchPool,
+    WatchSignal,
 )
 from app.providers.factory import ProviderFactory
 
@@ -493,6 +495,72 @@ class TaskService:
         from app.services.signal_engine import SignalEngine
 
         return self._run("scan_watch_signals", lambda: len(SignalEngine(self.db).scan()))
+
+    def auto_remove_watch_pool(self, trade_date: date) -> ConfigTaskLog:
+        def _do() -> int:
+            from app.services.kline import KlineService
+            from app.services.prd_v1 import PrdWatchPoolService
+
+            kline_service = KlineService(self.db)
+            watch_service = PrdWatchPoolService(self.db)
+            rows = (
+                self.db.query(WatchPool)
+                .filter(
+                    WatchPool.status == "watching",
+                    WatchPool.active.is_(True),
+                    WatchPool.auto_remove_price.isnot(None),
+                    WatchPool.auto_remove_price > 0,
+                )
+                .all()
+            )
+            affected = 0
+            for watch in rows:
+                has_buy_signal = (
+                    self.db.query(WatchSignal.signal_id)
+                    .filter(WatchSignal.watch_id == watch.id, WatchSignal.signal_type == "buy")
+                    .first()
+                )
+                if has_buy_signal:
+                    continue
+
+                trigger_price = None
+                trigger_time = None
+                intraday = kline_service.get_15m_kline(watch.stock_code, 32)
+                if intraday:
+                    latest_15m = intraday[-1]
+                    trigger_price = latest_15m.close_price
+                    trigger_time = latest_15m.kline_time
+                else:
+                    daily = kline_service.get_daily_kline(watch.stock_code, 20)
+                    if daily:
+                        latest_daily = daily[-1]
+                        trigger_price = latest_daily.close_price
+                        trigger_time = datetime.combine(latest_daily.trade_date, datetime.min.time())
+
+                if trigger_price is None or trigger_time is None:
+                    continue
+                if watch.created_at and trigger_time <= watch.created_at:
+                    continue
+
+                threshold = float(watch.auto_remove_price) * 0.99
+                if float(trigger_price) <= threshold:
+                    watch_service.transition(
+                        watch.id,
+                        "removed",
+                        f"自动剔除：最新价 {trigger_price} 跌破剔除价 {watch.auto_remove_price} 的 1% 阈值",
+                        operator_type="system",
+                        operation_type="auto_remove_watch",
+                        snapshot={
+                            "auto_remove_price": watch.auto_remove_price,
+                            "threshold": threshold,
+                            "trigger_price": trigger_price,
+                            "trigger_time": trigger_time.isoformat(),
+                        },
+                    )
+                    affected += 1
+            return affected
+
+        return self._run("auto_remove_watch_pool", _do)
 
     def scan_trade_risk_signals(self, trade_date: date) -> ConfigTaskLog:
         return self._run("scan_trade_risk_signals", lambda: 0)

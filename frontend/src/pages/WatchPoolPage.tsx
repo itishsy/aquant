@@ -183,6 +183,7 @@ export function WatchPoolPage() {
       trading_system: item.trading_system || "uptrend",
       entry_reason: item.entry_reason || item.reason || "",
       key_observe_price: item.key_observe_price != null ? String(item.key_observe_price) : "",
+      auto_remove_price: item.auto_remove_price != null ? String(item.auto_remove_price) : "",
       invalid_condition: item.invalid_condition || "",
       risk_tags: item.risk_tags || [],
       user_remark: item.user_remark || item.remark || "",
@@ -227,6 +228,7 @@ export function WatchPoolPage() {
       trading_system: editing.trading_system,
       entry_reason: editing.entry_reason,
       key_observe_price: Number(editing.key_observe_price),
+      auto_remove_price: editing.auto_remove_price ? Number(editing.auto_remove_price) : null,
       invalid_condition: editing.invalid_condition,
       risk_tags: editing.risk_tags,
       user_remark: editing.user_remark,
@@ -300,10 +302,13 @@ export function WatchPoolPage() {
   }
 
   async function removeWatch(item: any) {
-    const confirmed = await Dialog.confirm({ content: `确认剔除 ${item.stock_name}？历史记录会保留。`, confirmText: "确认剔除", cancelText: "取消" });
+    const confirmed = await Dialog.confirm({ content: `确认剔除 ${item.stock_name}？该观察记录会从观察表物理删除，不再保留。`, confirmText: "确认剔除", cancelText: "取消" });
     if (!confirmed) return;
-    await apiDelete(`/h5/watch-pool/${item.watch_id}`);
+    await apiDelete(`/h5/watch-pool/${item.watch_id}/hard-delete`);
     Toast.show({ content: "已剔除" });
+    setItems((prev) => prev.filter((row) => row.watch_id !== item.watch_id));
+    setWatchDetail(null);
+    setEditing(null);
     load();
   }
 
@@ -596,6 +601,7 @@ export function WatchPoolPage() {
               {watchDetail.entry_reason && <div><strong style={{ color: "#333" }}>入选理由：</strong>{watchDetail.entry_reason}</div>}
               {watchDetail.reason && <div><strong style={{ color: "#333" }}>原始原因：</strong>{watchDetail.reason}</div>}
               {watchDetail.key_observe_price != null && <div><strong style={{ color: "#333" }}>关键观察价：</strong>{watchDetail.key_observe_price}</div>}
+              {watchDetail.auto_remove_price != null && <div><strong style={{ color: "#333" }}>自动剔除价：</strong>{watchDetail.auto_remove_price}</div>}
               {watchDetail.invalid_condition && <div><strong style={{ color: "#333" }}>失效条件：</strong>{watchDetail.invalid_condition}</div>}
               {watchDetail.entry_price && <div><strong style={{ color: "#333" }}>入选价：</strong>{watchDetail.entry_price}</div>}
               {watchDetail.risk_tags?.length > 0 && <div><strong style={{ color: "#333" }}>风险标签：</strong>{watchDetail.risk_tags.join(", ")}</div>}
@@ -616,6 +622,7 @@ export function WatchPoolPage() {
             <Selector options={tradingSystemOptions.filter((item) => item.value)} value={[editing.trading_system]} onChange={(value) => setEditing({ ...editing, trading_system: value[0] })} />
             <TextArea value={editing.entry_reason} rows={3} placeholder="入选理由" onChange={(value) => setEditing({ ...editing, entry_reason: value })} />
             <Input type="number" value={editing.key_observe_price} placeholder="关键观察价" onChange={(value) => setEditing({ ...editing, key_observe_price: value })} />
+            <Input type="number" value={editing.auto_remove_price} placeholder="自动剔除价，跌破 1% 后软剔除" onChange={(value) => setEditing({ ...editing, auto_remove_price: value })} />
             <TextArea value={editing.invalid_condition} rows={3} placeholder="失效条件" onChange={(value) => setEditing({ ...editing, invalid_condition: value })} />
             <div><span style={{ color: "#98a2b3", fontSize: 11, fontWeight: 700 }}>风险标签</span></div>
             <Selector multiple options={Object.entries(riskTagLabels).map(([value, label]) => ({ value, label }))} value={editing.risk_tags} onChange={(value) => setEditing({ ...editing, risk_tags: value as string[] })} />
@@ -625,6 +632,7 @@ export function WatchPoolPage() {
               <Button block onClick={() => setEditing(null)}>取消</Button>
               <Button block color="primary" onClick={saveEdit}>保存</Button>
             </div>
+            <Button block color="danger" fill="outline" onClick={() => removeWatch(editing)}>剔除</Button>
           </div>
         )}
       </Popup>

@@ -192,6 +192,7 @@ def run_config_task(task_id: int, db: Session = Depends(get_db), admin=Depends(r
         "update_watch_daily_kline": svc.update_watch_daily_kline,
         "update_watch_15m_kline": svc.update_watch_15m_kline,
         "scan_watch_signals": svc.scan_watch_signals,
+        "auto_remove_watch_pool": svc.auto_remove_watch_pool,
         "scan_trade_risk_signals": svc.scan_trade_risk_signals,
         "generate_weekly_review_form": svc.generate_weekly_review_form,
         "generate_monthly_review_form": svc.generate_monthly_review_form,

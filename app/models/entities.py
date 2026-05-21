@@ -274,6 +274,7 @@ class WatchPool(TimestampMixin, SystemBase):
     trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
     system_recommendation: Mapped[str | None] = mapped_column(String(32), nullable=True)
     key_observe_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    auto_remove_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     invalid_condition: Mapped[str] = mapped_column(Text, default="")
     risk_tags: Mapped[list] = mapped_column(JSON, default=list)
     signal_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
