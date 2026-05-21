@@ -88,22 +88,38 @@ class KlineService:
             MktStockKlineDaily.stock_code == stock_code,
             MktStockKlineDaily.source == "cls",
         )
-        if not cls_query.first():
+        newest = (
+            self.db.query(MktStockKlineDaily)
+            .filter(MktStockKlineDaily.stock_code == stock_code)
+            .order_by(MktStockKlineDaily.trade_date.desc())
+            .first()
+        )
+        if not newest:
             self.collect_daily_kline(stock_code, today - timedelta(days=limit * 2), today)
-        query = self.db.query(MktStockKlineDaily).filter(MktStockKlineDaily.stock_code == stock_code)
-        if cls_query.first():
-            query = query.filter(MktStockKlineDaily.source == "cls")
+        elif newest.trade_date and newest.trade_date < today:
+            self.collect_daily_kline(stock_code, newest.trade_date + timedelta(days=1), today)
         return (
-            query
+            self.db.query(MktStockKlineDaily)
+            .filter(MktStockKlineDaily.stock_code == stock_code)
             .order_by(MktStockKlineDaily.trade_date.desc())
             .limit(limit)
             .all()[::-1]
         )
 
     def get_15m_kline(self, stock_code: str, limit: int = 200) -> list[MktStockKline15m]:
-        if not self.db.query(MktStockKline15m).filter(MktStockKline15m.stock_code == stock_code).first():
-            session_day = datetime.utcnow().date()
+        newest = (
+            self.db.query(MktStockKline15m)
+            .filter(MktStockKline15m.stock_code == stock_code)
+            .order_by(MktStockKline15m.kline_time.desc())
+            .first()
+        )
+        session_day = datetime.utcnow().date()
+        if not newest:
             start_time = datetime.combine(session_day, time(9, 30))
+            end_time = datetime.combine(session_day, time(15, 0))
+            self.collect_15m_kline(stock_code, start_time, end_time)
+        elif newest.kline_time and newest.kline_time.date() < session_day:
+            start_time = datetime.combine(newest.kline_time.date(), time(9, 30)) + timedelta(days=1)
             end_time = datetime.combine(session_day, time(15, 0))
             self.collect_15m_kline(stock_code, start_time, end_time)
         return (

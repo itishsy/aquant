@@ -51,17 +51,19 @@ export function SettingsPage() {
     }
   }
 
-  async function runTask(task: any) {
-    setRunningTaskId(task.task_id);
-    try {
-      const res: any = await apiPost(`/h5/me/tasks/${task.task_id}/run`);
-      Toast.show({ content: `${task.task_label || task.task_name}：${res.log?.run_status || "done"}` });
-      load();
-    } catch {
-      Toast.show({ content: "任务执行失败" });
-    } finally {
-      setRunningTaskId(null);
+  async function runGroup(group: any) {
+    setRunningTaskId(group.module);
+    const tasks = (group.tasks || []).filter((t: any) => t.enabled);
+    let ok = 0; let fail = 0;
+    for (const task of tasks) {
+      try {
+        await apiPost(`/h5/me/tasks/${task.task_id}/run`);
+        ok++;
+      } catch { fail++; }
     }
+    Toast.show({ content: `${group.label}：完成 ${ok}${fail ? ` / 失败 ${fail}` : ""}` });
+    setRunningTaskId(null);
+    load();
   }
 
   function fmtTime(iso?: string) {
@@ -126,34 +128,39 @@ export function SettingsPage() {
                 </p>
               </div>
               <div style={{ display: "grid", gap: 12 }}>
-                {(taskData?.groups || []).map((group: any) => (
-                  <div key={group.module} style={{ display: "grid", gap: 8 }}>
-                    <div style={{ color: "#22375c", fontSize: 13, fontWeight: 800 }}>{group.label}</div>
+                {(taskData?.groups || []).map((group: any) => {
+                  const hasRunning = (group.tasks || []).some((t: any) => t.running);
+                  return (
+                  <div key={group.module} style={{ borderRadius: 14, background: "#f7f9ff", padding: 12, display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ color: "#22375c", fontSize: 14, fontWeight: 800 }}>{group.label}</div>
+                        <p style={{ margin: "2px 0 0", color: "#7b879c", fontSize: 12 }}>
+                          {(group.tasks || []).length} 个子任务 · 启用 {group.tasks?.filter((t: any) => t.enabled).length || 0}
+                        </p>
+                      </div>
+                      <Button size="small" fill="outline"
+                        loading={runningTaskId === group.module}
+                        disabled={hasRunning || runningTaskId != null}
+                        onClick={() => runGroup(group)}>
+                        执行
+                      </Button>
+                    </div>
                     {(group.tasks || []).map((task: any) => {
                       const log = task.latest_log || {};
                       const currentStatus = task.running ? "running" : log.run_status;
+                      const successTime = log.run_status === "success" ? fmtTime(log.finished_at) : null;
                       return (
-                        <div key={task.task_id} style={{ borderRadius: 12, background: "#f7f9ff", padding: 10, display: "grid", gap: 7 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                            <div style={{ minWidth: 0 }}>
-                              <strong style={{ display: "block", color: "#17213b", fontSize: 14 }}>{task.task_label || task.task_name}</strong>
-                              <p style={{ margin: "3px 0 0", color: "#7b879c", fontSize: 12 }}>
-                                {task.enabled ? "已启用" : "已停用"} · 最近：{fmtTime(log.finished_at || log.started_at)}
-                              </p>
-                            </div>
-                            <span style={{ color: statusColor(currentStatus), fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>{statusText(currentStatus)}</span>
-                          </div>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                            <p style={{ margin: 0, color: "#98a2b3", fontSize: 12 }}>影响行数：{log.affected_rows ?? 0}{log.error_message ? ` / ${log.error_message}` : ""}</p>
-                            <Button size="mini" fill="outline" loading={runningTaskId === task.task_id} disabled={task.running} onClick={() => runTask(task)}>
-                              执行
-                            </Button>
-                          </div>
+                        <div key={task.task_id} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "center", padding: "4px 0", borderBottom: "1px solid #eee" }}>
+                          <span style={{ color: "#334" }}>{task.task_label || task.task_name}</span>
+                          <span style={{ color: statusColor(currentStatus), fontWeight: 700, fontSize: 11 }}>{statusText(currentStatus)}</span>
+                          <span style={{ color: "#aaa", fontSize: 11, minWidth: 75, textAlign: "right" }}>{successTime || "-"}</span>
                         </div>
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
