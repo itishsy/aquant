@@ -166,7 +166,17 @@ export function WatchPoolPage() {
   const todayNew = useMemo(() => items.filter((item) => String(item.created_at || "").slice(0, 10) === todayStr).length, [items, todayStr]);
   const todaySignals = useMemo(() => signals.filter((s) => (s.trigger_date || "").slice(0, 10) === todayStr).length, [signals, todayStr]);
 
-  function getWatchPriceInfo(item: any) {
+  function Field({ label, value }: { label: string; value?: any }) {
+  if (value == null || value === "" || value === "-") return null;
+  return (
+    <div style={{ fontSize: 13 }}>
+      <span style={{ color: "#888" }}>{label}</span>
+      <span style={{ color: "#334", marginLeft: 4 }}>{value}</span>
+    </div>
+  );
+}
+
+function getWatchPriceInfo(item: any) {
     const price = item?.price ?? item?.last_price;
     const change = item?.change_pct;
     if (price != null && change != null) {
@@ -224,20 +234,24 @@ export function WatchPoolPage() {
       Toast.show({ content: "请填写调整原因" });
       return;
     }
-    const updated = await apiPut<any>(`/h5/watch-pool/${editing.watch_id}`, {
-      trading_system: editing.trading_system,
-      entry_reason: editing.entry_reason,
-      key_observe_price: Number(editing.key_observe_price),
-      auto_remove_price: editing.auto_remove_price ? Number(editing.auto_remove_price) : null,
-      invalid_condition: editing.invalid_condition,
-      risk_tags: editing.risk_tags,
-      user_remark: editing.user_remark,
-      adjust_reason: editing.adjust_reason,
-    });
-    Toast.show({ content: "观察参数已调整" });
-    setEditing(null);
-    setWatchDetail(updated);
-    setItems((prev) => prev.map((item) => item.watch_id === updated.watch_id ? updated : item));
+    try {
+      const updated = await apiPut<any>(`/h5/watch-pool/${editing.watch_id}`, {
+        trading_system: editing.trading_system,
+        entry_reason: editing.entry_reason,
+        key_observe_price: editing.key_observe_price && editing.key_observe_price.trim() ? Number(editing.key_observe_price) : null,
+        auto_remove_price: editing.auto_remove_price && editing.auto_remove_price.trim() ? Number(editing.auto_remove_price) : null,
+        invalid_condition: editing.invalid_condition,
+        risk_tags: editing.risk_tags,
+        user_remark: editing.user_remark,
+        adjust_reason: editing.adjust_reason,
+      });
+      Toast.show({ content: "观察参数已调整" });
+      setEditing(null);
+      setWatchDetail(updated);
+      setItems((prev) => prev.map((item) => item.watch_id === updated.watch_id ? updated : item));
+    } catch {
+      Toast.show({ content: "保存失败，请重试" });
+    }
   }
 
   async function confirmBuy() {
@@ -585,54 +599,114 @@ export function WatchPoolPage() {
 
       <Popup visible={Boolean(watchDetail)} onMaskClick={() => { setWatchDetail(null); setEditing(null); }} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: "86vh", overflowY: "auto" }}>
         {watchDetail && !(editing && editing.watch_id === watchDetail.watch_id) && (
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: 18 }}>{watchDetail.stock_name} <span style={{ fontSize: 13, color: "#888" }}>{watchDetail.stock_code}</span></h3>
-              <p style={{ margin: "4px 0 0", color: "#72819b", fontSize: 13 }}>状态：{watchDetail.status || "观察中"} · {watchDetail.monitor_enabled !== false ? "监控开启" : "已暂停"}</p>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18 }}>{watchDetail.stock_name}</h3>
+                <p style={{ margin: "2px 0 0", color: "#888", fontSize: 13 }}>{watchDetail.stock_code}</p>
+              </div>
+              <span style={{
+                borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 700,
+                background: watchDetail.monitor_enabled !== false ? "#eefaf4" : "#fef3f2",
+                color: watchDetail.monitor_enabled !== false ? "#00a870" : "#e34d59",
+              }}>{watchDetail.monitor_enabled !== false ? "监控中" : "已暂停"}</span>
             </div>
-            <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#555" }}>
-              {watchDetail.sector_name && <div><strong style={{ color: "#333" }}>板块：</strong>{watchDetail.sector_name}</div>}
-              <div><strong style={{ color: "#333" }}>标签：</strong>{(watchDetail.labels || []).join(" / ") || "-"}</div>
-              <div><strong style={{ color: "#333" }}>交易体系：</strong>{watchDetail.trading_system || "-"}</div>
-              <div><strong style={{ color: "#333" }}>操作策略：</strong>{(watchDetail.operation_strategies || []).join(",") || "-"}</div>
-              <div><strong style={{ color: "#333" }}>买点类型：</strong>{(watchDetail.buy_point_types || []).join(",") || "-"}</div>
-              <div><strong style={{ color: "#333" }}>入选来源：</strong>{watchDetail.entry_source || "手动"}</div>
-              <div><strong style={{ color: "#333" }}>入选时间：</strong>{String(watchDetail.created_at || "").slice(0, 10) || "-"}</div>
-              {watchDetail.entry_reason && <div><strong style={{ color: "#333" }}>入选理由：</strong>{watchDetail.entry_reason}</div>}
-              {watchDetail.reason && <div><strong style={{ color: "#333" }}>原始原因：</strong>{watchDetail.reason}</div>}
-              {watchDetail.key_observe_price != null && <div><strong style={{ color: "#333" }}>关键观察价：</strong>{watchDetail.key_observe_price}</div>}
-              {watchDetail.auto_remove_price != null && <div><strong style={{ color: "#333" }}>自动剔除价：</strong>{watchDetail.auto_remove_price}</div>}
-              {watchDetail.invalid_condition && <div><strong style={{ color: "#333" }}>失效条件：</strong>{watchDetail.invalid_condition}</div>}
-              {watchDetail.entry_price && <div><strong style={{ color: "#333" }}>入选价：</strong>{watchDetail.entry_price}</div>}
-              {watchDetail.risk_tags?.length > 0 && <div><strong style={{ color: "#333" }}>风险标签：</strong>{watchDetail.risk_tags.join(", ")}</div>}
-              {watchDetail.remark && <div><strong style={{ color: "#333" }}>备注：</strong>{watchDetail.remark}</div>}
-              {watchDetail.user_remark && <div><strong style={{ color: "#333" }}>用户备注：</strong>{watchDetail.user_remark}</div>}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
+              <Field label="板块" value={watchDetail.sector_name} />
+              <Field label="标签" value={(watchDetail.labels || []).join(" / ")} />
+              <Field label="交易体系" value={watchDetail.trading_system} />
+              <Field label="入选来源" value={watchDetail.entry_source || "手动"} />
+              <Field label="入选时间" value={String(watchDetail.created_at || "").slice(0, 10)} />
+              <Field label="操作策略" value={(watchDetail.operation_strategies || []).join(",")} />
+              <Field label="买点类型" value={(watchDetail.buy_point_types || []).join(",")} />
+              {watchDetail.entry_price != null && <Field label="入选价" value={watchDetail.entry_price} />}
+              {watchDetail.key_observe_price != null && <Field label="关键观察价" value={`${watchDetail.key_observe_price}`} />}
+              {watchDetail.auto_remove_price != null && <Field label="自动剔除价" value={`${watchDetail.auto_remove_price}`} />}
             </div>
-            <p style={{ fontSize: 12, color: "#888" }}>仅作为交易辅助，请结合个人交易规则确认。</p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Button block fill="outline" onClick={() => openEdit(watchDetail)}>编辑</Button>
-              <Button block fill="outline" onClick={() => { setWatchDetail(null); setEditing(null); }}>关闭</Button>
+
+            {(watchDetail.entry_reason || watchDetail.invalid_condition || watchDetail.user_remark || watchDetail.remark) && (
+              <div style={{ borderRadius: 12, background: "#f7f9ff", padding: 12, display: "grid", gap: 6 }}>
+                {watchDetail.entry_reason && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>入选理由：</span><span style={{ color: "#334" }}>{watchDetail.entry_reason}</span></div>}
+                {watchDetail.invalid_condition && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>失效条件：</span><span style={{ color: "#334" }}>{watchDetail.invalid_condition}</span></div>}
+                {watchDetail.user_remark && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>用户备注：</span><span style={{ color: "#334" }}>{watchDetail.user_remark}</span></div>}
+                {watchDetail.remark && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>备注：</span><span style={{ color: "#334" }}>{watchDetail.remark}</span></div>}
+              </div>
+            )}
+
+            <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>仅作为交易辅助，请结合个人交易规则确认。</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              <Button block fill="outline" size="small" onClick={() => openEdit(watchDetail)}>编辑</Button>
+              <Button block fill="outline" size="small" onClick={() => {
+                const code = (watchDetail.stock_code || "").trim().toUpperCase();
+                const m = code.match(/^(SH|SZ|BJ)\d{6}$/) ? code : code.match(/^(\d{6})\.(SH|SZ|BJ)$/);
+                const xq = m ? (typeof m === "string" ? m : `${m[2]}${m[1]}`) : code;
+                window.open(`https://xueqiu.com/S/${xq}`, "_blank");
+              }}>雪球</Button>
+              <Button block fill="outline" size="small" onClick={() => { setWatchDetail(null); setEditing(null); }}>关闭</Button>
             </div>
           </div>
         )}
 
         {watchDetail && (editing && editing.watch_id === watchDetail.watch_id) && editing && (
-          <div style={{ display: "grid", gap: 12 }}>
-            <div><h3 style={{ margin: 0 }}>调整观察参数</h3><p style={{ margin: "4px 0 0", color: "#72819b" }}>{editing.stock_name} {editing.stock_code}</p></div>
-            <Selector options={tradingSystemOptions.filter((item) => item.value)} value={[editing.trading_system]} onChange={(value) => setEditing({ ...editing, trading_system: value[0] })} />
-            <TextArea value={editing.entry_reason} rows={3} placeholder="入选理由" onChange={(value) => setEditing({ ...editing, entry_reason: value })} />
-            <Input type="number" value={editing.key_observe_price} placeholder="关键观察价" onChange={(value) => setEditing({ ...editing, key_observe_price: value })} />
-            <Input type="number" value={editing.auto_remove_price} placeholder="自动剔除价，跌破 1% 后软剔除" onChange={(value) => setEditing({ ...editing, auto_remove_price: value })} />
-            <TextArea value={editing.invalid_condition} rows={3} placeholder="失效条件" onChange={(value) => setEditing({ ...editing, invalid_condition: value })} />
-            <div><span style={{ color: "#98a2b3", fontSize: 11, fontWeight: 700 }}>风险标签</span></div>
-            <Selector multiple options={Object.entries(riskTagLabels).map(([value, label]) => ({ value, label }))} value={editing.risk_tags} onChange={(value) => setEditing({ ...editing, risk_tags: value as string[] })} />
-            <TextArea value={editing.user_remark} rows={3} placeholder="用户备注" onChange={(value) => setEditing({ ...editing, user_remark: value })} />
-            <TextArea value={editing.adjust_reason} rows={2} placeholder="本次调整原因，必填" onChange={(value) => setEditing({ ...editing, adjust_reason: value })} />
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17 }}>调整观察参数</h3>
+                <p style={{ margin: "2px 0 0", color: "#888", fontSize: 13 }}>{editing.stock_name} {editing.stock_code}</p>
+              </div>
+            </div>
+
+            <div style={{ borderRadius: 12, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+              <div style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>交易体系</div>
+              <Selector options={tradingSystemOptions.filter((item) => item.value)} value={[editing.trading_system]} onChange={(value) => setEditing({ ...editing, trading_system: value[0] })} />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>关键观察价</span>
+                <Input type="number" value={editing.key_observe_price} placeholder="12.00" onChange={(value) => setEditing({ ...editing, key_observe_price: value })} />
+              </div>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>自动剔除价</span>
+                <Input type="number" value={editing.auto_remove_price} placeholder="跌破后软剔除" onChange={(value) => setEditing({ ...editing, auto_remove_price: value })} />
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>入选理由</span>
+                <TextArea value={editing.entry_reason} rows={2} placeholder="为什么值得进入观察池" onChange={(value) => setEditing({ ...editing, entry_reason: value })} />
+              </div>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>失效条件</span>
+                <TextArea value={editing.invalid_condition} rows={2} placeholder="什么情况下不再观察" onChange={(value) => setEditing({ ...editing, invalid_condition: value })} />
+              </div>
+            </div>
+
+            <div style={{ borderRadius: 12, background: "#f7f9ff", padding: 12, display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>风险标签</span>
+                <Selector multiple options={Object.entries(riskTagLabels).map(([value, label]) => ({ value, label }))} value={editing.risk_tags} onChange={(value) => setEditing({ ...editing, risk_tags: value as string[] })} />
+              </div>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>用户备注</span>
+                <TextArea value={editing.user_remark} rows={2} placeholder="记录观察要点或提醒" onChange={(value) => setEditing({ ...editing, user_remark: value })} />
+              </div>
+            </div>
+
+            <div style={{ borderRadius: 12, background: "#fff8e8", padding: "10px 12px" }}>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: "#c0392b", fontSize: 12, fontWeight: 700 }}>本次调整原因 *</span>
+                <TextArea value={editing.adjust_reason} rows={2} placeholder="必填，说明为什么调整参数" onChange={(value) => setEditing({ ...editing, adjust_reason: value })} />
+              </div>
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Button block onClick={() => setEditing(null)}>取消</Button>
               <Button block color="primary" onClick={saveEdit}>保存</Button>
             </div>
-            <Button block color="danger" fill="outline" onClick={() => removeWatch(editing)}>剔除</Button>
+            <Button block color="danger" fill="outline" onClick={() => removeWatch(editing)} size="small">剔除</Button>
           </div>
         )}
       </Popup>

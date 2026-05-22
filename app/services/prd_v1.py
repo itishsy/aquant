@@ -960,12 +960,11 @@ class PrdWatchPoolService:
         if "invalid_condition" in payload:
             entity.invalid_condition = payload["invalid_condition"]
         if "user_remark" in payload or "remark" in payload:
-            entity.user_remark = payload.get("user_remark") or payload.get("remark")
-            entity.remark = entity.user_remark
-        if "status" in payload or "status" in payload:
-            status = payload.get("status") or payload.get("status")
-            entity.status = status
-            entity.status = status
+            val = payload.get("user_remark") or payload.get("remark") or ""
+            entity.user_remark = val
+            entity.remark = val
+        if "status" in payload:
+            entity.status = payload["status"]
 
     def _safe_payload(self, payload: dict) -> dict:
         return {key: value for key, value in payload.items() if key not in {"password", "token", "cookie", "secret"}}

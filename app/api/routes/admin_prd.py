@@ -18,6 +18,10 @@ from app.models import (
     ConfigStrategy,
     ConfigTask,
     ConfigTaskLog,
+    WatchPool,
+    WatchSignal,
+    WatchTrade,
+    WatchTradeExecution,
 )
 from datetime import date
 
@@ -376,3 +380,196 @@ def collect_all_market_data(db: Session = Depends(get_db), admin=Depends(require
         log = fn(today)
         results[task_name] = {"status": log.run_status, "affected_rows": log.affected_rows}
     return ok({"collect_time": datetime.utcnow().isoformat(), "results": results})
+
+
+# ── Admin Watch / Signal / Trade Management ──────────────────────────
+
+
+def _watch_row(row):
+    return {
+        "watch_id": row.id, "stock_code": row.stock_code, "stock_name": row.stock_name,
+        "status": row.status, "trading_system": row.trading_system,
+        "key_observe_price": row.key_observe_price, "auto_remove_price": row.auto_remove_price,
+        "invalid_condition": row.invalid_condition, "entry_reason": row.entry_reason,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _signal_row(row):
+    return {
+        "signal_id": row.signal_id, "watch_id": row.watch_id,
+        "stock_code": row.stock_code, "stock_name": row.stock_name,
+        "signal_type": row.signal_type, "buy_point_type": row.buy_point_type,
+        "strategy_name": row.strategy_name, "signal_level": row.signal_level,
+        "signal_status": row.signal_status, "trading_system": row.trading_system,
+        "trigger_price": row.trigger_price, "trigger_time": row.trigger_time.isoformat() if row.trigger_time else None,
+        "stop_loss_price": row.stop_loss_price, "target_price": row.target_price,
+        "trigger_reason": row.trigger_reason, "risk_desc": row.risk_desc,
+    }
+
+
+def _trade_row(row):
+    return {
+        "trade_id": row.id, "signal_id": row.signal_id, "watch_id": row.watch_id,
+        "stock_code": row.stock_code, "stock_name": row.stock_name,
+        "first_buy_price": row.first_buy_price, "total_buy_amount": row.total_buy_amount,
+        "remaining_amount": row.remaining_amount, "stop_loss_price": row.stop_loss_price,
+        "target_price": row.target_price, "trade_status": row.trade_status,
+        "pnl_amount": row.pnl_amount, "holding_days": row.holding_days,
+    }
+
+
+# ── Watch Pool ──
+
+@router.get("/watch-pool")
+def admin_list_watch(db: Session = Depends(get_db), admin=Depends(require_admin)):
+    rows = db.query(WatchPool).order_by(WatchPool.id.desc()).limit(200).all()
+    return ok([_watch_row(r) for r in rows])
+
+
+@router.post("/watch-pool")
+def admin_add_watch(payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    from app.services.prd_v1 import PrdWatchPoolService
+    from app.services.normalization import normalize_stock_code
+    code = normalize_stock_code(payload["stock_code"])
+    existing = db.query(WatchPool).filter(WatchPool.stock_code == code, WatchPool.active.is_(True)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="该股票已在观察池中")
+    svc = PrdWatchPoolService(db)
+    row = svc.add_watch({
+        "stock_code": code,
+        "stock_name": payload["stock_name"],
+        "trading_system": payload.get("trading_system", "uptrend"),
+        "entry_reason": payload.get("entry_reason", "后台手动添加"),
+        "reason": payload.get("entry_reason", "后台手动添加"),
+        "key_observe_price": payload.get("key_observe_price"),
+        "auto_remove_price": payload.get("auto_remove_price"),
+        "invalid_condition": payload.get("invalid_condition", ""),
+        "labels": payload.get("labels", ["manual"]),
+    })
+    return ok(_watch_row(row))
+
+
+# ── Signals ──
+
+@router.get("/watch-signals")
+def admin_list_signals(db: Session = Depends(get_db), admin=Depends(require_admin)):
+    rows = db.query(WatchSignal).order_by(WatchSignal.signal_id.desc()).limit(100).all()
+    return ok([_signal_row(r) for r in rows])
+
+
+@router.get("/watch-pool/{watch_id}/signals")
+def admin_watch_signals(watch_id: int, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    rows = db.query(WatchSignal).filter(WatchSignal.watch_id == watch_id).order_by(WatchSignal.signal_id.desc()).all()
+    return ok([_signal_row(r) for r in rows])
+
+
+@router.post("/watch-pool/{watch_id}/signals")
+def admin_add_signal(watch_id: int, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    watch = db.query(WatchPool).filter(WatchPool.id == watch_id).first()
+    if not watch:
+        raise HTTPException(status_code=404, detail="watch not found")
+
+    now = datetime.utcnow()
+    buy_confirmed = payload.get("buy_point_confirmed", False)
+    trigger_signature = payload.get("trigger_signature") or f"admin:{watch_id}:{payload.get('strategy_name', 'manual')}:{now.isoformat()}"
+
+    signal = WatchSignal(
+        watch_id=watch.id,
+        stock_code=watch.stock_code,
+        stock_name=watch.stock_name,
+        signal_type=payload.get("signal_type", "buy"),
+        buy_point_type=payload.get("buy_point_type", ""),
+        strategy_name=payload.get("strategy_name", "manual_admin_signal"),
+        signal_level=payload.get("signal_level", "A"),
+        trading_system=watch.trading_system,
+        trigger_time=now,
+        trigger_date=now.date(),
+        trigger_price=payload.get("trigger_price"),
+        trigger_reason=payload.get("trigger_reason", "后台手动添加信号"),
+        risk_desc=payload.get("risk_desc", "仅作为交易辅助"),
+        stop_loss_price=payload.get("stop_loss_price"),
+        target_price=payload.get("target_price"),
+        buy_point_confirmed=buy_confirmed,
+        buy_point_confirm_time=now if buy_confirmed else None,
+        buy_point_confirm_price=(payload.get("trigger_price") if buy_confirmed else None),
+        signal_status="buy_pending_confirm" if buy_confirmed else "signal_generated",
+        user_action="pending",
+        trigger_signature=trigger_signature,
+        raw_snapshot={},
+    )
+    db.add(signal)
+    db.flush()
+
+    watch.status = "buy_pending_confirm" if buy_confirmed else "signal_generated"
+    watch.latest_signal_id = signal.signal_id
+    db.commit()
+    db.refresh(signal)
+    return ok(_signal_row(signal))
+
+
+# ── Trades ──
+
+@router.get("/watch-trades")
+def admin_list_trades(db: Session = Depends(get_db), admin=Depends(require_admin)):
+    rows = db.query(WatchTrade).order_by(WatchTrade.id.desc()).limit(100).all()
+    return ok([_trade_row(r) for r in rows])
+
+
+@router.post("/watch-signals/{signal_id}/create-trade")
+def admin_create_trade(signal_id: int, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    signal = db.query(WatchSignal).filter(WatchSignal.signal_id == signal_id).first()
+    if not signal:
+        raise HTTPException(status_code=404, detail="signal not found")
+
+    existing = db.query(WatchTrade).filter(WatchTrade.signal_id == signal_id).first()
+    if existing:
+        return ok(_trade_row(existing), message="signal already has a trade")
+
+    now = datetime.utcnow()
+    buy_price = float(payload["buy_price"])
+    amount = float(payload.get("amount", 0))
+
+    trade = WatchTrade(
+        signal_id=signal.signal_id,
+        watch_id=signal.watch_id,
+        stock_code=signal.stock_code,
+        stock_name=signal.stock_name,
+        trading_system=signal.trading_system,
+        buy_point_type=signal.buy_point_type,
+        first_buy_time=now,
+        first_buy_price=buy_price,
+        total_buy_amount=amount,
+        average_buy_price=buy_price,
+        remaining_amount=amount,
+        position_ratio=payload.get("position_ratio"),
+        stop_loss_price=payload.get("stop_loss_price"),
+        target_price=payload.get("target_price"),
+        buy_reason=payload.get("buy_reason", "后台手动确认交易"),
+        trade_plan=payload.get("trade_plan", ""),
+        trade_status="open",
+    )
+    db.add(trade)
+    db.flush()
+
+    db.add(WatchTradeExecution(
+        trade_id=trade.id, signal_id=signal.signal_id, watch_id=signal.watch_id,
+        stock_code=signal.stock_code, stock_name=signal.stock_name,
+        execution_type="buy", execution_time=now, execution_price=buy_price,
+        execution_amount=amount, execution_reason=payload.get("buy_reason", "后台手动确认交易"),
+    ))
+
+    signal.signal_status = "confirmed_buy"
+    signal.user_action = "confirmed_buy"
+    signal.handled_at = now
+    signal.related_trade_id = trade.id
+
+    watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first()
+    if watch:
+        watch.status = "trading"
+        watch.monitor_enabled = False
+        watch.signal_enabled = False
+
+    db.commit()
+    db.refresh(trade)
+    return ok(_trade_row(trade))
