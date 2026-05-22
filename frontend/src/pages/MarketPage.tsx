@@ -476,19 +476,17 @@ export function MarketPage() {
   }
 
   useEffect(() => {
-    if (queryDate) return;
+    if (queryDate) { setTradeDate(queryDate); return; }
     apiGet<string[]>("/h5/market/trading-dates")
       .then((dates) => {
         const latestDate = (dates || []).slice().sort().reverse()[0] || todayString();
         setTradeDate(latestDate);
-        navigate(`/market?trade_date=${latestDate}`, { replace: true });
       })
       .catch(() => {
-        const fallbackDate = todayString();
-        setTradeDate(fallbackDate);
-        navigate(`/market?trade_date=${fallbackDate}`, { replace: true });
+        setTradeDate(todayString());
       });
-  }, [navigate, queryDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!tradeDate) return;
@@ -975,7 +973,7 @@ export function MarketPage() {
                 ))}
               </div>
               {conceptDescription && (
-                <div style={{ padding: "6px 10px", borderRadius: 10, background: "#f4f6fb", fontSize: 12, color: "#64748b", lineHeight: 1.5, marginBottom: 4 }}>{conceptDescription}</div>
+                <div style={{ padding: "6px 10px", borderRadius: 10, background: "#fff4f4", fontSize: 12, color: "#c0392b", lineHeight: 1.5, marginBottom: 4 }}>{conceptDescription}</div>
               )}
               {!limitConcept && (
               <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 8 }}>
