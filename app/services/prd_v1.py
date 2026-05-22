@@ -132,6 +132,7 @@ class SeedService:
         ("collect_limit_up_daily", "market"),
         ("update_watch_daily_kline", "market"),
         ("update_watch_15m_kline", "market"),
+        ("update_watch_prices", "signal"),
         ("scan_watch_signals", "signal"),
         ("auto_remove_watch_pool", "signal"),
         ("scan_trade_risk_signals", "signal"),

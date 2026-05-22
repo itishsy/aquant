@@ -176,15 +176,6 @@ export function WatchPoolPage() {
   );
 }
 
-function getWatchPriceInfo(item: any) {
-    const price = item?.price ?? item?.last_price;
-    const change = item?.change_pct;
-    if (price != null && change != null) {
-      return <span style={{ fontSize: 12, color: "#888", marginLeft: 4, fontWeight: 400 }}>({price}, {change >= 0 ? "+" : ""}{change}%)</span>;
-    }
-    return null;
-  }
-
   function openEdit(item: any) {
     setEditing({
       watch_id: item.watch_id,
@@ -541,7 +532,7 @@ function getWatchPriceInfo(item: any) {
                 <div key={item.watch_id} className="row-card" style={{ padding: "10px 12px", cursor: "pointer" }}
                   onClick={() => setWatchDetail(item)}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong style={{ fontSize: 15 }}>{item.stock_name} {getWatchPriceInfo(item)}</strong>
+                    <strong style={{ fontSize: 15 }}><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} /></strong>
                     <p style={{ margin: "3px 0 0", fontSize: 12, color: "#888" }}>
                       {item.sector_name || "未分类"} · {String(item.created_at || "").slice(0, 10) || "-"}
                     </p>
@@ -639,8 +630,9 @@ function getWatchPriceInfo(item: any) {
               <Button block fill="outline" size="small" onClick={() => openEdit(watchDetail)}>编辑</Button>
               <Button block fill="outline" size="small" onClick={() => {
                 const code = (watchDetail.stock_code || "").trim().toUpperCase();
-                const m = code.match(/^(SH|SZ|BJ)\d{6}$/) ? code : code.match(/^(\d{6})\.(SH|SZ|BJ)$/);
-                const xq = m ? (typeof m === "string" ? m : `${m[2]}${m[1]}`) : code;
+                const marketPrefix = code.match(/^(SH|SZ|BJ)\d{6}$/);
+                const marketSuffix = code.match(/^(\d{6})\.(SH|SZ|BJ)$/);
+                const xq = marketPrefix ? code : (marketSuffix ? `${marketSuffix[2]}${marketSuffix[1]}` : code);
                 window.open(`https://xueqiu.com/S/${xq}`, "_blank");
               }}>雪球</Button>
               <Button block fill="outline" size="small" onClick={() => { setWatchDetail(null); setEditing(null); }}>关闭</Button>

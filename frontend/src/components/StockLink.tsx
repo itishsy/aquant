@@ -38,12 +38,13 @@ function formatStockLabel(stockName?: string | null, stockCode?: string | null, 
   const name = stockName || stockCode || "";
   const price = info?.last_price ?? info?.price ?? info?.trigger_price ?? info?.first_buy_price;
   const change = info?.change_pct ?? info?.change;
-  const priceText = price != null ? String(price) : "-";
+  const priceText = price != null && Number.isFinite(Number(price)) ? Number(price).toFixed(2) : "-";
   if (change != null) {
-    const sign = change >= 0 ? "+" : "";
-    return `${name} (${priceText}, ${sign}${change}%)`;
+    const changeNum = Number(change);
+    const changeText = Number.isFinite(changeNum) ? `${changeNum >= 0 ? "+" : ""}${changeNum.toFixed(2)}%` : "-";
+    return `${name}(${priceText}，${changeText})`;
   }
-  return `${name} (${priceText}, -%)`;
+  return `${name}(${priceText}，-%)`;
 }
 
 export function StockLink({ stockCode, stockName, showCode = true, className, info }: StockLinkProps) {
@@ -61,7 +62,7 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
   if (ctx.limit_time != null) {
     return (
       <>
-        <span className={className || "stock-link"} onClick={() => setVisible(true)} style={{ cursor: "pointer" }}>
+        <span className={className || "stock-link"} onClick={(event) => { event.stopPropagation(); setVisible(true); }} style={{ cursor: "pointer" }}>
           {label}
         </span>
         <StockDetailPopup visible={visible} stockCode={stockCode || ""} stockName={stockName || ""} info={ctx} onClose={() => setVisible(false)} />
@@ -71,7 +72,7 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
 
   return (
     <>
-      <span className={className || "stock-link"} onClick={() => setVisible(true)} style={{ cursor: "pointer" }}>
+      <span className={className || "stock-link"} onClick={(event) => { event.stopPropagation(); setVisible(true); }} style={{ cursor: "pointer" }}>
         {label}
       </span>
 

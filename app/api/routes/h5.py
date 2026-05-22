@@ -14,6 +14,7 @@ from app.models import (
     ConfigTask,
     ConfigTaskLog,
     MktDaily,
+    MktStockQuote,
     MyNotificationSetting,
     MyUserPreference,
     MyUserProfile,
@@ -35,8 +36,27 @@ from app.services.prd_v1 import ASSISTANT_NOTE, PrdMarketDataService, PrdWatchPo
 router = APIRouter(prefix="/h5", tags=["h5"])
 
 
-def _watch_dict(row: WatchPool) -> dict:
+def _quote_payload(row: MktStockQuote | None) -> dict:
+    if not row:
+        return {"last_price": None, "price": None, "change_pct": None, "price_updated_at": None}
     return {
+        "last_price": row.latest_price,
+        "price": row.latest_price,
+        "change_pct": row.change_pct,
+        "price_updated_at": row.source_update_time.isoformat() if row.source_update_time else None,
+    }
+
+
+def _quote_map(db: Session, stock_codes: list[str]) -> dict[str, MktStockQuote]:
+    codes = sorted({code for code in stock_codes if code})
+    if not codes:
+        return {}
+    rows = db.query(MktStockQuote).filter(MktStockQuote.stock_code.in_(codes)).all()
+    return {row.stock_code: row for row in rows}
+
+
+def _watch_dict(row: WatchPool, quote: MktStockQuote | None = None) -> dict:
+    data = {
         "watch_id": row.id,
         "stock_code": row.stock_code,
         "stock_name": row.stock_name,
@@ -63,10 +83,12 @@ def _watch_dict(row: WatchPool) -> dict:
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "risk_note": ASSISTANT_NOTE,
     }
+    data.update(_quote_payload(quote))
+    return data
 
 
-def _signal_dict(row: WatchSignal) -> dict:
-    return {
+def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
+    data = {
         "signal_id": row.signal_id,
         "watch_id": row.watch_id,
         "stock_code": row.stock_code,
@@ -96,10 +118,12 @@ def _signal_dict(row: WatchSignal) -> dict:
         "trigger_signature": row.trigger_signature,
         "assistant_note": ASSISTANT_NOTE,
     }
+    data.update(_quote_payload(quote))
+    return data
 
 
-def _trade_dict(row: WatchTrade) -> dict:
-    return {
+def _trade_dict(row: WatchTrade, quote: MktStockQuote | None = None) -> dict:
+    data = {
         "trade_id": row.id,
         "signal_id": row.signal_id,
         "watch_id": row.watch_id,
@@ -126,6 +150,8 @@ def _trade_dict(row: WatchTrade) -> dict:
         "closed_at": row.closed_at,
         "assistant_note": ASSISTANT_NOTE,
     }
+    data.update(_quote_payload(quote))
+    return data
 
 
 def _execution_dict(row: WatchTradeExecution) -> dict:
@@ -169,6 +195,7 @@ TASK_LABELS = {
     "collect_limit_up_daily": "涨停数据采集",
     "update_watch_daily_kline": "自选日 K 更新",
     "update_watch_15m_kline": "自选 15 分钟 K 更新",
+    "update_watch_prices": "自选价格更新",
     "scan_watch_signals": "观察信号扫描",
     "auto_remove_watch_pool": "自动剔除",
     "scan_trade_risk_signals": "持仓风险扫描",
@@ -303,7 +330,9 @@ def list_watch_pool(
     if keyword:
         like = f"%{keyword}%"
         query = query.filter(or_(WatchPool.stock_code.ilike(like), WatchPool.stock_name.ilike(like), WatchPool.entry_reason.ilike(like)))
-    return ok([_watch_dict(row) for row in query.order_by(WatchPool.created_at.desc()).all()])
+    rows = query.order_by(WatchPool.created_at.desc()).all()
+    quotes = _quote_map(db, [row.stock_code for row in rows])
+    return ok([_watch_dict(row, quotes.get(row.stock_code)) for row in rows])
 
 
 @router.get("/watch-pool/summary")
@@ -313,13 +342,15 @@ def watch_summary(db: Session = Depends(get_db), user=Depends(require_login)):
 
 @router.get("/watch-pool/{watch_id}")
 def get_watch(watch_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
-    return ok(_watch_dict(PrdWatchPoolService(db).get_watch(watch_id)))
+    row = PrdWatchPoolService(db).get_watch(watch_id)
+    return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
 
 
 @router.post("/watch-pool")
 def add_watch(payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
     try:
-        return ok(_watch_dict(PrdWatchPoolService(db).add_watch(payload)))
+        row = PrdWatchPoolService(db).add_watch(payload)
+        return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -329,7 +360,8 @@ def update_watch(watch_id: int, payload: dict, db: Session = Depends(get_db), us
     if not payload.get("adjust_reason"):
         raise HTTPException(status_code=400, detail="adjust_reason is required")
     try:
-        return ok(_watch_dict(PrdWatchPoolService(db).update_watch(watch_id, payload)))
+        row = PrdWatchPoolService(db).update_watch(watch_id, payload)
+        return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -405,13 +437,15 @@ def list_watch_signals(signal_type: str | None = None, db: Session = Depends(get
     if signal_type:
         query = query.filter(WatchSignal.signal_type == signal_type)
     rows = query.order_by(WatchSignal.trigger_time.desc()).limit(100).all()
-    return ok([_signal_dict(row) for row in rows])
+    quotes = _quote_map(db, [row.stock_code for row in rows])
+    return ok([_signal_dict(row, quotes.get(row.stock_code)) for row in rows])
 
 
 @router.get("/watch-signals/recent")
 def recent_watch_signals(limit: int = 10, db: Session = Depends(get_db), user=Depends(require_login)):
     rows = db.query(WatchSignal).order_by(WatchSignal.trigger_time.desc()).limit(min(limit, 50)).all()
-    return ok([_signal_dict(row) for row in rows])
+    quotes = _quote_map(db, [row.stock_code for row in rows])
+    return ok([_signal_dict(row, quotes.get(row.stock_code)) for row in rows])
 
 
 @router.get("/watch-signals/summary")
@@ -429,7 +463,7 @@ def get_watch_signal(signal_id: int, db: Session = Depends(get_db), user=Depends
     row = db.query(WatchSignal).filter(WatchSignal.signal_id == signal_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="signal not found")
-    return ok(_signal_dict(row))
+    return ok(_signal_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
 
 
 @router.post("/watch-signals/{signal_id}/ignore")
@@ -627,13 +661,16 @@ def list_watch_trades(status: str | None = None, db: Session = Depends(get_db), 
     query = db.query(WatchTrade)
     if status:
         query = query.filter(WatchTrade.trade_status == status)
-    return ok([_trade_dict(row) for row in query.order_by(WatchTrade.created_at.desc()).limit(100).all()])
+    rows = query.order_by(WatchTrade.created_at.desc()).limit(100).all()
+    quotes = _quote_map(db, [row.stock_code for row in rows])
+    return ok([_trade_dict(row, quotes.get(row.stock_code)) for row in rows])
 
 
 @router.get("/watch-trades/recent")
 def recent_watch_trades(limit: int = 10, db: Session = Depends(get_db), user=Depends(require_login)):
     rows = db.query(WatchTrade).order_by(WatchTrade.created_at.desc()).limit(min(limit, 50)).all()
-    return ok([_trade_dict(row) for row in rows])
+    quotes = _quote_map(db, [row.stock_code for row in rows])
+    return ok([_trade_dict(row, quotes.get(row.stock_code)) for row in rows])
 
 
 @router.get("/watch-trades/summary")
@@ -650,7 +687,7 @@ def get_watch_trade(trade_id: int, db: Session = Depends(get_db), user=Depends(r
     row = db.query(WatchTrade).filter(WatchTrade.id == trade_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="trade not found")
-    return ok(_trade_dict(row))
+    return ok(_trade_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
 
 
 @router.get("/watch-trades/{trade_id}/executions")
@@ -1031,6 +1068,7 @@ def run_my_task(task_id: int, db: Session = Depends(get_db), user=Depends(requir
         "collect_limit_up_daily": svc.collect_limit_up_daily,
         "update_watch_daily_kline": svc.update_watch_daily_kline,
         "update_watch_15m_kline": svc.update_watch_15m_kline,
+        "update_watch_prices": svc.update_watch_prices,
         "scan_watch_signals": svc.scan_watch_signals,
         "auto_remove_watch_pool": svc.auto_remove_watch_pool,
         "scan_trade_risk_signals": svc.scan_trade_risk_signals,

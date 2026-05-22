@@ -25,6 +25,19 @@ class StockBasic(TimestampMixin, SystemBase):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class MktStockQuote(TimestampMixin, SystemBase):
+    __tablename__ = "mkt_stock_quote"
+    __table_args__ = (UniqueConstraint("stock_code", name="uq_mkt_stock_quote_code"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    stock_name: Mapped[str] = mapped_column(String(64), default="")
+    latest_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(32), default="real")
+    source_update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class MktDaily(TimestampMixin, SystemBase):
     __tablename__ = "mkt_daily"
     __table_args__ = (UniqueConstraint("trade_date", "source", name="uq_mkt_daily_trade_source"),)

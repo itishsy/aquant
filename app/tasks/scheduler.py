@@ -26,6 +26,17 @@ def build_scheduler() -> BackgroundScheduler:
         misfire_grace_time=1800,
     )
     scheduler.add_job(
+        run_watch_price_update,
+        trigger="interval",
+        minutes=5,
+        id="update_watch_prices",
+        name="Update watch stock prices",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
         run_watch_signal_scan,
         trigger="interval",
         minutes=15,
@@ -65,6 +76,14 @@ def run_watch_signal_scan() -> None:
     db: Session = SystemSessionLocal()
     try:
         TaskService(db).scan_watch_signals(date.today())
+    finally:
+        db.close()
+
+
+def run_watch_price_update() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).update_watch_prices(date.today())
     finally:
         db.close()
 

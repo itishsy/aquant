@@ -142,7 +142,7 @@ class RealMarketProvider(
         try:
             item = self._get_json(
                 "https://x-quote.cls.cn/quote/stock/basic"
-                "?app=CailianpressWeb&fields=change_px,last_px"
+                "?app=CailianpressWeb&fields=change,change_px,last_px"
                 f"&os=web&secu_code={secu_code}&sv=8.4.6&sign=b5b52db3c934bd745706e82b6923a589",
                 referer="https://www.cls.cn/",
             )
@@ -162,11 +162,7 @@ class RealMarketProvider(
             item = item[secu_code]
         return {
             "price": self._number(item.get("last_px")) if item.get("last_px") is not None else None,
-            "change_pct": (
-                self._pct(item.get("change"))
-                if item.get("change") is not None
-                else self._number(item.get("change_px")) if item.get("change_px") is not None else None
-            ),
+            "change_pct": self._pct(item.get("change")) if item.get("change") is not None else None,
         }
 
     def get_assoc_plates(self, stock_code: str) -> list[dict]:

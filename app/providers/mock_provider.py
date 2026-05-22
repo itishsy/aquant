@@ -154,6 +154,19 @@ class MockProvider(
                 )
         return rows
 
+    def get_stock_quote(self, stock_code: str) -> dict[str, float | None]:
+        text = str(stock_code or "").strip().upper()
+        if text.startswith(("SH", "SZ", "BJ")) and len(text) == 8:
+            key = f"{text[2:]}.{text[:2]}"
+        else:
+            key = text
+        codes = list(self.STOCKS)
+        try:
+            idx = codes.index(key) + 1
+        except ValueError:
+            idx = 1
+        return {"price": round(10 + idx, 2), "change_pct": round(1.5 + idx / 10, 2)}
+
     def get_limit_up_list(self, trade_date: date) -> list[dict]:
         return [
             {

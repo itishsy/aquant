@@ -16,8 +16,10 @@ from app.models import (
     MktDailyTopicStock,
     MktHotStock,
     MktLimitUpStock,
+    MktStockQuote,
     WatchPool,
     WatchSignal,
+    WatchTrade,
 )
 from app.providers.factory import ProviderFactory
 
@@ -490,6 +492,46 @@ class TaskService:
 
     def update_watch_15m_kline(self, trade_date: date) -> ConfigTaskLog:
         return self._run("update_watch_15m_kline", lambda: 0)
+
+    def update_watch_prices(self, trade_date: date) -> ConfigTaskLog:
+        def _do() -> int:
+            provider = ProviderFactory.create()
+            if not hasattr(provider, "get_stock_quote"):
+                return 0
+
+            by_code: dict[str, str] = {}
+            for stock_code, stock_name in self.db.query(WatchPool.stock_code, WatchPool.stock_name).filter(WatchPool.active.is_(True)).all():
+                if stock_code:
+                    by_code.setdefault(stock_code, stock_name or "")
+            for stock_code, stock_name in self.db.query(WatchSignal.stock_code, WatchSignal.stock_name).distinct().all():
+                if stock_code:
+                    by_code.setdefault(stock_code, stock_name or "")
+            for stock_code, stock_name in self.db.query(WatchTrade.stock_code, WatchTrade.stock_name).filter(WatchTrade.trade_status.in_(["open", "holding"])).distinct().all():
+                if stock_code:
+                    by_code.setdefault(stock_code, stock_name or "")
+
+            affected = 0
+            now = datetime.utcnow()
+            for stock_code, stock_name in by_code.items():
+                quote = provider.get_stock_quote(stock_code) or {}
+                price = quote.get("price")
+                change_pct = quote.get("change_pct")
+                if price is None and change_pct is None:
+                    continue
+                row = self.db.query(MktStockQuote).filter(MktStockQuote.stock_code == stock_code).first()
+                if not row:
+                    row = MktStockQuote(stock_code=stock_code)
+                    self.db.add(row)
+                row.stock_name = stock_name or row.stock_name or ""
+                row.latest_price = price
+                row.change_pct = change_pct
+                row.source = quote.get("source") or provider.__class__.__name__
+                row.source_update_time = now
+                affected += 1
+            self.db.commit()
+            return affected
+
+        return self._run("update_watch_prices", _do)
 
     def scan_watch_signals(self, trade_date: date) -> ConfigTaskLog:
         from app.services.signal_engine import SignalEngine

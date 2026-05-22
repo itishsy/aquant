@@ -92,6 +92,9 @@ export function AdminPage() {
 
   async function addWatch() {
     if (!watchForm.code || !watchForm.name) { Toast.show({ content: "请填写代码和名称" }); return; }
+    if (!watchForm.observePrice || Number(watchForm.observePrice) <= 0) { Toast.show({ content: "请填写有效观察价" }); return; }
+    if (!watchForm.invalidCond.trim()) { Toast.show({ content: "请填写失效条件" }); return; }
+    if (watchForm.removePrice && Number(watchForm.removePrice) <= 0) { Toast.show({ content: "自动剔除价必须大于0" }); return; }
     setWatchSubmitting(true);
     try {
       await apiPost("/admin/watch-pool", {
@@ -105,13 +108,16 @@ export function AdminPage() {
       Toast.show({ content: "观察股已添加" });
       setWatchForm({ code: "", name: "", system: "uptrend", observePrice: "", removePrice: "", invalidCond: "", reason: "后台手动添加" });
       loadAll();
-    } catch { Toast.show({ content: "添加失败" }); }
+    } catch (err) { Toast.show({ content: String(err) || "添加失败" }); }
     finally { setWatchSubmitting(false); }
   }
 
   async function addSignal() {
     const wid = parseInt(signalForm.watchId);
     if (!wid) { Toast.show({ content: "请输入Watch ID" }); return; }
+    if (signalForm.price && Number(signalForm.price) <= 0) { Toast.show({ content: "触发价必须大于0" }); return; }
+    if (signalForm.stopLoss && Number(signalForm.stopLoss) <= 0) { Toast.show({ content: "止损价必须大于0" }); return; }
+    if (signalForm.target && Number(signalForm.target) <= 0) { Toast.show({ content: "目标价必须大于0" }); return; }
     setSignalSubmitting(true);
     try {
       await apiPost(`/admin/watch-pool/${wid}/signals`, {
@@ -126,13 +132,18 @@ export function AdminPage() {
       Toast.show({ content: "信号已添加" });
       setSignalForm({ watchId: "", strategy: "manual_admin_signal", buyPoint: "b15_divergence", price: "", stopLoss: "", target: "", reason: "后台手动添加信号", confirmed: false });
       loadAll();
-    } catch { Toast.show({ content: "添加失败" }); }
+    } catch (err) { Toast.show({ content: String(err) || "添加失败" }); }
     finally { setSignalSubmitting(false); }
   }
 
   async function addTrade() {
     const sid = parseInt(tradeForm.signalId);
     if (!sid) { Toast.show({ content: "请输入Signal ID" }); return; }
+    if (!tradeForm.price || Number(tradeForm.price) <= 0) { Toast.show({ content: "请填写有效买入价" }); return; }
+    if (!tradeForm.amount || Number(tradeForm.amount) <= 0) { Toast.show({ content: "请填写有效数量" }); return; }
+    if (tradeForm.position && Number(tradeForm.position) <= 0) { Toast.show({ content: "仓位必须大于0" }); return; }
+    if (tradeForm.stopLoss && Number(tradeForm.stopLoss) <= 0) { Toast.show({ content: "止损价必须大于0" }); return; }
+    if (tradeForm.target && Number(tradeForm.target) <= 0) { Toast.show({ content: "目标价必须大于0" }); return; }
     setTradeSubmitting(true);
     try {
       await apiPost(`/admin/watch-signals/${sid}/create-trade`, {
@@ -146,7 +157,7 @@ export function AdminPage() {
       Toast.show({ content: "交易已添加" });
       setTradeForm({ signalId: "", price: "", amount: "", position: "", stopLoss: "", target: "", reason: "后台手动确认交易" });
       loadAll();
-    } catch { Toast.show({ content: "添加失败" }); }
+    } catch (err) { Toast.show({ content: String(err) || "添加失败" }); }
     finally { setTradeSubmitting(false); }
   }
 
