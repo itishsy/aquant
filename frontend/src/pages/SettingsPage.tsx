@@ -109,17 +109,6 @@ export function SettingsPage() {
               </div>
             </div>
 
-            <div className="row-card">
-              <div>
-                <strong>市场数据采集</strong>
-                <p>最近采集：{fmtTime(summary?.last_collect_time)}</p>
-                <p style={{ fontSize: 11, color: "#aaa" }}>定时任务：每日 18:00 自动采集大盘/热榜/涨停数据</p>
-              </div>
-              <Button size="small" loading={collecting} onClick={doCollect}>
-                立即采集
-              </Button>
-            </div>
-
             <div className="row-card" style={{ display: "grid", gap: 12 }}>
               <div>
                 <strong>后台任务管理</strong>
@@ -196,7 +185,7 @@ export function SettingsPage() {
             <div className="row-card">
               <div>
                 <strong>后台管理入口</strong>
-                <p>{backendEntry?.enabled ? `可进入：${backendEntry.entry_url}` : "当前未开放"}</p>
+                <p><a href="/admin" style={{ color: "#4b63ee", fontWeight: 700 }}>进入后台管理系统</a></p>
               </div>
             </div>
 
