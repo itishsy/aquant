@@ -100,16 +100,16 @@ function XueqiuButton({ item }: { item: any }) {
   return (
     <Button
       size="mini"
-      fill="outline"
+      fill="none"
       onClick={(event) => { event.stopPropagation(); window.open(url, "_blank"); }}
       style={{
         borderRadius: 999,
-        padding: "4px 10px",
-        fontSize: 11,
+        padding: "2px 4px",
+        fontSize: 10,
         fontWeight: 800,
         color: "#4052d2",
-        borderColor: "#cfd7ff",
-        background: "#f7f9ff",
+        border: 0,
+        background: "transparent",
       }}
     >
       雪球
