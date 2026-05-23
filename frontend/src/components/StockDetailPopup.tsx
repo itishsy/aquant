@@ -89,7 +89,7 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
   );
 }
 
-function KlineChart({ data, loading }: { data: any[]; loading: boolean }) {
+export function KlineChart({ data, loading }: { data: any[]; loading: boolean }) {
   const containerRef = (el: HTMLDivElement | null) => {
     if (!el || !data.length) return;
     const chart = echarts.init(el);

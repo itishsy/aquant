@@ -332,13 +332,29 @@ export function WatchPoolPage() {
     load();
   }
 
+  async function editWatchFromStock(item: any) {
+    if (!item?.watch_id) {
+      Toast.show({ content: "该股票暂无可编辑观察记录" });
+      return;
+    }
+    try {
+      const watch = item.key_observe_price !== undefined && item.invalid_condition !== undefined
+        ? item
+        : await apiGet<any>(`/h5/watch-pool/${item.watch_id}`);
+      setWatchDetail(watch);
+      openEdit(watch);
+    } catch {
+      Toast.show({ content: "获取观察记录失败" });
+    }
+  }
+
   function renderSignalCard(item: any) {
     const canConfirmBuy = item.signal_status === "buy_pending_confirm";
     return (
       <div key={item.signal_id} className="row-card" style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <div>
-            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} /></strong>
+            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
             <p style={{ marginTop: 4 }}>{labelOf(tradingSystemOptions, item.trading_system)} / {signalTypeLabels[item.signal_type] || item.signal_type}</p>
           </div>
           <span className="score-badge">{item.signal_level}</span>
@@ -367,7 +383,7 @@ export function WatchPoolPage() {
       <div key={item.trade_id} className="row-card" style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <div>
-            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} /></strong>
+            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
             <p style={{ marginTop: 4 }}>{labelOf(tradingSystemOptions, item.trading_system)} / {item.trade_status || "-"}</p>
           </div>
           <span className="score-badge">{formatMoney(item.pnl_amount)}</span>
@@ -396,7 +412,7 @@ export function WatchPoolPage() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div style={{ minWidth: 0 }}>
             <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
             </strong>
             <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
               <StatusPill label={signalTypeLabels[item.signal_type] || item.signal_type} status={isRisk ? "sell_signal_pending" : item.signal_status} />
@@ -435,7 +451,7 @@ export function WatchPoolPage() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div style={{ minWidth: 0 }}>
             <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
             </strong>
             <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
               <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="trading" />
@@ -473,7 +489,7 @@ export function WatchPoolPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <strong style={{ display: "block", fontSize: 18, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} />
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
             </strong>
             <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
               <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="signal_generated" />
@@ -532,7 +548,7 @@ export function WatchPoolPage() {
                 <div key={item.watch_id} className="row-card" style={{ padding: "10px 12px", cursor: "pointer" }}
                   onClick={() => setWatchDetail(item)}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong style={{ fontSize: 15 }}><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} /></strong>
+                    <strong style={{ fontSize: 15 }}><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
                     <p style={{ margin: "3px 0 0", fontSize: 12, color: "#888" }}>
                       {item.sector_name || "未分类"} · {String(item.created_at || "").slice(0, 10) || "-"}
                     </p>
