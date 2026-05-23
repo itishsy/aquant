@@ -704,11 +704,10 @@ export function MarketPage() {
         risk_tags: watchDraft.risk_tags,
         user_remark: watchDraft.user_remark,
       });
-      Toast.show({ content: "已加入自选观察" });
       const code = watchDraft.stock_code;
       setWatchDraft(null);
-      await refreshWatchCodes();
       setWatchCodes((prev) => new Set(prev).add(code));
+      Toast.show({ content: "已加入自选观察" });
     } catch {
       Toast.show({ content: "添加自选失败，请检查填写信息" });
     } finally {
