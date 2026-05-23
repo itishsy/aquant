@@ -39,13 +39,32 @@ type WatchDraft = {
   stock_name: string;
   entry_source_type: "hot_stock" | "limit_up";
   sector_name?: string;
-  trading_system: "platform_breakout" | "uptrend" | "relay";
+  trading_system: string;
+  system_params_json: Record<string, string>;
   entry_reason: string;
   key_observe_price: string;
   invalid_condition: string;
   risk_tags: string[];
   user_remark: string;
   raw_item: any;
+};
+
+type TradingSystemDefinition = {
+  system_code: string;
+  system_name: string;
+  enabled: boolean;
+};
+
+type TradingSystemParamDefinition = {
+  param_id: number;
+  system_code: string;
+  param_key: string;
+  param_name: string;
+  param_type: "number" | "text" | "select" | "boolean";
+  required: boolean;
+  default_value?: string | null;
+  description?: string;
+  sort_order: number;
 };
 
 type StockViewerState = {
@@ -57,7 +76,8 @@ type StockViewerState = {
 const tradingSystemOptions = [
   { label: "平台突破", value: "platform_breakout" },
   { label: "上涨趋势", value: "uptrend" },
-  { label: "追涨接力", value: "relay" },
+  { label: "涨停接力", value: "limit_relay" },
+  { label: "超跌反弹", value: "oversold_rebound" },
 ];
 
 const riskTagOptions = [
@@ -301,27 +321,32 @@ function limitHeight(row: any) {
 function recommendTradingSystem(item: any, sourceType: "hot_stock" | "limit_up"): WatchDraft["trading_system"] {
   const reason = `${item.raw_reason || ""} ${item.limit_reason || ""} ${item.reason || ""}`;
   if (reason.includes("突破") || reason.toLowerCase().includes("breakout")) return "platform_breakout";
-  if (sourceType === "limit_up") return "relay";
+  if (sourceType === "limit_up") return "limit_relay";
   return "uptrend";
 }
 
-function tradingSystemLabel(value: string) {
-  return tradingSystemOptions.find((item) => item.value === value)?.label || value;
+function tradingSystemLabel(value: string, systems: TradingSystemDefinition[] = []) {
+  return systems.find((item) => item.system_code === value)?.system_name || tradingSystemOptions.find((item) => item.value === value)?.label || value;
 }
 
 function buildWatchDraft(item: any, sourceType: "hot_stock" | "limit_up"): WatchDraft {
   const sourceReason = item.raw_reason || item.limit_reason || item.reason || item.up_reason || "";
   const tradingSystem = recommendTradingSystem(item, sourceType);
   const price = item.last_price ?? item.price ?? item.trigger_price ?? "";
+  const systemParams = {
+    key_observe_price: price ? String(price) : "",
+    invalid_condition: sourceType === "limit_up" ? "涨停结构走弱或跌破关键观察价" : "跌破关键观察价或人气逻辑失效",
+  };
   return {
     stock_code: item.stock_code,
     stock_name: item.stock_name,
     entry_source_type: sourceType,
     sector_name: item.sector_name || item.board_name || item.concept || item.plate_name,
     trading_system: tradingSystem,
+    system_params_json: systemParams,
     entry_reason: sourceReason || (sourceType === "limit_up" ? "涨停榜手动加入观察" : "人气榜手动加入观察"),
-    key_observe_price: price ? String(price) : "",
-    invalid_condition: sourceType === "limit_up" ? "涨停结构走弱或跌破关键观察价" : "跌破关键观察价或人气逻辑失效",
+    key_observe_price: systemParams.key_observe_price,
+    invalid_condition: systemParams.invalid_condition,
     risk_tags: sourceType === "limit_up" ? ["high_position"] : [],
     user_remark: "",
     raw_item: item,
@@ -464,6 +489,8 @@ export function MarketPage() {
   const [hotPlatform, setHotPlatform] = useState("");
   const [watchCodes, setWatchCodes] = useState<Set<string>>(new Set());
   const [watchDraft, setWatchDraft] = useState<WatchDraft | null>(null);
+  const [tradingSystems, setTradingSystems] = useState<TradingSystemDefinition[]>([]);
+  const [systemParams, setSystemParams] = useState<TradingSystemParamDefinition[]>([]);
   const [watchSubmitting, setWatchSubmitting] = useState(false);
   const [stockViewer, setStockViewer] = useState<StockViewerState | null>(null);
   const [error, setError] = useState("");
@@ -477,6 +504,9 @@ export function MarketPage() {
 
   useEffect(() => {
     if (queryDate) { setTradeDate(queryDate); return; }
+    apiGet<TradingSystemDefinition[]>("/h5/trading-systems")
+      .then((rows) => setTradingSystems(rows || []))
+      .catch(() => setTradingSystems([]));
     apiGet<string[]>("/h5/market/trading-dates")
       .then((dates) => {
         const latestDate = (dates || []).slice().sort().reverse()[0] || todayString();
@@ -487,6 +517,16 @@ export function MarketPage() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!watchDraft?.trading_system) {
+      setSystemParams([]);
+      return;
+    }
+    apiGet<TradingSystemParamDefinition[]>(`/h5/trading-systems/${watchDraft.trading_system}/params`)
+      .then((rows) => setSystemParams(rows || []))
+      .catch(() => setSystemParams([]));
+  }, [watchDraft?.trading_system]);
 
   useEffect(() => {
     if (!tradeDate) return;
@@ -678,16 +718,48 @@ export function MarketPage() {
     });
   }
 
+  const availableTradingSystemOptions = useMemo(() => {
+    if (!tradingSystems.length) return tradingSystemOptions;
+    return tradingSystems.map((item) => ({ label: item.system_name, value: item.system_code }));
+  }, [tradingSystems]);
+
+  function updateWatchParam(paramKey: string, value: string) {
+    if (!watchDraft) return;
+    const nextParams = { ...watchDraft.system_params_json, [paramKey]: value };
+    setWatchDraft({
+      ...watchDraft,
+      system_params_json: nextParams,
+      key_observe_price: paramKey === "key_observe_price" ? value : watchDraft.key_observe_price,
+      invalid_condition: paramKey === "invalid_condition" ? value : watchDraft.invalid_condition,
+    });
+  }
+
+  function changeWatchSystem(systemCode: string) {
+    if (!watchDraft) return;
+    const nextParams = {
+      key_observe_price: watchDraft.key_observe_price,
+      invalid_condition: watchDraft.invalid_condition,
+    };
+    setWatchDraft({
+      ...watchDraft,
+      trading_system: systemCode,
+      system_params_json: nextParams,
+    });
+  }
+
   function addWatchFromMarket(item: any, sourceType: "hot_stock" | "limit_up") {
     setWatchDraft(buildWatchDraft(item, sourceType));
   }
 
   async function submitWatchDraft() {
     if (!watchDraft) return;
-    if (!watchDraft.trading_system || !watchDraft.entry_reason.trim() || !watchDraft.key_observe_price || !watchDraft.invalid_condition.trim()) {
-      Toast.show({ content: "请补全交易系统、入选理由、关键观察价和失效条件" });
+    const missingParam = systemParams.find((param) => param.required && !String(watchDraft.system_params_json[param.param_key] ?? "").trim());
+    if (!watchDraft.trading_system || !watchDraft.entry_reason.trim() || missingParam) {
+      Toast.show({ content: missingParam ? `请填写${missingParam.param_name}` : "请补全交易体系和入选理由" });
       return;
     }
+    const keyObservePrice = watchDraft.system_params_json.key_observe_price || watchDraft.key_observe_price;
+    const invalidCondition = watchDraft.system_params_json.invalid_condition || watchDraft.invalid_condition;
     setWatchSubmitting(true);
     try {
       await apiPost("/h5/watch-pool", {
@@ -696,11 +768,14 @@ export function MarketPage() {
         sector_name: watchDraft.sector_name,
         labels: watchDraft.entry_source_type === "limit_up" ? ["relay"] : ["popularity"],
         entry_source: watchDraft.entry_source_type === "limit_up" ? "limit_up" : "hot_stock",
+        trading_system_code: watchDraft.trading_system,
         trading_system: watchDraft.trading_system,
+        system_params_json: watchDraft.system_params_json,
+        system_stage: "observe",
         entry_reason: watchDraft.entry_reason,
         reason: watchDraft.entry_reason,
-        key_observe_price: Number(watchDraft.key_observe_price),
-        invalid_condition: watchDraft.invalid_condition,
+        key_observe_price: keyObservePrice ? Number(keyObservePrice) : undefined,
+        invalid_condition: invalidCondition,
         risk_tags: watchDraft.risk_tags,
         user_remark: watchDraft.user_remark,
       });
@@ -1146,7 +1221,7 @@ export function MarketPage() {
                   </div>
                   <div>
                     <div style={{ opacity: 0.68 }}>系统推荐</div>
-                    <strong style={{ display: "block", marginTop: 3, fontSize: 15 }}>{tradingSystemLabel(recommendTradingSystem(watchDraft.raw_item, watchDraft.entry_source_type))}</strong>
+                    <strong style={{ display: "block", marginTop: 3, fontSize: 15 }}>{tradingSystemLabel(recommendTradingSystem(watchDraft.raw_item, watchDraft.entry_source_type), tradingSystems)}</strong>
                   </div>
                 </div>
                 <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.18)", paddingTop: 10, fontSize: 13, lineHeight: 1.55 }}>
@@ -1162,9 +1237,9 @@ export function MarketPage() {
                   </div>
                   <Selector
                     columns={3}
-                    options={tradingSystemOptions}
+                    options={availableTradingSystemOptions}
                     value={[watchDraft.trading_system]}
-                    onChange={(value) => setWatchDraft({ ...watchDraft, trading_system: value[0] as WatchDraft["trading_system"] })}
+                    onChange={(value) => changeWatchSystem(value[0] as string)}
                   />
                 </div>
 
@@ -1178,26 +1253,31 @@ export function MarketPage() {
                     style={{ "--font-size": "14px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: 10 } as CSSProperties}
                   />
 
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.85fr) minmax(0, 1.15fr)", gap: 10 }}>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <FieldTitle title="关键观察价" required />
-                      <Input
-                        type="number"
-                        value={watchDraft.key_observe_price}
-                        placeholder="12.35"
-                        onChange={(value) => setWatchDraft({ ...watchDraft, key_observe_price: value })}
-                        style={{ "--font-size": "16px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: "10px 12px" } as CSSProperties}
-                      />
-                    </div>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <FieldTitle title="失效条件" required />
-                      <Input
-                        value={watchDraft.invalid_condition}
-                        placeholder="跌破关键价且无法收回"
-                        onChange={(value) => setWatchDraft({ ...watchDraft, invalid_condition: value })}
-                        style={{ "--font-size": "14px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: "10px 12px" } as CSSProperties}
-                      />
-                    </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {systemParams.length ? systemParams.map((param) => (
+                      <div key={param.param_key} style={{ display: "grid", gap: 8 }}>
+                        <FieldTitle title={param.param_name} required={param.required} hint={param.description} />
+                        {param.param_type === "text" ? (
+                          <TextArea
+                            value={watchDraft.system_params_json[param.param_key] || ""}
+                            autoSize={{ minRows: 2, maxRows: 4 }}
+                            placeholder={param.param_name}
+                            onChange={(value) => updateWatchParam(param.param_key, value)}
+                            style={{ "--font-size": "14px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: 10 } as CSSProperties}
+                          />
+                        ) : (
+                          <Input
+                            type={param.param_type === "number" ? "number" : "text"}
+                            value={watchDraft.system_params_json[param.param_key] || ""}
+                            placeholder={param.param_name}
+                            onChange={(value) => updateWatchParam(param.param_key, value)}
+                            style={{ "--font-size": "15px", "--color": "#1d2948", background: "#f7f9ff", borderRadius: 14, padding: "10px 12px" } as CSSProperties}
+                          />
+                        )}
+                      </div>
+                    )) : (
+                      <div style={{ color: "#8a94a8", fontSize: 13 }}>该交易体系暂无参数定义。</div>
+                    )}
                   </div>
                 </div>
 

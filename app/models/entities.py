@@ -270,6 +270,8 @@ class WatchPool(TimestampMixin, SystemBase):
     __table_args__ = (
         Index("ix_watch_pool_code_status", "stock_code", "status"),
         Index("ix_watch_pool_trading_system", "trading_system"),
+        Index("ix_watch_pool_trading_system_code", "trading_system_code"),
+        Index("ix_watch_pool_system_stage", "system_stage"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -285,6 +287,11 @@ class WatchPool(TimestampMixin, SystemBase):
     entry_source: Mapped[str] = mapped_column(String(32), default="manual", index=True)
     entry_reason: Mapped[str] = mapped_column(Text, default="")
     trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    trading_system_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    system_stage: Mapped[str] = mapped_column(String(32), default="observe")
+    system_params_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    active_rule_codes_json: Mapped[list] = mapped_column(JSON, default=list)
+    next_action: Mapped[str | None] = mapped_column(Text, nullable=True)
     system_recommendation: Mapped[str | None] = mapped_column(String(32), nullable=True)
     key_observe_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     auto_remove_price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -332,6 +339,9 @@ class WatchSignal(TimestampMixin, SystemBase):
     signal_type: Mapped[str] = mapped_column(String(32), index=True)
     buy_point_type: Mapped[str] = mapped_column(String(64), default="")
     trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    trading_system_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rule_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    rule_type: Mapped[str] = mapped_column(String(32), default="")
     strategy_name: Mapped[str] = mapped_column(String(64), index=True)
     signal_level: Mapped[str] = mapped_column(String(8), default="B")
     kline_period: Mapped[str] = mapped_column(String(16), default="")
@@ -356,6 +366,10 @@ class WatchSignal(TimestampMixin, SystemBase):
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     related_trade_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    notification_sent: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    notification_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notification_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class WatchSignalPerformance(TimestampMixin, SystemBase):
@@ -391,6 +405,13 @@ class WatchTrade(TimestampMixin, SystemBase):
     trade_source: Mapped[str] = mapped_column(String(32), default="signal")
     buy_point_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     trading_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    trading_system_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_rule_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    system_params_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    active_sell_rule_codes_json: Mapped[list] = mapped_column(JSON, default=list)
+    active_stop_rule_codes_json: Mapped[list] = mapped_column(JSON, default=list)
+    current_stage: Mapped[str] = mapped_column(String(32), default="trading")
+    latest_trade_signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     first_buy_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     first_buy_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_buy_amount: Mapped[float] = mapped_column(Float, default=0.0)
@@ -610,6 +631,71 @@ class ConfigStrategy(TimestampMixin, SystemBase):
     buy_point_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parameters: Mapped[dict] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class TradingSystemDefinition(TimestampMixin, SystemBase):
+    __tablename__ = "trading_system_definition"
+    __table_args__ = (UniqueConstraint("system_code", name="uq_trading_system_definition_code"),)
+
+    system_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    system_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    system_name: Mapped[str] = mapped_column(String(128), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    lifecycle_desc: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+
+
+class TradingRuleDefinition(TimestampMixin, SystemBase):
+    __tablename__ = "trading_rule_definition"
+    __table_args__ = (UniqueConstraint("rule_code", name="uq_trading_rule_definition_code"),)
+
+    rule_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    rule_name: Mapped[str] = mapped_column(String(128), index=True)
+    rule_type: Mapped[str] = mapped_column(String(32), index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), index=True)
+    executor_key: Mapped[str] = mapped_column(String(128), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+
+class TradingSystemParamDefinition(TimestampMixin, SystemBase):
+    __tablename__ = "trading_system_param_definition"
+    __table_args__ = (
+        UniqueConstraint("system_code", "param_key", name="uq_trading_system_param_definition_system_key"),
+        Index("ix_trading_system_param_system_order", "system_code", "sort_order"),
+    )
+
+    param_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    system_code: Mapped[str] = mapped_column(String(64), index=True)
+    param_key: Mapped[str] = mapped_column(String(64), index=True)
+    param_name: Mapped[str] = mapped_column(String(128))
+    param_type: Mapped[str] = mapped_column(String(32), index=True)
+    required: Mapped[bool] = mapped_column(Boolean, default=False)
+    default_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+
+class TradingSystemRuleBinding(TimestampMixin, SystemBase):
+    __tablename__ = "trading_system_rule_binding"
+    __table_args__ = (
+        UniqueConstraint("system_code", "rule_code", "stage", name="uq_trading_system_rule_binding_identity"),
+        Index("ix_trading_system_rule_binding_system_stage_order", "system_code", "stage", "sort_order"),
+    )
+
+    binding_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    system_code: Mapped[str] = mapped_column(String(64), index=True)
+    rule_code: Mapped[str] = mapped_column(String(64), index=True)
+    stage: Mapped[str] = mapped_column(String(32), index=True)
+    required: Mapped[bool] = mapped_column(Boolean, default=False)
+    logic_group: Mapped[str] = mapped_column(String(64), default="", index=True)
+    logic_operator: Mapped[str] = mapped_column(String(8), default="AND")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class ConfigNotificationTemplate(TimestampMixin, SystemBase):

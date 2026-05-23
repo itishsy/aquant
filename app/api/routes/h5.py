@@ -23,6 +23,8 @@ from app.models import (
     ReviewMonthly,
     ReviewTrade,
     ReviewWeekly,
+    TradingSystemDefinition,
+    TradingSystemParamDefinition,
     WatchPool,
     WatchPoolStatusLog,
     WatchSignal,
@@ -55,7 +57,8 @@ def _quote_map(db: Session, stock_codes: list[str]) -> dict[str, MktStockQuote]:
     return {row.stock_code: row for row in rows}
 
 
-def _watch_dict(row: WatchPool, quote: MktStockQuote | None = None) -> dict:
+def _watch_dict(row: WatchPool, quote: MktStockQuote | None = None, system_name: str | None = None) -> dict:
+    system_code = row.trading_system_code or row.trading_system
     data = {
         "watch_id": row.id,
         "stock_code": row.stock_code,
@@ -66,6 +69,12 @@ def _watch_dict(row: WatchPool, quote: MktStockQuote | None = None) -> dict:
         "entry_source": row.entry_source,
         "entry_reason": row.entry_reason,
         "trading_system": row.trading_system,
+        "trading_system_code": row.trading_system_code,
+        "trading_system_name": system_name or system_code,
+        "system_stage": row.system_stage or "observe",
+        "system_params_json": row.system_params_json or {},
+        "active_rule_codes_json": row.active_rule_codes_json or [],
+        "next_action": row.next_action,
         "system_recommendation": row.system_recommendation,
         "key_observe_price": row.key_observe_price,
         "auto_remove_price": row.auto_remove_price,
@@ -87,6 +96,41 @@ def _watch_dict(row: WatchPool, quote: MktStockQuote | None = None) -> dict:
     return data
 
 
+def _system_name_map(db: Session, system_codes: list[str | None]) -> dict[str, str]:
+    codes = sorted({code for code in system_codes if code})
+    if not codes:
+        return {}
+    rows = db.query(TradingSystemDefinition).filter(TradingSystemDefinition.system_code.in_(codes)).all()
+    return {row.system_code: row.system_name for row in rows}
+
+
+def _trading_system_dict(row: TradingSystemDefinition) -> dict:
+    return {
+        "system_id": row.system_id,
+        "system_code": row.system_code,
+        "system_name": row.system_name,
+        "description": row.description,
+        "lifecycle_desc": row.lifecycle_desc,
+        "enabled": row.enabled,
+        "sort_order": row.sort_order,
+    }
+
+
+def _trading_param_dict(row: TradingSystemParamDefinition) -> dict:
+    return {
+        "param_id": row.param_id,
+        "system_code": row.system_code,
+        "param_key": row.param_key,
+        "param_name": row.param_name,
+        "param_type": row.param_type,
+        "required": row.required,
+        "default_value": row.default_value,
+        "description": row.description,
+        "sort_order": row.sort_order,
+        "enabled": row.enabled,
+    }
+
+
 def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
     data = {
         "signal_id": row.signal_id,
@@ -95,6 +139,9 @@ def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
         "stock_name": row.stock_name,
         "signal_type": row.signal_type,
         "buy_point_type": row.buy_point_type,
+        "trading_system_code": row.trading_system_code,
+        "rule_code": row.rule_code,
+        "rule_type": row.rule_type,
         "strategy_name": row.strategy_name,
         "signal_level": row.signal_level,
         "trigger_time": row.trigger_time,
@@ -116,6 +163,10 @@ def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
         "abandoned_time": row.abandoned_time,
         "prevent_duplicate_signal": row.prevent_duplicate_signal,
         "trigger_signature": row.trigger_signature,
+        "snapshot_json": row.snapshot_json or row.raw_snapshot or {},
+        "notification_sent": row.notification_sent,
+        "notification_sent_at": row.notification_sent_at,
+        "notification_error": row.notification_error,
         "assistant_note": ASSISTANT_NOTE,
     }
     data.update(_quote_payload(quote))
@@ -131,6 +182,13 @@ def _trade_dict(row: WatchTrade, quote: MktStockQuote | None = None) -> dict:
         "stock_name": row.stock_name,
         "trade_source": row.trade_source,
         "trading_system": row.trading_system,
+        "trading_system_code": row.trading_system_code,
+        "entry_rule_code": row.entry_rule_code,
+        "system_params_json": row.system_params_json or {},
+        "active_sell_rule_codes_json": row.active_sell_rule_codes_json or [],
+        "active_stop_rule_codes_json": row.active_stop_rule_codes_json or [],
+        "current_stage": row.current_stage or "trading",
+        "latest_trade_signal_id": row.latest_trade_signal_id,
         "buy_reason": row.buy_reason,
         "trade_plan": row.trade_plan,
         "emotion_state": row.emotion_state,
@@ -197,6 +255,8 @@ TASK_LABELS = {
     "update_watch_15m_kline": "自选 15 分钟 K 更新",
     "update_watch_prices": "自选价格更新",
     "scan_watch_signals": "观察信号扫描",
+    "scan_watch_rules": "观察规则扫描",
+    "scan_trade_rules": "交易规则扫描",
     "auto_remove_watch_pool": "自动剔除",
     "scan_trade_risk_signals": "持仓风险扫描",
     "generate_weekly_review_form": "周复盘生成",
@@ -312,6 +372,33 @@ def stock_kline_daily(stock_code: str, limit: int = 60, db: Session = Depends(ge
     } for r in rows])
 
 
+@router.get("/trading-systems")
+def list_trading_systems(db: Session = Depends(get_db), user=Depends(require_login)):
+    SeedService(db).init_defaults()
+    rows = (
+        db.query(TradingSystemDefinition)
+        .filter(TradingSystemDefinition.enabled.is_(True))
+        .order_by(TradingSystemDefinition.sort_order.asc(), TradingSystemDefinition.system_id.asc())
+        .all()
+    )
+    return ok([_trading_system_dict(row) for row in rows])
+
+
+@router.get("/trading-systems/{system_code}/params")
+def list_trading_system_params(system_code: str, db: Session = Depends(get_db), user=Depends(require_login)):
+    SeedService(db).init_defaults()
+    rows = (
+        db.query(TradingSystemParamDefinition)
+        .filter(
+            TradingSystemParamDefinition.system_code == system_code,
+            TradingSystemParamDefinition.enabled.is_(True),
+        )
+        .order_by(TradingSystemParamDefinition.sort_order.asc(), TradingSystemParamDefinition.param_id.asc())
+        .all()
+    )
+    return ok([_trading_param_dict(row) for row in rows])
+
+
 @router.get("/watch-pool")
 def list_watch_pool(
     status: str | None = None,
@@ -326,13 +413,14 @@ def list_watch_pool(
     else:
         query = query.filter(WatchPool.active.is_(True))
     if trading_system:
-        query = query.filter(WatchPool.trading_system == trading_system)
+        query = query.filter(or_(WatchPool.trading_system == trading_system, WatchPool.trading_system_code == trading_system))
     if keyword:
         like = f"%{keyword}%"
         query = query.filter(or_(WatchPool.stock_code.ilike(like), WatchPool.stock_name.ilike(like), WatchPool.entry_reason.ilike(like)))
     rows = query.order_by(WatchPool.created_at.desc()).all()
     quotes = _quote_map(db, [row.stock_code for row in rows])
-    return ok([_watch_dict(row, quotes.get(row.stock_code)) for row in rows])
+    names = _system_name_map(db, [row.trading_system_code or row.trading_system for row in rows])
+    return ok([_watch_dict(row, quotes.get(row.stock_code), names.get(row.trading_system_code or row.trading_system)) for row in rows])
 
 
 @router.get("/watch-pool/summary")
@@ -343,14 +431,16 @@ def watch_summary(db: Session = Depends(get_db), user=Depends(require_login)):
 @router.get("/watch-pool/{watch_id}")
 def get_watch(watch_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
     row = PrdWatchPoolService(db).get_watch(watch_id)
-    return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
+    names = _system_name_map(db, [row.trading_system_code or row.trading_system])
+    return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code), names.get(row.trading_system_code or row.trading_system)))
 
 
 @router.post("/watch-pool")
 def add_watch(payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
     try:
         row = PrdWatchPoolService(db).add_watch(payload)
-        return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
+        names = _system_name_map(db, [row.trading_system_code or row.trading_system])
+        return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code), names.get(row.trading_system_code or row.trading_system)))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -361,7 +451,8 @@ def update_watch(watch_id: int, payload: dict, db: Session = Depends(get_db), us
         raise HTTPException(status_code=400, detail="adjust_reason is required")
     try:
         row = PrdWatchPoolService(db).update_watch(watch_id, payload)
-        return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
+        names = _system_name_map(db, [row.trading_system_code or row.trading_system])
+        return ok(_watch_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code), names.get(row.trading_system_code or row.trading_system)))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -557,11 +648,16 @@ def signal_performance(signal_id: int, db: Session = Depends(get_db), user=Depen
 
 @router.post("/watch-signals/{signal_id}/confirm-buy")
 def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
+    from app.services.trade_context import apply_confirm_buy_trade_context
+
     signal = db.query(WatchSignal).filter(WatchSignal.signal_id == signal_id).first()
     if not signal:
         raise HTTPException(status_code=404, detail="signal not found")
     existing_by_signal = db.query(WatchTrade).filter(WatchTrade.signal_id == signal_id).first()
     if existing_by_signal:
+        watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first() if signal.watch_id else None
+        apply_confirm_buy_trade_context(db, existing_by_signal, signal, watch)
+        db.commit()
         return ok(_trade_dict(existing_by_signal), message="signal already confirmed")
     if signal.signal_status != "buy_pending_confirm":
         raise HTTPException(status_code=400, detail="signal_status must be buy_pending_confirm")
@@ -571,6 +667,7 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
         raise HTTPException(status_code=400, detail="stop_loss_price is required")
     buy_price = float(payload["buy_price"])
     amount = float(payload["amount"])
+    watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first() if signal.watch_id else None
     trade = (
         db.query(WatchTrade)
         .filter(WatchTrade.stock_code == signal.stock_code, WatchTrade.trade_status.in_(["open", "holding"]))
@@ -585,6 +682,8 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
             stock_name=signal.stock_name,
             buy_point_type=signal.buy_point_type,
             trading_system=signal.trading_system,
+            trading_system_code=signal.trading_system_code or (watch.trading_system_code if watch else None),
+            entry_rule_code=signal.rule_code or signal.buy_point_type,
             first_buy_time=now,
             first_buy_price=buy_price,
             total_buy_amount=amount,
@@ -606,6 +705,7 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
         trade.total_buy_amount += amount
         trade.remaining_amount += amount
         trade.average_buy_price = total_cost / trade.total_buy_amount if trade.total_buy_amount else buy_price
+    apply_confirm_buy_trade_context(db, trade, signal, watch)
     db.add(WatchTradeExecution(
         trade_id=trade.id,
         signal_id=signal.signal_id,
@@ -626,11 +726,10 @@ def confirm_buy(signal_id: int, payload: dict, db: Session = Depends(get_db), us
     signal.buy_point_confirm_time = now
     signal.buy_point_confirm_price = buy_price
     if signal.watch_id:
-        watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first()
         if watch:
             old_status = watch.status or watch.status
             watch.status = "trading"
-            watch.status = "trading"
+            watch.system_stage = "trading"
             watch.monitor_enabled = False
             watch.signal_enabled = False
             db.add(
@@ -1070,6 +1169,8 @@ def run_my_task(task_id: int, db: Session = Depends(get_db), user=Depends(requir
         "update_watch_15m_kline": svc.update_watch_15m_kline,
         "update_watch_prices": svc.update_watch_prices,
         "scan_watch_signals": svc.scan_watch_signals,
+        "scan_watch_rules": svc.scan_watch_rules,
+        "scan_trade_rules": svc.scan_trade_rules,
         "auto_remove_watch_pool": svc.auto_remove_watch_pool,
         "scan_trade_risk_signals": svc.scan_trade_risk_signals,
         "generate_weekly_review_form": svc.generate_weekly_review_form,

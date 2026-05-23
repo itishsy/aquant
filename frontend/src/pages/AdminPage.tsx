@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button, ErrorBlock, Input, SpinLoading, Toast } from "antd-mobile";
-import { apiGet, apiPost } from "../api/client";
+import { apiGet, apiPost, apiPut } from "../api/client";
 
 const SECTIONS = [
   { key: "dashboard", label: "工作台" },
   { key: "watch", label: "自选交易管理" },
+  { key: "tradingSystems", label: "交易体系管理" },
   { key: "sources", label: "数据源管理" },
   { key: "tasks", label: "采集任务管理" },
   { key: "mappings", label: "字段映射管理" },
@@ -15,6 +16,54 @@ const SECTIONS = [
   { key: "logs", label: "日志中心" },
   { key: "security", label: "账号与安全" },
 ];
+
+type TradingSystem = {
+  system_id: number;
+  system_code: string;
+  system_name: string;
+  description: string;
+  lifecycle_desc: string;
+  enabled: boolean;
+  sort_order: number;
+};
+
+type TradingParam = {
+  param_id: number;
+  system_code: string;
+  param_key: string;
+  param_name: string;
+  param_type: string;
+  required: boolean;
+  default_value?: string | null;
+  description: string;
+  sort_order: number;
+  enabled: boolean;
+};
+
+type TradingRule = {
+  rule_id: number;
+  rule_code: string;
+  rule_name: string;
+  rule_type: string;
+  timeframe: string;
+  executor_key: string;
+  description: string;
+  enabled: boolean;
+};
+
+type TradingRuleBinding = {
+  binding_id: number;
+  system_code: string;
+  rule_code: string;
+  stage: string;
+  required: boolean;
+  logic_group: string;
+  logic_operator: string;
+  enabled: boolean;
+  sort_order: number;
+  config_json?: Record<string, unknown>;
+  rule?: TradingRule | null;
+};
 
 function FormLabel({ text }: { text: string }) {
   return <div style={{ fontSize: 12, color: "#5b6d8a", fontWeight: 700, marginBottom: 2 }}>{text}</div>;
@@ -40,6 +89,14 @@ export function AdminPage() {
   const [sources, setSources] = useState<any[]>([]);
   const [strategies, setStrategies] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
+  const [tradingSystems, setTradingSystems] = useState<TradingSystem[]>([]);
+  const [tradingRules, setTradingRules] = useState<TradingRule[]>([]);
+  const [registeredExecutors, setRegisteredExecutors] = useState<string[]>([]);
+  const [selectedSystemCode, setSelectedSystemCode] = useState("");
+  const [selectedSystem, setSelectedSystem] = useState<TradingSystem | null>(null);
+  const [tradingParams, setTradingParams] = useState<TradingParam[]>([]);
+  const [tradingBindings, setTradingBindings] = useState<TradingRuleBinding[]>([]);
+  const [tradingLoading, setTradingLoading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Watch management
@@ -56,7 +113,7 @@ export function AdminPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [ov, tk, dc, lg, src, st, tpl, wl, sg, tr] = await Promise.all([
+      const [ov, tk, dc, lg, src, st, tpl, wl, sg, tr, ts, rules, executors] = await Promise.all([
         apiGet<any>("/admin/dashboard/overview"),
         apiGet<any[]>("/admin/tasks"),
         apiGet<any[]>("/admin/dictionaries"),
@@ -67,6 +124,9 @@ export function AdminPage() {
         apiGet<any[]>("/admin/watch-pool"),
         apiGet<any[]>("/admin/watch-signals"),
         apiGet<any[]>("/admin/watch-trades"),
+        apiGet<TradingSystem[]>("/admin/trading-systems"),
+        apiGet<TradingRule[]>("/admin/trading-rules"),
+        apiGet<string[]>("/admin/trading-executors"),
       ]);
       setOverview(ov || {});
       setTasks(tk || []);
@@ -78,6 +138,12 @@ export function AdminPage() {
       setWatches(wl || []);
       setSignals(sg || []);
       setTrades(tr || []);
+      setTradingSystems(ts || []);
+      setTradingRules(rules || []);
+      setRegisteredExecutors(executors || []);
+      if (!selectedSystemCode && ts?.length) {
+        setSelectedSystemCode(ts[0].system_code);
+      }
       setError("");
     } catch (err) {
       setError(String(err));
@@ -89,6 +155,41 @@ export function AdminPage() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  useEffect(() => {
+    if (!selectedSystemCode) return;
+    let ignore = false;
+    async function loadTradingSystem() {
+      setTradingLoading(true);
+      try {
+        const [detail, params, bindings] = await Promise.all([
+          apiGet<TradingSystem>(`/admin/trading-systems/${selectedSystemCode}`),
+          apiGet<TradingParam[]>(`/admin/trading-systems/${selectedSystemCode}/params`),
+          apiGet<TradingRuleBinding[]>(`/admin/trading-systems/${selectedSystemCode}/rules`),
+        ]);
+        if (!ignore) {
+          setSelectedSystem(detail);
+          setTradingParams(params || []);
+          setTradingBindings(bindings || []);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setSelectedSystem(null);
+          setTradingParams([]);
+          setTradingBindings([]);
+          Toast.show({ content: String(err) || "交易体系加载失败" });
+        }
+      } finally {
+        if (!ignore) {
+          setTradingLoading(false);
+        }
+      }
+    }
+    loadTradingSystem();
+    return () => {
+      ignore = true;
+    };
+  }, [selectedSystemCode]);
 
   async function addWatch() {
     if (!watchForm.code || !watchForm.name) { Toast.show({ content: "请填写代码和名称" }); return; }
@@ -279,6 +380,21 @@ export function AdminPage() {
             </div>
           )}
 
+          {!loading && !error && active === "tradingSystems" && (
+            <TradingSystemPanelEditor
+              systems={tradingSystems}
+              selectedCode={selectedSystemCode}
+              selectedSystem={selectedSystem}
+              params={tradingParams}
+              bindings={tradingBindings}
+              loading={tradingLoading}
+              onSelect={setSelectedSystemCode}
+              rules={tradingRules}
+              executors={registeredExecutors}
+              onSaved={loadAll}
+            />
+          )}
+
           {!loading && !error && active === "tasks" && (
             <div style={{ display: "grid", gap: 10 }}>
               {tasks.map((task) => (
@@ -326,6 +442,521 @@ function TableCard({ rows, empty }: { rows: string[]; empty: string }) {
       {rows.length ? rows.map((row) => (
         <div key={row} style={{ padding: "9px 10px", borderRadius: 10, background: "#f8fafc", color: "#344054", fontSize: 13 }}>{row}</div>
       )) : <div style={{ color: "#98a2b3", textAlign: "center", padding: 20 }}>{empty}</div>}
+    </div>
+  );
+}
+
+function TradingSystemPanel({
+  systems,
+  selectedCode,
+  selectedSystem,
+  params,
+  bindings,
+  loading,
+  onSelect,
+}: {
+  systems: TradingSystem[];
+  selectedCode: string;
+  selectedSystem: TradingSystem | null;
+  params: TradingParam[];
+  bindings: TradingRuleBinding[];
+  loading: boolean;
+  onSelect: (code: string) => void;
+}) {
+  const observeBindings = bindings.filter((item) => item.stage === "observe");
+  const tradingBindings = bindings.filter((item) => item.stage === "trading");
+  const stopLossBindings = bindings.filter((item) => item.stage === "stop_loss");
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 260px) 1fr", gap: 14 }}>
+      <div style={{ background: "#fff", borderRadius: 14, padding: 14, display: "grid", gap: 8, alignContent: "start" }}>
+        <h3 style={{ margin: "0 0 4px", color: "#1d2d50" }}>交易体系列表</h3>
+        {systems.length ? systems.map((system) => (
+          <button
+            key={system.system_code}
+            onClick={() => onSelect(system.system_code)}
+            style={{
+              border: 0,
+              borderRadius: 10,
+              padding: "10px 12px",
+              textAlign: "left",
+              background: selectedCode === system.system_code ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
+              color: selectedCode === system.system_code ? "#fff" : "#344054",
+              cursor: "pointer",
+            }}
+          >
+            <strong style={{ display: "block", fontSize: 14 }}>{system.system_name}</strong>
+            <span style={{ display: "block", marginTop: 4, fontSize: 12, opacity: 0.78 }}>{system.system_code}</span>
+          </button>
+        )) : <div style={{ color: "#98a2b3", fontSize: 13 }}>暂无交易体系</div>}
+      </div>
+
+      <div style={{ display: "grid", gap: 14 }}>
+        {loading && <div style={{ display: "grid", placeItems: "center", minHeight: 120, background: "#fff", borderRadius: 14 }}><SpinLoading /></div>}
+
+        {!loading && selectedSystem && (
+          <>
+            <div style={{ background: "#fff", borderRadius: 14, padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                <div>
+                  <h3 style={{ margin: 0, color: "#1d2d50" }}>{selectedSystem.system_name}</h3>
+                  <p style={{ margin: "6px 0 0", color: "#667085", fontSize: 13 }}>{selectedSystem.system_code}</p>
+                </div>
+                <span style={{ borderRadius: 999, padding: "4px 8px", background: selectedSystem.enabled ? "#ecfdf3" : "#f2f4f7", color: selectedSystem.enabled ? "#027a48" : "#667085", fontSize: 12, fontWeight: 700 }}>
+                  {selectedSystem.enabled ? "启用" : "停用"}
+                </span>
+              </div>
+              <p style={{ margin: "12px 0 0", color: "#344054", fontSize: 13 }}>{selectedSystem.description || "暂无描述"}</p>
+              <p style={{ margin: "6px 0 0", color: "#667085", fontSize: 12 }}>生命周期：{selectedSystem.lifecycle_desc || "-"}</p>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 14, padding: 14 }}>
+              <h3 style={{ margin: "0 0 10px", color: "#1d2d50" }}>观察参数</h3>
+              <div style={{ display: "grid", gap: 8 }}>
+                {params.length ? params.map((param) => (
+                  <ParamRow key={param.param_id} param={param} />
+                )) : <div style={{ color: "#98a2b3", fontSize: 13 }}>暂无参数定义</div>}
+              </div>
+            </div>
+
+            <RuleStageCard title="观察阶段规则" items={observeBindings} />
+            <RuleStageCard title="交易阶段卖点规则" items={tradingBindings} />
+            <RuleStageCard title="止损规则" items={stopLossBindings} />
+          </>
+        )}
+
+        {!loading && !selectedSystem && (
+          <div style={{ background: "#fff", borderRadius: 14, padding: 20, textAlign: "center", color: "#98a2b3" }}>
+            请选择一个交易体系
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ParamRow({ param }: { param: TradingParam }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(120px, 180px) 1fr", gap: 10, padding: "10px 12px", borderRadius: 10, background: "#f8fafc" }}>
+      <div>
+        <strong style={{ display: "block", color: "#1d2d50", fontSize: 13 }}>{param.param_name}</strong>
+        <span style={{ color: "#667085", fontSize: 12 }}>{param.param_key}</span>
+      </div>
+      <div style={{ display: "grid", gap: 4 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <SmallTag>{param.param_type}</SmallTag>
+          <SmallTag>{param.required ? "必填" : "非必填"}</SmallTag>
+          <SmallTag>{param.enabled ? "启用" : "停用"}</SmallTag>
+        </div>
+        <span style={{ color: "#667085", fontSize: 12 }}>{param.description || "-"}</span>
+      </div>
+    </div>
+  );
+}
+
+function RuleStageCard({ title, items }: { title: string; items: TradingRuleBinding[] }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: 14 }}>
+      <h3 style={{ margin: "0 0 10px", color: "#1d2d50" }}>{title}</h3>
+      <div style={{ display: "grid", gap: 8 }}>
+        {items.length ? items.map((binding) => (
+          <div key={binding.binding_id} style={{ padding: "10px 12px", borderRadius: 10, background: "#f8fafc" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <strong style={{ color: "#1d2d50", fontSize: 13 }}>{binding.rule?.rule_name || binding.rule_code}</strong>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <SmallTag>{binding.logic_group || "-"}</SmallTag>
+                <SmallTag>{binding.logic_operator}</SmallTag>
+                <SmallTag>{binding.required ? "必需" : "可选"}</SmallTag>
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: 4, marginTop: 8, color: "#667085", fontSize: 12 }}>
+              <span>规则编码：{binding.rule_code}</span>
+              <span>类型/周期：{binding.rule?.rule_type || "-"} / {binding.rule?.timeframe || "-"}</span>
+              <span>执行器键：{binding.rule?.executor_key || "-"}</span>
+              <span>{binding.rule?.description || "暂无描述"}</span>
+            </div>
+          </div>
+        )) : <div style={{ color: "#98a2b3", fontSize: 13 }}>暂无规则绑定</div>}
+      </div>
+    </div>
+  );
+}
+
+function SmallTag({ children }: { children: string | number }) {
+  return (
+    <span style={{ borderRadius: 999, padding: "2px 7px", background: "#eef2ff", color: "#4052d2", fontSize: 11, fontWeight: 700 }}>
+      {children}
+    </span>
+  );
+}
+
+const RULE_TYPES = ["buy_signal", "sell_signal", "stop_loss", "filter", "confirm"];
+const TIMEFRAMES = ["5m", "15m", "30m", "daily"];
+const PARAM_TYPES = ["number", "text", "select", "boolean"];
+const SYSTEM_STAGES = ["observe", "buy_confirm", "trading", "sell", "stop_loss"];
+const LOGIC_OPERATORS = ["AND", "OR"];
+
+function TradingSystemPanelEditor({
+  systems,
+  selectedCode,
+  selectedSystem,
+  params,
+  bindings,
+  loading,
+  onSelect,
+  rules,
+  executors,
+  onSaved,
+}: {
+  systems: TradingSystem[];
+  selectedCode: string;
+  selectedSystem: TradingSystem | null;
+  params: TradingParam[];
+  bindings: TradingRuleBinding[];
+  loading: boolean;
+  onSelect: (code: string) => void;
+  rules: TradingRule[];
+  executors: string[];
+  onSaved: () => void;
+}) {
+  const registeredExecutors = new Set(executors);
+  const [saving, setSaving] = useState(false);
+  const [systemForm, setSystemForm] = useState<any>(null);
+  const [ruleForm, setRuleForm] = useState<any>(blankRuleForm());
+  const [paramForm, setParamForm] = useState<any>(blankParamForm());
+  const [bindingForm, setBindingForm] = useState<any>(blankBindingForm(rules[0]?.rule_code || ""));
+
+  useEffect(() => {
+    if (selectedSystem) {
+      setSystemForm({ ...selectedSystem });
+    } else {
+      setSystemForm(blankSystemForm());
+    }
+  }, [selectedSystem?.system_code]);
+
+  useEffect(() => {
+    setBindingForm((prev: any) => ({ ...prev, rule_code: prev.rule_code || rules[0]?.rule_code || "" }));
+  }, [rules.length]);
+
+  const selectedBindingRule = rules.find((item) => item.rule_code === bindingForm.rule_code);
+  const ruleExecutorMissing = !!ruleForm.executor_key && !registeredExecutors.has(ruleForm.executor_key);
+  const bindingExecutorMissing = !!selectedBindingRule?.executor_key && !registeredExecutors.has(selectedBindingRule.executor_key);
+
+  async function saveWithToast(action: () => Promise<void>) {
+    setSaving(true);
+    try {
+      await action();
+      Toast.show({ content: "已保存" });
+      await onSaved();
+    } catch (err: any) {
+      Toast.show({ content: err?.message || "保存失败" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveSystem() {
+    if (!systemForm?.system_code || !systemForm?.system_name) {
+      Toast.show({ content: "请填写体系编码和名称" });
+      return;
+    }
+    await saveWithToast(async () => {
+      const payload = normalizeSystemForm(systemForm);
+      if (systemForm.system_id) {
+        await apiPut(`/admin/trading-systems/${systemForm.system_code}`, payload);
+      } else {
+        await apiPost(`/admin/trading-systems`, payload);
+        onSelect(systemForm.system_code);
+      }
+    });
+  }
+
+  async function saveRule() {
+    if (!ruleForm.rule_code || !ruleForm.rule_name || !ruleForm.executor_key) {
+      Toast.show({ content: "请填写规则编码、名称和执行器" });
+      return;
+    }
+    await saveWithToast(async () => {
+      const payload = normalizeRuleForm(ruleForm);
+      if (ruleForm.rule_id) {
+        await apiPut(`/admin/trading-rules/${ruleForm.rule_code}`, payload);
+      } else {
+        await apiPost(`/admin/trading-rules`, payload);
+      }
+      setRuleForm(blankRuleForm());
+    });
+  }
+
+  async function saveParam() {
+    if (!selectedCode) {
+      Toast.show({ content: "请先选择交易体系" });
+      return;
+    }
+    if (!paramForm.param_key || !paramForm.param_name) {
+      Toast.show({ content: "请填写参数编码和名称" });
+      return;
+    }
+    await saveWithToast(async () => {
+      const payload = normalizeParamForm(paramForm);
+      if (paramForm.param_id) {
+        await apiPut(`/admin/trading-params/${paramForm.param_id}`, payload);
+      } else {
+        await apiPost(`/admin/trading-systems/${selectedCode}/params`, payload);
+      }
+      setParamForm(blankParamForm());
+    });
+  }
+
+  async function saveBinding() {
+    if (!selectedCode) {
+      Toast.show({ content: "请先选择交易体系" });
+      return;
+    }
+    if (!bindingForm.rule_code || !bindingForm.stage) {
+      Toast.show({ content: "请选择规则和阶段" });
+      return;
+    }
+    await saveWithToast(async () => {
+      const payload = normalizeBindingForm(bindingForm);
+      if (bindingForm.binding_id) {
+        await apiPut(`/admin/trading-rule-bindings/${bindingForm.binding_id}`, payload);
+      } else {
+        await apiPost(`/admin/trading-systems/${selectedCode}/rules`, payload);
+      }
+      setBindingForm(blankBindingForm(rules[0]?.rule_code || ""));
+    });
+  }
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(190px, 270px) 1fr", gap: 14 }}>
+      <div style={{ background: "#fff", borderRadius: 14, padding: 14, display: "grid", gap: 8, alignContent: "start" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <h3 style={{ margin: 0, color: "#1d2d50" }}>交易体系管理</h3>
+          <Button size="mini" onClick={() => { setSystemForm(blankSystemForm()); onSelect(""); }}>新增</Button>
+        </div>
+        {systems.length ? systems.map((system) => (
+          <button
+            key={system.system_code}
+            onClick={() => onSelect(system.system_code)}
+            style={{
+              border: 0,
+              borderRadius: 10,
+              padding: "10px 12px",
+              textAlign: "left",
+              background: selectedCode === system.system_code ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
+              color: selectedCode === system.system_code ? "#fff" : "#344054",
+              cursor: "pointer",
+            }}
+          >
+            <strong style={{ display: "block", fontSize: 14 }}>{system.system_name}</strong>
+            <span style={{ display: "block", marginTop: 4, fontSize: 12, opacity: 0.78 }}>{system.system_code}</span>
+          </button>
+        )) : <div style={{ color: "#98a2b3", fontSize: 13 }}>暂无交易体系</div>}
+      </div>
+
+      <div style={{ display: "grid", gap: 14 }}>
+        {loading && <div style={{ display: "grid", placeItems: "center", minHeight: 120, background: "#fff", borderRadius: 14 }}><SpinLoading /></div>}
+
+        {!loading && (
+          <>
+            <EditCard title={systemForm?.system_id ? "编辑交易体系" : "新增交易体系"}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                <TextField label="体系编码" value={systemForm?.system_code || ""} disabled={!!systemForm?.system_id} onChange={(v) => setSystemForm({ ...systemForm, system_code: v })} />
+                <TextField label="体系名称" value={systemForm?.system_name || ""} onChange={(v) => setSystemForm({ ...systemForm, system_name: v })} />
+                <TextField label="描述" value={systemForm?.description || ""} onChange={(v) => setSystemForm({ ...systemForm, description: v })} />
+                <TextField label="生命周期说明" value={systemForm?.lifecycle_desc || ""} onChange={(v) => setSystemForm({ ...systemForm, lifecycle_desc: v })} />
+                <TextField label="排序" value={String(systemForm?.sort_order ?? 0)} onChange={(v) => setSystemForm({ ...systemForm, sort_order: v })} />
+                <CheckField label="启用" checked={!!systemForm?.enabled} onChange={(v) => setSystemForm({ ...systemForm, enabled: v })} />
+              </div>
+              <Button color="primary" size="small" loading={saving} onClick={saveSystem}>保存体系</Button>
+            </EditCard>
+
+            <EditCard title={ruleForm.rule_id ? "编辑规则定义" : "新增规则定义"}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                <TextField label="规则编码" value={ruleForm.rule_code} disabled={!!ruleForm.rule_id} onChange={(v) => setRuleForm({ ...ruleForm, rule_code: v })} />
+                <TextField label="规则名称" value={ruleForm.rule_name} onChange={(v) => setRuleForm({ ...ruleForm, rule_name: v })} />
+                <SelectField label="类型" value={ruleForm.rule_type} options={RULE_TYPES} onChange={(v) => setRuleForm({ ...ruleForm, rule_type: v })} />
+                <SelectField label="周期" value={ruleForm.timeframe} options={TIMEFRAMES} onChange={(v) => setRuleForm({ ...ruleForm, timeframe: v })} />
+                <TextField label="executor_key" value={ruleForm.executor_key} onChange={(v) => setRuleForm({ ...ruleForm, executor_key: v })} />
+                <CheckField label="启用" checked={!!ruleForm.enabled} onChange={(v) => setRuleForm({ ...ruleForm, enabled: v })} />
+                <TextField label="描述" value={ruleForm.description || ""} onChange={(v) => setRuleForm({ ...ruleForm, description: v })} />
+              </div>
+              {ruleExecutorMissing && <WarningText />}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Button color="primary" size="small" loading={saving} onClick={saveRule}>保存规则</Button>
+                <Button size="small" onClick={() => setRuleForm(blankRuleForm())}>新增规则</Button>
+              </div>
+            </EditCard>
+
+            {selectedCode && selectedSystem && (
+              <>
+                <EditCard title="参数定义">
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                    <TextField label="参数编码" value={paramForm.param_key} disabled={!!paramForm.param_id} onChange={(v) => setParamForm({ ...paramForm, param_key: v })} />
+                    <TextField label="参数名称" value={paramForm.param_name} onChange={(v) => setParamForm({ ...paramForm, param_name: v })} />
+                    <SelectField label="类型" value={paramForm.param_type} options={PARAM_TYPES} onChange={(v) => setParamForm({ ...paramForm, param_type: v })} />
+                    <TextField label="默认值" value={paramForm.default_value || ""} onChange={(v) => setParamForm({ ...paramForm, default_value: v })} />
+                    <TextField label="排序" value={String(paramForm.sort_order ?? 0)} onChange={(v) => setParamForm({ ...paramForm, sort_order: v })} />
+                    <CheckField label="必填" checked={!!paramForm.required} onChange={(v) => setParamForm({ ...paramForm, required: v })} />
+                    <CheckField label="启用" checked={!!paramForm.enabled} onChange={(v) => setParamForm({ ...paramForm, enabled: v })} />
+                    <TextField label="说明" value={paramForm.description || ""} onChange={(v) => setParamForm({ ...paramForm, description: v })} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button color="primary" size="small" loading={saving} onClick={saveParam}>保存参数</Button>
+                    <Button size="small" onClick={() => setParamForm(blankParamForm())}>新增参数</Button>
+                  </div>
+                  <SimpleRows
+                    empty="暂无参数定义"
+                    rows={params.map((param) => ({
+                      key: String(param.param_id),
+                      title: `${param.param_name} / ${param.param_key}`,
+                      desc: `${param.param_type} / ${param.required ? "必填" : "非必填"} / 排序 ${param.sort_order}`,
+                      enabled: param.enabled,
+                      onEdit: () => setParamForm({ ...param }),
+                    }))}
+                  />
+                </EditCard>
+
+                <EditCard title="体系规则绑定">
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                    <SelectField label="规则" value={bindingForm.rule_code} options={rules.map((rule) => rule.rule_code)} onChange={(v) => setBindingForm({ ...bindingForm, rule_code: v })} />
+                    <SelectField label="阶段" value={bindingForm.stage} options={SYSTEM_STAGES} onChange={(v) => setBindingForm({ ...bindingForm, stage: v })} />
+                    <TextField label="logic_group" value={bindingForm.logic_group || ""} onChange={(v) => setBindingForm({ ...bindingForm, logic_group: v })} />
+                    <SelectField label="logic_operator" value={bindingForm.logic_operator} options={LOGIC_OPERATORS} onChange={(v) => setBindingForm({ ...bindingForm, logic_operator: v })} />
+                    <TextField label="排序" value={String(bindingForm.sort_order ?? 0)} onChange={(v) => setBindingForm({ ...bindingForm, sort_order: v })} />
+                    <CheckField label="required" checked={!!bindingForm.required} onChange={(v) => setBindingForm({ ...bindingForm, required: v })} />
+                    <CheckField label="启用" checked={!!bindingForm.enabled} onChange={(v) => setBindingForm({ ...bindingForm, enabled: v })} />
+                  </div>
+                  {bindingExecutorMissing && <WarningText />}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button color="primary" size="small" loading={saving} onClick={saveBinding}>保存绑定</Button>
+                    <Button size="small" onClick={() => setBindingForm(blankBindingForm(rules[0]?.rule_code || ""))}>新增绑定</Button>
+                  </div>
+                  <SimpleRows
+                    empty="暂无规则绑定"
+                    rows={bindings.map((binding) => ({
+                      key: String(binding.binding_id),
+                      title: `${binding.rule?.rule_name || binding.rule_code} / ${binding.stage}`,
+                      desc: `${binding.logic_group || "-"} ${binding.logic_operator} / ${binding.required ? "必需" : "可选"} / ${binding.rule?.executor_key || "-"}`,
+                      enabled: binding.enabled,
+                      warning: !!binding.rule?.executor_key && !registeredExecutors.has(binding.rule.executor_key),
+                      onEdit: () => setBindingForm({ ...binding }),
+                    }))}
+                  />
+                </EditCard>
+              </>
+            )}
+
+            <EditCard title="规则定义列表">
+              <SimpleRows
+                empty="暂无规则定义"
+                rows={rules.map((rule) => ({
+                  key: rule.rule_code,
+                  title: `${rule.rule_name} / ${rule.rule_code}`,
+                  desc: `${rule.rule_type} / ${rule.timeframe} / ${rule.executor_key}`,
+                  enabled: rule.enabled,
+                  warning: !!rule.executor_key && !registeredExecutors.has(rule.executor_key),
+                  onEdit: () => setRuleForm({ ...rule }),
+                }))}
+              />
+            </EditCard>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function blankSystemForm() {
+  return { system_code: "", system_name: "", description: "", lifecycle_desc: "", enabled: true, sort_order: 0 };
+}
+
+function blankRuleForm() {
+  return { rule_code: "", rule_name: "", rule_type: "buy_signal", timeframe: "15m", executor_key: "", description: "", enabled: true };
+}
+
+function blankParamForm() {
+  return { param_key: "", param_name: "", param_type: "number", required: false, default_value: "", description: "", sort_order: 0, enabled: true };
+}
+
+function blankBindingForm(ruleCode: string) {
+  return { rule_code: ruleCode, stage: "observe", required: false, logic_group: "", logic_operator: "AND", enabled: true, sort_order: 0 };
+}
+
+function normalizeSystemForm(form: any) {
+  return { ...form, system_code: String(form.system_code || "").trim(), system_name: String(form.system_name || "").trim(), sort_order: Number(form.sort_order || 0), enabled: !!form.enabled };
+}
+
+function normalizeRuleForm(form: any) {
+  return { ...form, rule_code: String(form.rule_code || "").trim(), rule_name: String(form.rule_name || "").trim(), executor_key: String(form.executor_key || "").trim(), enabled: !!form.enabled };
+}
+
+function normalizeParamForm(form: any) {
+  return { ...form, param_key: String(form.param_key || "").trim(), param_name: String(form.param_name || "").trim(), sort_order: Number(form.sort_order || 0), required: !!form.required, enabled: !!form.enabled };
+}
+
+function normalizeBindingForm(form: any) {
+  return { ...form, sort_order: Number(form.sort_order || 0), required: !!form.required, enabled: !!form.enabled };
+}
+
+function EditCard({ title, children }: { title: string; children: any }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: 14, display: "grid", gap: 12 }}>
+      <h3 style={{ margin: 0, color: "#1d2d50" }}>{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function TextField({ label, value, disabled, onChange }: { label: string; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+  return (
+    <label style={{ display: "grid", gap: 4 }}>
+      <FormLabel text={label} />
+      <Input value={value} disabled={disabled} onChange={onChange} style={{ "--background": "#f8fafc", "--border-radius": "8px", "--padding-left": "10px" } as any} />
+    </label>
+  );
+}
+
+function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return (
+    <label style={{ display: "grid", gap: 4 }}>
+      <FormLabel text={label} />
+      <select value={value} onChange={(event) => onChange(event.target.value)} style={{ height: 34, border: "1px solid #e4e7ec", borderRadius: 8, background: "#f8fafc", color: "#344054", padding: "0 8px" }}>
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function CheckField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 52, color: "#344054", fontSize: 13, fontWeight: 700 }}>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+function WarningText() {
+  return <div style={{ borderRadius: 8, background: "#fff7ed", color: "#b54708", padding: "8px 10px", fontSize: 12, fontWeight: 700 }}>该规则暂无执行器，不能参与自动监控</div>;
+}
+
+function SimpleRows({ rows, empty }: { rows: { key: string; title: string; desc: string; enabled: boolean; warning?: boolean; onEdit: () => void }[]; empty: string }) {
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {rows.length ? rows.map((row) => (
+        <div key={row.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, background: "#f8fafc" }}>
+          <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+            <strong style={{ color: "#1d2d50", fontSize: 13 }}>{row.title}</strong>
+            <span style={{ color: "#667085", fontSize: 12 }}>{row.desc}</span>
+            {row.warning && <span style={{ color: "#b54708", fontSize: 12 }}>该规则暂无执行器，不能参与自动监控</span>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <SmallTag>{row.enabled ? "启用" : "停用"}</SmallTag>
+            <Button size="mini" onClick={row.onEdit}>编辑</Button>
+          </div>
+        </div>
+      )) : <div style={{ color: "#98a2b3", fontSize: 13 }}>{empty}</div>}
     </div>
   );
 }

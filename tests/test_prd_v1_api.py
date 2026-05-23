@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 import pytest
 
-from app.models import ConfigDictionary, MktDailyPlate, MktDailyPlateStock, MktHotStock, MktLimitUpStock, ReviewForm, WatchPool, WatchPoolStatusLog, WatchSignal, WatchTrade
+from app.models import ConfigDictionary, MktDailyPlate, MktDailyPlateStock, MktHotStock, MktLimitUpStock, ReviewForm, TradingRuleDefinition, TradingSystemDefinition, TradingSystemParamDefinition, TradingSystemRuleBinding, WatchPool, WatchPoolStatusLog, WatchSignal, WatchTrade
 from app.services.prd_v1 import PrdWatchPoolService, SeedService
 from app.services.tasks import TaskService
 
@@ -59,6 +59,106 @@ def test_common_dictionaries_include_watch_pool_codes_and_are_idempotent(client,
         assert by_type[dict_type]
     forbidden_types = {"daily_trade_plan", "strict_mode", "watch_score", "market_score", "auto_add_candidates"}
     assert forbidden_types.isdisjoint(by_type)
+
+
+def test_trading_system_seed_data_is_idempotent(db_session):
+    first = SeedService(db_session).init_defaults()
+    counts_after_first = {
+        "systems": db_session.query(TradingSystemDefinition).count(),
+        "params": db_session.query(TradingSystemParamDefinition).count(),
+        "rules": db_session.query(TradingRuleDefinition).count(),
+        "bindings": db_session.query(TradingSystemRuleBinding).count(),
+    }
+    second = SeedService(db_session).init_defaults()
+    counts_after_second = {
+        "systems": db_session.query(TradingSystemDefinition).count(),
+        "params": db_session.query(TradingSystemParamDefinition).count(),
+        "rules": db_session.query(TradingRuleDefinition).count(),
+        "bindings": db_session.query(TradingSystemRuleBinding).count(),
+    }
+
+    assert first["created"] > 0
+    assert second["created"] == 0
+    assert counts_after_first == counts_after_second
+    assert counts_after_first == {"systems": 4, "params": 5, "rules": 6, "bindings": 6}
+
+    systems = {row.system_code: row.system_name for row in db_session.query(TradingSystemDefinition).all()}
+    assert systems == {
+        "platform_breakout": "平台突破",
+        "uptrend": "上涨趋势",
+        "limit_relay": "涨停接力",
+        "oversold_rebound": "超跌反弹",
+    }
+
+    platform_params = {
+        row.param_key: (row.param_name, row.param_type, row.required)
+        for row in db_session.query(TradingSystemParamDefinition).filter_by(system_code="platform_breakout").all()
+    }
+    assert platform_params == {
+        "platform_upper_price": ("箱体上沿", "number", True),
+        "platform_support_price": ("平台支撑位", "number", True),
+        "key_observe_price": ("关键观察价", "number", True),
+        "auto_remove_price": ("自动剔除价", "number", False),
+        "invalid_condition": ("失效条件", "text", True),
+    }
+
+    rules = {
+        row.rule_code: (row.rule_type, row.timeframe, row.executor_key)
+        for row in db_session.query(TradingRuleDefinition).all()
+    }
+    assert rules["not_break_platform_upper"] == ("filter", "daily", "not_break_price")
+    assert rules["b5_divergence"] == ("buy_signal", "5m", "macd_bottom_divergence")
+    assert rules["b15_divergence"] == ("buy_signal", "15m", "macd_bottom_divergence")
+    assert rules["m5_top_divergence"] == ("sell_signal", "5m", "macd_top_divergence")
+    assert rules["m30_dead_cross"] == ("sell_signal", "30m", "macd_dead_cross")
+    assert rules["break_platform_support"] == ("stop_loss", "daily", "break_price")
+
+    bindings = {
+        (row.stage, row.rule_code): (row.required, row.logic_group, row.logic_operator)
+        for row in db_session.query(TradingSystemRuleBinding).filter_by(system_code="platform_breakout").all()
+    }
+    assert bindings[("observe", "not_break_platform_upper")] == (True, "platform_retest", "AND")
+    assert bindings[("observe", "b5_divergence")] == (False, "bottom_divergence", "OR")
+    assert bindings[("observe", "b15_divergence")] == (False, "bottom_divergence", "OR")
+    assert bindings[("trading", "m5_top_divergence")] == (False, "sell_signal", "OR")
+    assert bindings[("trading", "m30_dead_cross")] == (False, "sell_signal", "OR")
+    assert bindings[("stop_loss", "break_platform_support")] == (False, "stop_loss", "OR")
+
+
+def test_admin_trading_system_readonly_endpoints(client):
+    headers = {"X-Admin-Token": "dev-admin-token"}
+
+    systems_response = client.get("/api/admin/trading-systems", headers=headers)
+    assert systems_response.status_code == 200
+    systems = systems_response.json()["data"]
+    assert [row["system_code"] for row in systems] == ["platform_breakout", "uptrend", "limit_relay", "oversold_rebound"]
+
+    detail_response = client.get("/api/admin/trading-systems/platform_breakout", headers=headers)
+    assert detail_response.status_code == 200
+    assert detail_response.json()["data"]["system_name"] == "平台突破"
+
+    rules_response = client.get("/api/admin/trading-rules", headers=headers)
+    assert rules_response.status_code == 200
+    rule_codes = {row["rule_code"] for row in rules_response.json()["data"]}
+    assert "b5_divergence" in rule_codes
+    assert "break_platform_support" in rule_codes
+
+    params_response = client.get("/api/admin/trading-systems/platform_breakout/params", headers=headers)
+    assert params_response.status_code == 200
+    assert [row["param_key"] for row in params_response.json()["data"]] == [
+        "platform_upper_price",
+        "platform_support_price",
+        "key_observe_price",
+        "auto_remove_price",
+        "invalid_condition",
+    ]
+
+    bindings_response = client.get("/api/admin/trading-systems/platform_breakout/rules", headers=headers)
+    assert bindings_response.status_code == 200
+    bindings = bindings_response.json()["data"]
+    assert len(bindings) == 6
+    assert bindings[0]["rule"] is not None
+    assert {row["stage"] for row in bindings} == {"observe", "trading", "stop_loss"}
 
 
 def test_h5_market_uses_raw_hot_stock_fields(client, db_session):
@@ -304,6 +404,50 @@ def test_watch_pool_add_requires_invalid_condition(client):
     response = client.post("/api/h5/watch-pool", json=payload)
     assert response.status_code == 400
     assert "invalid_condition" in response.json()["detail"]
+
+
+def test_watch_pool_add_with_trading_system_instance_params(client, db_session):
+    SeedService(db_session).init_defaults()
+    payload = {
+        "stock_code": "688001.SH",
+        "stock_name": "Platform Test",
+        "trading_system_code": "platform_breakout",
+        "entry_reason": "platform retest",
+        "system_params_json": {
+            "platform_upper_price": 20.5,
+            "platform_support_price": 19.2,
+            "key_observe_price": 20.8,
+            "invalid_condition": "close below platform support",
+        },
+    }
+    response = client.post("/api/h5/watch-pool", json=payload)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["trading_system"] == "platform_breakout"
+    assert data["trading_system_code"] == "platform_breakout"
+    assert data["trading_system_name"] == "平台突破"
+    assert data["system_stage"] == "observe"
+    assert data["system_params_json"]["platform_upper_price"] == 20.5
+    assert data["key_observe_price"] == 20.8
+    assert data["invalid_condition"] == "close below platform support"
+    assert "not_break_platform_upper" in data["active_rule_codes_json"]
+
+
+def test_watch_pool_add_with_system_code_requires_defined_params(client, db_session):
+    SeedService(db_session).init_defaults()
+    response = client.post("/api/h5/watch-pool", json={
+        "stock_code": "688002.SH",
+        "stock_name": "Missing Params",
+        "trading_system_code": "platform_breakout",
+        "entry_reason": "platform retest",
+        "system_params_json": {
+            "platform_upper_price": 20.5,
+            "key_observe_price": 20.8,
+            "invalid_condition": "close below platform support",
+        },
+    })
+    assert response.status_code == 400
+    assert "platform_support_price" in response.json()["detail"]
 
 
 def test_watch_pool_duplicate_add_updates_existing_row(db_session):

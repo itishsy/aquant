@@ -19,6 +19,10 @@ from app.models import (
     ConfigStrategy,
     ConfigTask,
     ConfigTaskLog,
+    TradingRuleDefinition,
+    TradingSystemDefinition,
+    TradingSystemParamDefinition,
+    TradingSystemRuleBinding,
     WatchPool,
     WatchSignal,
     WatchTrade,
@@ -47,6 +51,83 @@ def _mask_source(row: ConfigDataSource) -> dict:
         "config_json": config,
         "enabled": row.enabled,
     }
+
+
+def _trading_system_row(row: TradingSystemDefinition) -> dict:
+    return {
+        "system_id": row.system_id,
+        "system_code": row.system_code,
+        "system_name": row.system_name,
+        "description": row.description,
+        "lifecycle_desc": row.lifecycle_desc,
+        "enabled": row.enabled,
+        "sort_order": row.sort_order,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _trading_rule_row(row: TradingRuleDefinition) -> dict:
+    return {
+        "rule_id": row.rule_id,
+        "rule_code": row.rule_code,
+        "rule_name": row.rule_name,
+        "rule_type": row.rule_type,
+        "timeframe": row.timeframe,
+        "executor_key": row.executor_key,
+        "description": row.description,
+        "enabled": row.enabled,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _trading_param_row(row: TradingSystemParamDefinition) -> dict:
+    return {
+        "param_id": row.param_id,
+        "system_code": row.system_code,
+        "param_key": row.param_key,
+        "param_name": row.param_name,
+        "param_type": row.param_type,
+        "required": row.required,
+        "default_value": row.default_value,
+        "description": row.description,
+        "sort_order": row.sort_order,
+        "enabled": row.enabled,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _trading_binding_row(row: TradingSystemRuleBinding, rule: TradingRuleDefinition | None = None) -> dict:
+    return {
+        "binding_id": row.binding_id,
+        "system_code": row.system_code,
+        "rule_code": row.rule_code,
+        "stage": row.stage,
+        "required": row.required,
+        "logic_group": row.logic_group,
+        "logic_operator": row.logic_operator,
+        "enabled": row.enabled,
+        "sort_order": row.sort_order,
+        "config_json": row.config_json or {},
+        "rule": _trading_rule_row(rule) if rule else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _required_payload_text(payload: dict, key: str, label: str) -> str:
+    value = str(payload.get(key) or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail=f"{label} is required")
+    return value
+
+
+def _validate_choice(value: str, allowed: set[str], label: str) -> str:
+    if value not in allowed:
+        raise HTTPException(status_code=400, detail=f"{label} is invalid")
+    return value
 
 
 @router.get("/dashboard/overview")
@@ -205,6 +286,8 @@ def run_config_task(task_id: int, db: Session = Depends(get_db), admin=Depends(r
         "update_watch_15m_kline": svc.update_watch_15m_kline,
         "update_watch_prices": svc.update_watch_prices,
         "scan_watch_signals": svc.scan_watch_signals,
+        "scan_watch_rules": svc.scan_watch_rules,
+        "scan_trade_rules": svc.scan_trade_rules,
         "auto_remove_watch_pool": svc.auto_remove_watch_pool,
         "scan_trade_risk_signals": svc.scan_trade_risk_signals,
         "generate_weekly_review_form": svc.generate_weekly_review_form,
@@ -348,6 +431,241 @@ def strategy_defaults(db: Session = Depends(get_db), admin=Depends(require_admin
     return list_strategies(db, admin)
 
 
+@router.get("/trading-systems")
+def list_trading_systems(db: Session = Depends(get_db), admin=Depends(require_admin)):
+    SeedService(db).init_defaults()
+    rows = db.query(TradingSystemDefinition).order_by(TradingSystemDefinition.sort_order.asc(), TradingSystemDefinition.system_id.asc()).all()
+    return ok([_trading_system_row(row) for row in rows])
+
+
+@router.post("/trading-systems")
+def create_trading_system(payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    system_code = _required_payload_text(payload, "system_code", "system_code")
+    system_name = _required_payload_text(payload, "system_name", "system_name")
+    if db.query(TradingSystemDefinition).filter(TradingSystemDefinition.system_code == system_code).first():
+        raise HTTPException(status_code=409, detail="system_code already exists")
+    row = TradingSystemDefinition(
+        system_code=system_code,
+        system_name=system_name,
+        description=payload.get("description") or "",
+        lifecycle_desc=payload.get("lifecycle_desc") or "",
+        enabled=bool(payload.get("enabled", True)),
+        sort_order=int(payload.get("sort_order") or 0),
+    )
+    db.add(row)
+    db.flush()
+    record_operation(db, "create", "trading_system_definition", row.system_id, "新增交易体系", payload)
+    db.commit()
+    db.refresh(row)
+    return ok(_trading_system_row(row))
+
+
+@router.get("/trading-systems/{system_code}")
+def get_trading_system(system_code: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    SeedService(db).init_defaults()
+    row = db.query(TradingSystemDefinition).filter(TradingSystemDefinition.system_code == system_code).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return ok(_trading_system_row(row))
+
+
+@router.put("/trading-systems/{system_code}")
+def update_trading_system(system_code: str, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    row = db.query(TradingSystemDefinition).filter(TradingSystemDefinition.system_code == system_code).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    for key in ["system_name", "description", "lifecycle_desc", "enabled", "sort_order"]:
+        if key in payload:
+            setattr(row, key, payload[key])
+    record_operation(db, "update", "trading_system_definition", row.system_id, "编辑交易体系", payload)
+    db.commit()
+    db.refresh(row)
+    return ok(_trading_system_row(row))
+
+
+@router.get("/trading-executors")
+def list_trading_executors(admin=Depends(require_admin)):
+    from app.rule_executors import list_executors
+
+    return ok(list_executors())
+
+
+@router.get("/trading-rules")
+def list_trading_rules(db: Session = Depends(get_db), admin=Depends(require_admin)):
+    SeedService(db).init_defaults()
+    rows = db.query(TradingRuleDefinition).order_by(TradingRuleDefinition.rule_type.asc(), TradingRuleDefinition.rule_id.asc()).all()
+    return ok([_trading_rule_row(row) for row in rows])
+
+
+@router.post("/trading-rules")
+def create_trading_rule(payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    rule_code = _required_payload_text(payload, "rule_code", "rule_code")
+    rule_name = _required_payload_text(payload, "rule_name", "rule_name")
+    rule_type = _validate_choice(_required_payload_text(payload, "rule_type", "rule_type"), {"buy_signal", "sell_signal", "stop_loss", "filter", "confirm"}, "rule_type")
+    timeframe = _validate_choice(_required_payload_text(payload, "timeframe", "timeframe"), {"5m", "15m", "30m", "daily"}, "timeframe")
+    executor_key = _required_payload_text(payload, "executor_key", "executor_key")
+    if db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == rule_code).first():
+        raise HTTPException(status_code=409, detail="rule_code already exists")
+    row = TradingRuleDefinition(
+        rule_code=rule_code,
+        rule_name=rule_name,
+        rule_type=rule_type,
+        timeframe=timeframe,
+        executor_key=executor_key,
+        description=payload.get("description") or "",
+        enabled=bool(payload.get("enabled", True)),
+    )
+    db.add(row)
+    db.flush()
+    record_operation(db, "create", "trading_rule_definition", row.rule_id, "新增交易规则", payload)
+    db.commit()
+    db.refresh(row)
+    return ok(_trading_rule_row(row))
+
+
+@router.put("/trading-rules/{rule_code}")
+def update_trading_rule(rule_code: str, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    row = db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == rule_code).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    if "rule_name" in payload:
+        row.rule_name = _required_payload_text(payload, "rule_name", "rule_name")
+    if "rule_type" in payload:
+        row.rule_type = _validate_choice(str(payload["rule_type"]), {"buy_signal", "sell_signal", "stop_loss", "filter", "confirm"}, "rule_type")
+    if "timeframe" in payload:
+        row.timeframe = _validate_choice(str(payload["timeframe"]), {"5m", "15m", "30m", "daily"}, "timeframe")
+    for key in ["executor_key", "description", "enabled"]:
+        if key in payload:
+            setattr(row, key, payload[key])
+    record_operation(db, "update", "trading_rule_definition", row.rule_id, "编辑交易规则", payload)
+    db.commit()
+    db.refresh(row)
+    return ok(_trading_rule_row(row))
+
+
+@router.get("/trading-systems/{system_code}/params")
+def list_trading_system_params(system_code: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    SeedService(db).init_defaults()
+    rows = (
+        db.query(TradingSystemParamDefinition)
+        .filter(TradingSystemParamDefinition.system_code == system_code)
+        .order_by(TradingSystemParamDefinition.sort_order.asc(), TradingSystemParamDefinition.param_id.asc())
+        .all()
+    )
+    return ok([_trading_param_row(row) for row in rows])
+
+
+@router.post("/trading-systems/{system_code}/params")
+def create_trading_system_param(system_code: str, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    if not db.query(TradingSystemDefinition).filter(TradingSystemDefinition.system_code == system_code).first():
+        raise HTTPException(status_code=404, detail="SYSTEM_NOT_FOUND")
+    param_key = _required_payload_text(payload, "param_key", "param_key")
+    param_name = _required_payload_text(payload, "param_name", "param_name")
+    param_type = _validate_choice(_required_payload_text(payload, "param_type", "param_type"), {"number", "text", "select", "boolean"}, "param_type")
+    if db.query(TradingSystemParamDefinition).filter_by(system_code=system_code, param_key=param_key).first():
+        raise HTTPException(status_code=409, detail="param_key already exists")
+    row = TradingSystemParamDefinition(
+        system_code=system_code,
+        param_key=param_key,
+        param_name=param_name,
+        param_type=param_type,
+        required=bool(payload.get("required", False)),
+        default_value=payload.get("default_value"),
+        description=payload.get("description") or "",
+        sort_order=int(payload.get("sort_order") or 0),
+        enabled=bool(payload.get("enabled", True)),
+    )
+    db.add(row)
+    db.flush()
+    record_operation(db, "create", "trading_system_param_definition", row.param_id, "新增交易体系参数", payload)
+    db.commit()
+    db.refresh(row)
+    return ok(_trading_param_row(row))
+
+
+@router.put("/trading-params/{param_id}")
+def update_trading_system_param(param_id: int, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    row = db.query(TradingSystemParamDefinition).filter(TradingSystemParamDefinition.param_id == param_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    if "param_name" in payload:
+        row.param_name = _required_payload_text(payload, "param_name", "param_name")
+    if "param_type" in payload:
+        row.param_type = _validate_choice(str(payload["param_type"]), {"number", "text", "select", "boolean"}, "param_type")
+    for key in ["required", "default_value", "description", "sort_order", "enabled"]:
+        if key in payload:
+            setattr(row, key, payload[key])
+    record_operation(db, "update", "trading_system_param_definition", row.param_id, "编辑交易体系参数", payload)
+    db.commit()
+    db.refresh(row)
+    return ok(_trading_param_row(row))
+
+
+@router.get("/trading-systems/{system_code}/rules")
+def list_trading_system_rules(system_code: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    SeedService(db).init_defaults()
+    rows = (
+        db.query(TradingSystemRuleBinding, TradingRuleDefinition)
+        .outerjoin(TradingRuleDefinition, TradingRuleDefinition.rule_code == TradingSystemRuleBinding.rule_code)
+        .filter(TradingSystemRuleBinding.system_code == system_code)
+        .order_by(TradingSystemRuleBinding.stage.asc(), TradingSystemRuleBinding.sort_order.asc(), TradingSystemRuleBinding.binding_id.asc())
+        .all()
+    )
+    return ok([_trading_binding_row(binding, rule) for binding, rule in rows])
+
+
+@router.post("/trading-systems/{system_code}/rules")
+def create_trading_system_rule_binding(system_code: str, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    if not db.query(TradingSystemDefinition).filter(TradingSystemDefinition.system_code == system_code).first():
+        raise HTTPException(status_code=404, detail="SYSTEM_NOT_FOUND")
+    rule_code = _required_payload_text(payload, "rule_code", "rule_code")
+    if not db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == rule_code).first():
+        raise HTTPException(status_code=404, detail="RULE_NOT_FOUND")
+    stage = _validate_choice(_required_payload_text(payload, "stage", "stage"), {"observe", "buy_confirm", "trading", "sell", "stop_loss"}, "stage")
+    if db.query(TradingSystemRuleBinding).filter_by(system_code=system_code, rule_code=rule_code, stage=stage).first():
+        raise HTTPException(status_code=409, detail="binding already exists")
+    row = TradingSystemRuleBinding(
+        system_code=system_code,
+        rule_code=rule_code,
+        stage=stage,
+        required=bool(payload.get("required", False)),
+        logic_group=payload.get("logic_group") or "",
+        logic_operator=_validate_choice(str(payload.get("logic_operator") or "AND"), {"AND", "OR"}, "logic_operator"),
+        enabled=bool(payload.get("enabled", True)),
+        sort_order=int(payload.get("sort_order") or 0),
+        config_json=payload.get("config_json") or {},
+    )
+    db.add(row)
+    db.flush()
+    record_operation(db, "create", "trading_system_rule_binding", row.binding_id, "新增体系规则绑定", payload)
+    db.commit()
+    rule = db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == row.rule_code).first()
+    return ok(_trading_binding_row(row, rule))
+
+
+@router.put("/trading-rule-bindings/{binding_id}")
+def update_trading_system_rule_binding(binding_id: int, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    row = db.query(TradingSystemRuleBinding).filter(TradingSystemRuleBinding.binding_id == binding_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    if "rule_code" in payload:
+        rule_code = _required_payload_text(payload, "rule_code", "rule_code")
+        if not db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == rule_code).first():
+            raise HTTPException(status_code=404, detail="RULE_NOT_FOUND")
+        row.rule_code = rule_code
+    if "stage" in payload:
+        row.stage = _validate_choice(str(payload["stage"]), {"observe", "buy_confirm", "trading", "sell", "stop_loss"}, "stage")
+    if "logic_operator" in payload:
+        row.logic_operator = _validate_choice(str(payload["logic_operator"]), {"AND", "OR"}, "logic_operator")
+    for key in ["required", "logic_group", "enabled", "sort_order", "config_json"]:
+        if key in payload:
+            setattr(row, key, payload[key])
+    record_operation(db, "update", "trading_system_rule_binding", row.binding_id, "编辑体系规则绑定", payload)
+    db.commit()
+    rule = db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == row.rule_code).first()
+    return ok(_trading_binding_row(row, rule))
+
+
 @router.get("/logs/operations")
 def operation_logs(db: Session = Depends(get_db), admin=Depends(require_admin)):
     return ok([{"log_id": row.log_id, "operation_type": row.operation_type, "target_type": row.target_type, "summary": row.summary, "created_at": row.created_at} for row in db.query(ConfigOperationLog).order_by(ConfigOperationLog.created_at.desc()).limit(100).all()])
@@ -398,6 +716,11 @@ def _watch_row(row):
     return {
         "watch_id": row.id, "stock_code": row.stock_code, "stock_name": row.stock_name,
         "status": row.status, "trading_system": row.trading_system,
+        "trading_system_code": row.trading_system_code,
+        "system_stage": row.system_stage or "observe",
+        "system_params_json": row.system_params_json or {},
+        "active_rule_codes_json": row.active_rule_codes_json or [],
+        "next_action": row.next_action,
         "key_observe_price": row.key_observe_price, "auto_remove_price": row.auto_remove_price,
         "invalid_condition": row.invalid_condition, "entry_reason": row.entry_reason,
         "monitor_enabled": row.monitor_enabled, "signal_enabled": row.signal_enabled,
@@ -411,6 +734,9 @@ def _signal_row(row):
         "signal_id": row.signal_id, "watch_id": row.watch_id,
         "stock_code": row.stock_code, "stock_name": row.stock_name,
         "signal_type": row.signal_type, "buy_point_type": row.buy_point_type,
+        "trading_system_code": row.trading_system_code,
+        "rule_code": row.rule_code,
+        "rule_type": row.rule_type,
         "strategy_name": row.strategy_name, "signal_level": row.signal_level,
         "signal_status": row.signal_status, "trading_system": row.trading_system,
         "trigger_price": row.trigger_price, "trigger_time": row.trigger_time.isoformat() if row.trigger_time else None,
@@ -421,6 +747,10 @@ def _signal_row(row):
         "buy_point_confirm_time": row.buy_point_confirm_time.isoformat() if row.buy_point_confirm_time else None,
         "buy_point_confirm_price": row.buy_point_confirm_price,
         "user_action": row.user_action, "related_trade_id": row.related_trade_id,
+        "snapshot_json": row.snapshot_json or row.raw_snapshot or {},
+        "notification_sent": row.notification_sent,
+        "notification_sent_at": row.notification_sent_at.isoformat() if row.notification_sent_at else None,
+        "notification_error": row.notification_error,
     }
 
 
@@ -429,6 +759,13 @@ def _trade_row(row):
         "trade_id": row.id, "signal_id": row.signal_id, "watch_id": row.watch_id,
         "stock_code": row.stock_code, "stock_name": row.stock_name,
         "trading_system": row.trading_system, "buy_point_type": row.buy_point_type,
+        "trading_system_code": row.trading_system_code,
+        "entry_rule_code": row.entry_rule_code,
+        "system_params_json": row.system_params_json or {},
+        "active_sell_rule_codes_json": row.active_sell_rule_codes_json or [],
+        "active_stop_rule_codes_json": row.active_stop_rule_codes_json or [],
+        "current_stage": row.current_stage or "trading",
+        "latest_trade_signal_id": row.latest_trade_signal_id,
         "first_buy_price": row.first_buy_price, "total_buy_amount": row.total_buy_amount,
         "average_buy_price": row.average_buy_price, "remaining_amount": row.remaining_amount,
         "position_ratio": row.position_ratio, "stop_loss_price": row.stop_loss_price,
@@ -496,6 +833,9 @@ def admin_add_watch(payload: dict, db: Session = Depends(get_db), admin=Depends(
             "stock_code": code,
             "stock_name": stock_name,
             "trading_system": payload.get("trading_system", "uptrend"),
+            "trading_system_code": payload.get("trading_system_code"),
+            "system_params_json": payload.get("system_params_json"),
+            "system_stage": payload.get("system_stage", "observe"),
             "entry_reason": payload.get("entry_reason", "后台手动添加"),
             "reason": payload.get("entry_reason", "后台手动添加"),
             "key_observe_price": key_observe_price,
@@ -589,12 +929,17 @@ def admin_list_trades(db: Session = Depends(get_db), admin=Depends(require_admin
 
 @router.post("/watch-signals/{signal_id}/create-trade")
 def admin_create_trade(signal_id: int, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    from app.services.trade_context import apply_confirm_buy_trade_context
+
     signal = db.query(WatchSignal).filter(WatchSignal.signal_id == signal_id).first()
     if not signal:
         raise HTTPException(status_code=404, detail="signal not found")
 
     existing = db.query(WatchTrade).filter(WatchTrade.signal_id == signal_id).first()
     if existing:
+        watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first() if signal.watch_id else None
+        apply_confirm_buy_trade_context(db, existing, signal, watch)
+        db.commit()
         return ok(_trade_row(existing), message="signal already has a trade")
 
     now = datetime.utcnow()
@@ -604,12 +949,15 @@ def admin_create_trade(signal_id: int, payload: dict, db: Session = Depends(get_
     stop_loss_price = _optional_positive_float(payload, "stop_loss_price", "止损价")
     target_price = _optional_positive_float(payload, "target_price", "目标价")
 
+    watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first() if signal.watch_id else None
     trade = WatchTrade(
         signal_id=signal.signal_id,
         watch_id=signal.watch_id,
         stock_code=signal.stock_code,
         stock_name=signal.stock_name,
         trading_system=signal.trading_system,
+        trading_system_code=signal.trading_system_code or (watch.trading_system_code if watch else None),
+        entry_rule_code=signal.rule_code or signal.buy_point_type,
         buy_point_type=signal.buy_point_type,
         first_buy_time=now,
         first_buy_price=buy_price,
@@ -625,6 +973,7 @@ def admin_create_trade(signal_id: int, payload: dict, db: Session = Depends(get_
     )
     db.add(trade)
     db.flush()
+    apply_confirm_buy_trade_context(db, trade, signal, watch)
 
     db.add(WatchTradeExecution(
         trade_id=trade.id, signal_id=signal.signal_id, watch_id=signal.watch_id,
@@ -641,9 +990,9 @@ def admin_create_trade(signal_id: int, payload: dict, db: Session = Depends(get_
     signal.buy_point_confirm_time = signal.buy_point_confirm_time or now
     signal.buy_point_confirm_price = signal.buy_point_confirm_price or buy_price
 
-    watch = db.query(WatchPool).filter(WatchPool.id == signal.watch_id).first()
     if watch:
         watch.status = "trading"
+        watch.system_stage = "trading"
         watch.monitor_enabled = False
         watch.signal_enabled = False
 

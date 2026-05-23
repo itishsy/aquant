@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     daily_collection_hour: int = 16
     daily_collection_minute: int = 10
     timezone: str = "Asia/Shanghai"
+    email_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_to: str = ""
+    smtp_use_tls: bool = True
+    app_base_url: str = "http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(
         env_file=".env",

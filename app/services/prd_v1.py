@@ -27,6 +27,10 @@ from app.models import (
     WatchTrade,
     WatchTradeExecution,
     ReviewTrade,
+    TradingRuleDefinition,
+    TradingSystemDefinition,
+    TradingSystemParamDefinition,
+    TradingSystemRuleBinding,
 )
 from app.services.normalization import normalize_stock_code, xueqiu_link
 
@@ -134,6 +138,8 @@ class SeedService:
         ("update_watch_15m_kline", "market"),
         ("update_watch_prices", "signal"),
         ("scan_watch_signals", "signal"),
+        ("scan_watch_rules", "signal"),
+        ("scan_trade_rules", "signal"),
         ("auto_remove_watch_pool", "signal"),
         ("scan_trade_risk_signals", "signal"),
         ("generate_weekly_review_form", "review"),
@@ -142,6 +148,36 @@ class SeedService:
         ("aggregate_review_metrics", "review"),
     ]
     TEMPLATES = ["买入观察信号", "卖出提醒", "风险提醒", "复盘提醒", "任务异常提醒"]
+
+    TRADING_SYSTEMS = [
+        ("platform_breakout", "平台突破", "以平台整理后的突破、回踩和失效条件为核心的交易体系样板。", "观察 -> 买点确认 -> 交易中 -> 卖出/止损 -> 复盘", 1),
+        ("uptrend", "上涨趋势", "用于承载趋势跟随类交易规则的体系定义。", "观察 -> 趋势确认 -> 交易中 -> 卖出/止损 -> 复盘", 2),
+        ("limit_relay", "涨停接力", "用于承载涨停接力类交易规则的体系定义。", "观察 -> 接力确认 -> 交易中 -> 卖出/止损 -> 复盘", 3),
+        ("oversold_rebound", "超跌反弹", "用于承载超跌修复类交易规则的体系定义。", "观察 -> 反弹确认 -> 交易中 -> 卖出/止损 -> 复盘", 4),
+    ]
+    PLATFORM_BREAKOUT_PARAMS = [
+        ("platform_upper_price", "箱体上沿", "number", True, None, "平台箱体上沿价格。", 1),
+        ("platform_support_price", "平台支撑位", "number", True, None, "平台结构的关键支撑价格。", 2),
+        ("key_observe_price", "关键观察价", "number", True, None, "进入观察后的关键跟踪价格。", 3),
+        ("auto_remove_price", "自动剔除价", "number", False, None, "跌破后可用于自动剔除观察的价格。", 4),
+        ("invalid_condition", "失效条件", "text", True, None, "平台突破体系失效的文字化条件。", 5),
+    ]
+    PLATFORM_BREAKOUT_RULES = [
+        ("not_break_platform_upper", "不跌破箱体上沿", "filter", "daily", "not_break_price", "平台回踩阶段不跌破箱体上沿。"),
+        ("b5_divergence", "5分钟底背离", "buy_signal", "5m", "macd_bottom_divergence", "5分钟 MACD 底背离买点信号。"),
+        ("b15_divergence", "15分钟底背离", "buy_signal", "15m", "macd_bottom_divergence", "15分钟 MACD 底背离买点信号。"),
+        ("m5_top_divergence", "5分钟顶背离", "sell_signal", "5m", "macd_top_divergence", "5分钟 MACD 顶背离卖出信号。"),
+        ("m30_dead_cross", "30分钟死叉", "sell_signal", "30m", "macd_dead_cross", "30分钟 MACD 死叉卖出信号。"),
+        ("break_platform_support", "收破平台支撑位", "stop_loss", "daily", "break_price", "日线收破平台支撑位止损信号。"),
+    ]
+    PLATFORM_BREAKOUT_RULE_BINDINGS = [
+        ("not_break_platform_upper", "observe", True, "platform_retest", "AND", 1),
+        ("b5_divergence", "observe", False, "bottom_divergence", "OR", 2),
+        ("b15_divergence", "observe", False, "bottom_divergence", "OR", 3),
+        ("m5_top_divergence", "trading", False, "sell_signal", "OR", 1),
+        ("m30_dead_cross", "trading", False, "sell_signal", "OR", 2),
+        ("break_platform_support", "stop_loss", False, "stop_loss", "OR", 1),
+    ]
 
     def __init__(self, db: Session):
         self.db = db
@@ -206,8 +242,72 @@ class SeedService:
         if not self.db.query(MyUserProfile).first():
             self.db.add(MyUserProfile(nickname="Aquant User", bio="单用户交易复盘训练系统"))
             created += 1
+        created += self._init_trading_system_defaults()
         self.db.commit()
         return {"created": created}
+
+    def _init_trading_system_defaults(self) -> int:
+        created = 0
+        for code, name, description, lifecycle_desc, sort_order in self.TRADING_SYSTEMS:
+            if not self.db.query(TradingSystemDefinition).filter_by(system_code=code).first():
+                self.db.add(
+                    TradingSystemDefinition(
+                        system_code=code,
+                        system_name=name,
+                        description=description,
+                        lifecycle_desc=lifecycle_desc,
+                        enabled=True,
+                        sort_order=sort_order,
+                    )
+                )
+                created += 1
+        for param_key, param_name, param_type, required, default_value, description, sort_order in self.PLATFORM_BREAKOUT_PARAMS:
+            if not self.db.query(TradingSystemParamDefinition).filter_by(system_code="platform_breakout", param_key=param_key).first():
+                self.db.add(
+                    TradingSystemParamDefinition(
+                        system_code="platform_breakout",
+                        param_key=param_key,
+                        param_name=param_name,
+                        param_type=param_type,
+                        required=required,
+                        default_value=default_value,
+                        description=description,
+                        sort_order=sort_order,
+                        enabled=True,
+                    )
+                )
+                created += 1
+        for rule_code, rule_name, rule_type, timeframe, executor_key, description in self.PLATFORM_BREAKOUT_RULES:
+            if not self.db.query(TradingRuleDefinition).filter_by(rule_code=rule_code).first():
+                self.db.add(
+                    TradingRuleDefinition(
+                        rule_code=rule_code,
+                        rule_name=rule_name,
+                        rule_type=rule_type,
+                        timeframe=timeframe,
+                        executor_key=executor_key,
+                        description=description,
+                        enabled=True,
+                    )
+                )
+                created += 1
+        for rule_code, stage, required, logic_group, logic_operator, sort_order in self.PLATFORM_BREAKOUT_RULE_BINDINGS:
+            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="platform_breakout", rule_code=rule_code, stage=stage).first():
+                self.db.add(
+                    TradingSystemRuleBinding(
+                        system_code="platform_breakout",
+                        rule_code=rule_code,
+                        stage=stage,
+                        required=required,
+                        logic_group=logic_group,
+                        logic_operator=logic_operator,
+                        sort_order=sort_order,
+                        enabled=True,
+                        config_json={},
+                    )
+                )
+                created += 1
+        return created
 
 
 class PrdMarketDataService:
@@ -665,6 +765,7 @@ class PrdWatchPoolService:
     def add_watch(self, payload: dict) -> WatchPool:
         code = normalize_stock_code(payload["stock_code"])
         self._validate_required_add_payload(payload)
+        system_context = self._build_system_context(payload)
         existing = self.get_effective_watch(code)
         if existing:
             return self.update_watch(existing.id, payload)
@@ -688,7 +789,8 @@ class PrdWatchPoolService:
         entry_reason = payload.get("entry_reason") or payload.get("reason") or ""
         key_observe_price = payload.get("key_observe_price", payload.get("entry_price"))
         auto_remove_price = payload.get("auto_remove_price")
-        trading_system = payload["trading_system"]
+        trading_system = system_context["trading_system"] or payload["trading_system"]
+        system_params = system_context["system_params"]
         entity = WatchPool(
             stock_code=code,
             stock_name=payload.get("stock_name") or code,
@@ -697,10 +799,15 @@ class PrdWatchPoolService:
             entry_reason=entry_reason,
             entry_source=entry_source,
             trading_system=trading_system,
+            trading_system_code=system_context["trading_system_code"],
+            system_stage=payload.get("system_stage") or "observe",
+            system_params_json=system_params,
+            active_rule_codes_json=system_context["active_rule_codes"],
+            next_action=payload.get("next_action") or self._default_next_action(payload.get("system_stage") or "observe"),
             system_recommendation=payload.get("system_recommendation") or self.recommend_trading_system(entry_source, payload),
-            key_observe_price=key_observe_price,
+            key_observe_price=system_params.get("key_observe_price", key_observe_price),
             auto_remove_price=None if auto_remove_price in {None, ""} else float(auto_remove_price),
-            invalid_condition=payload.get("invalid_condition"),
+            invalid_condition=system_params.get("invalid_condition", payload.get("invalid_condition")),
             risk_tags=payload.get("risk_tags") or [],
             signal_enabled=payload.get("signal_enabled", True),
             latest_signal_id=payload.get("latest_signal_id"),
@@ -905,17 +1012,122 @@ class PrdWatchPoolService:
         return "uptrend"
 
     def _validate_required_add_payload(self, payload: dict) -> None:
-        required = ["trading_system", "entry_reason", "key_observe_price", "invalid_condition"]
+        trading_system_value = payload.get("trading_system_code") or payload.get("trading_system")
+        if trading_system_value and "trading_system" not in payload:
+            payload["trading_system"] = trading_system_value
+        required = ["trading_system", "entry_reason"]
+        if not payload.get("trading_system_code"):
+            required.extend(["key_observe_price", "invalid_condition"])
         missing = [key for key in required if payload.get(key) in (None, "")]
         if missing:
             raise ValueError(f"{missing[0]} is required")
+        if payload.get("trading_system_code"):
+            return
         if payload["trading_system"] not in self.TRADING_SYSTEMS:
             raise ValueError("trading_system is invalid")
+        self._validate_positive_number(payload["key_observe_price"], "key_observe_price")
+
+    def _build_system_context(self, payload: dict) -> dict:
+        system_code = payload.get("trading_system_code")
+        if not system_code:
+            return {
+                "trading_system": payload.get("trading_system"),
+                "trading_system_code": None,
+                "system_params": {},
+                "active_rule_codes": payload.get("active_rule_codes_json") or [],
+            }
+
+        system = (
+            self.db.query(TradingSystemDefinition)
+            .filter(
+                TradingSystemDefinition.system_code == system_code,
+                TradingSystemDefinition.enabled.is_(True),
+            )
+            .first()
+        )
+        if not system:
+            raise ValueError("trading_system_code is invalid")
+
+        params = self._normalize_system_params(system_code, payload)
+        active_rule_codes = payload.get("active_rule_codes_json")
+        if active_rule_codes is None:
+            active_rule_codes = [
+                row.rule_code
+                for row in (
+                    self.db.query(TradingSystemRuleBinding)
+                    .filter(
+                        TradingSystemRuleBinding.system_code == system_code,
+                        TradingSystemRuleBinding.enabled.is_(True),
+                    )
+                    .order_by(TradingSystemRuleBinding.stage.asc(), TradingSystemRuleBinding.sort_order.asc())
+                    .all()
+                )
+            ]
+        return {
+            "trading_system": system_code,
+            "trading_system_code": system_code,
+            "system_params": params,
+            "active_rule_codes": active_rule_codes or [],
+        }
+
+    def _normalize_system_params(self, system_code: str, payload: dict) -> dict:
+        raw_params = payload.get("system_params_json") or payload.get("system_params") or {}
+        if not isinstance(raw_params, dict):
+            raise ValueError("system_params_json must be an object")
+        params = dict(raw_params)
+        if "key_observe_price" not in params and payload.get("key_observe_price") not in (None, ""):
+            params["key_observe_price"] = payload.get("key_observe_price")
+        if "invalid_condition" not in params and payload.get("invalid_condition") not in (None, ""):
+            params["invalid_condition"] = payload.get("invalid_condition")
+        if "auto_remove_price" not in params and payload.get("auto_remove_price") not in (None, ""):
+            params["auto_remove_price"] = payload.get("auto_remove_price")
+
+        definitions = (
+            self.db.query(TradingSystemParamDefinition)
+            .filter(
+                TradingSystemParamDefinition.system_code == system_code,
+                TradingSystemParamDefinition.enabled.is_(True),
+            )
+            .order_by(TradingSystemParamDefinition.sort_order.asc(), TradingSystemParamDefinition.param_id.asc())
+            .all()
+        )
+        normalized: dict = {}
+        for definition in definitions:
+            value = params.get(definition.param_key)
+            if definition.required and value in (None, ""):
+                raise ValueError(f"{definition.param_key} is required")
+            if value in (None, ""):
+                if definition.default_value not in (None, ""):
+                    normalized[definition.param_key] = definition.default_value
+                continue
+            if definition.param_type == "number":
+                normalized[definition.param_key] = self._validate_positive_number(value, definition.param_key)
+            elif definition.param_type == "boolean":
+                normalized[definition.param_key] = bool(value)
+            else:
+                normalized[definition.param_key] = str(value).strip()
+        return normalized
+
+    @staticmethod
+    def _validate_positive_number(value, key: str) -> float:
         try:
-            if float(payload["key_observe_price"]) <= 0:
-                raise ValueError
+            number = float(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError("key_observe_price must be positive") from exc
+            raise ValueError(f"{key} must be positive") from exc
+        if number <= 0:
+            raise ValueError(f"{key} must be positive")
+        return number
+
+    @staticmethod
+    def _default_next_action(stage: str) -> str:
+        actions = {
+            "observe": "等待观察条件和买点信号确认",
+            "buy_confirm": "确认买点是否满足交易计划",
+            "trading": "跟踪卖点、止损和风险提醒",
+            "sell": "确认卖出处理并准备复盘",
+            "stop_loss": "确认是否触发止损纪律",
+        }
+        return actions.get(stage, "继续按交易体系观察")
 
     def _get_blacklist_watch(self, stock_code: str) -> WatchPool | None:
         return (
@@ -945,10 +1157,22 @@ class PrdWatchPoolService:
                 setattr(entity, key, payload[key])
         if "board_name" in payload and "sector_name" not in payload:
             entity.sector_name = payload["board_name"]
-        if "trading_system" in payload:
+        if "trading_system" in payload and "trading_system_code" not in payload:
             if payload["trading_system"] not in self.TRADING_SYSTEMS:
                 raise ValueError("trading_system is invalid")
             entity.trading_system = payload["trading_system"]
+        if "trading_system_code" in payload:
+            system_context = self._build_system_context(payload)
+            entity.trading_system = system_context["trading_system"]
+            entity.trading_system_code = system_context["trading_system_code"]
+            entity.system_params_json = system_context["system_params"]
+            entity.active_rule_codes_json = system_context["active_rule_codes"]
+            entity.key_observe_price = system_context["system_params"].get("key_observe_price", entity.key_observe_price)
+            entity.invalid_condition = system_context["system_params"].get("invalid_condition", entity.invalid_condition)
+        if "system_stage" in payload:
+            entity.system_stage = payload["system_stage"] or "observe"
+        if "next_action" in payload:
+            entity.next_action = payload["next_action"]
         if "entry_reason" in payload or "reason" in payload:
             entity.entry_reason = payload.get("entry_reason") or payload.get("reason")
             entity.reason = entity.entry_reason
@@ -978,6 +1202,11 @@ class PrdWatchPoolService:
             "status": entity.status,
             "status": entity.status,
             "trading_system": entity.trading_system,
+            "trading_system_code": entity.trading_system_code,
+            "system_stage": entity.system_stage,
+            "system_params_json": entity.system_params_json or {},
+            "active_rule_codes_json": entity.active_rule_codes_json or [],
+            "next_action": entity.next_action,
             "entry_source": entity.entry_source,
             "entry_reason": entity.entry_reason,
             "key_observe_price": entity.key_observe_price,

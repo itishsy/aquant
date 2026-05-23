@@ -11,7 +11,9 @@ const tradingSystemOptions = [
   { label: "全部体系", value: "" },
   { label: "平台突破", value: "platform_breakout" },
   { label: "上涨趋势", value: "uptrend" },
+  { label: "涨停接力", value: "limit_relay" },
   { label: "追涨接力", value: "relay" },
+  { label: "超跌反弹", value: "oversold_rebound" },
 ];
 
 const lifecycleOptions = [
@@ -118,6 +120,7 @@ function XueqiuButton({ item }: { item: any }) {
 }
 
 function nextAction(item: any) {
+  if (item.next_action) return item.next_action;
   const status = item.status;
   if (!item.monitor_enabled || item.signal_enabled === false) return "监控关闭，等待手动开启";
   if (status === "watching") return "等待策略信号触发";
@@ -128,6 +131,22 @@ function nextAction(item: any) {
   if (status === "pending_review") return "填写单笔交易复盘";
   if (status === "invalid") return "归档或剔除";
   return "继续观察";
+}
+
+function coreParamText(item: any) {
+  const params = item.system_params_json || {};
+  const parts = [
+    params.platform_upper_price != null ? `箱体上沿 ${params.platform_upper_price}` : "",
+    params.platform_support_price != null ? `平台支撑 ${params.platform_support_price}` : "",
+    params.key_observe_price != null ? `观察价 ${params.key_observe_price}` : "",
+    params.auto_remove_price != null ? `剔除价 ${params.auto_remove_price}` : "",
+  ].filter(Boolean);
+  return parts.join(" / ");
+}
+
+function ruleListText(value: any) {
+  const items = Array.isArray(value) ? value : [];
+  return items.length ? items.join(" / ") : "-";
 }
 
 export function WatchPoolPage() {
@@ -184,6 +203,10 @@ export function WatchPoolPage() {
 
   const buySignals = useMemo(() => signals.filter((item) => item.signal_type === "buy"), [signals]);
   const riskSignals = useMemo(() => signals.filter((item) => item.signal_type !== "buy"), [signals]);
+  const pendingTradeSignals = useMemo(
+    () => signals.filter((item) => item.related_trade_id && ["sell_signal_pending", "stop_loss_pending"].includes(item.signal_status)),
+    [signals]
+  );
   const watchingItems = useMemo(() => items.filter((i) => i.status === "watching" || i.status === "观察中"), [items]);
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayNew = useMemo(() => items.filter((item) => String(item.created_at || "").slice(0, 10) === todayStr).length, [items, todayStr]);
@@ -475,8 +498,9 @@ export function WatchPoolPage() {
               <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
             </strong>
             <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="trading" />
+              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} status="trading" />
               <StatusPill label={item.trade_status || "-"} status={item.trade_status} />
+              <StatusPill label={`阶段 ${item.current_stage || "trading"}`} status="trading" />
             </div>
           </div>
           <XueqiuButton item={item} />
@@ -490,6 +514,10 @@ export function WatchPoolPage() {
           <InfoLine label="止损价" value={item.stop_loss_price ?? "-"} />
           <InfoLine label="目标价" value={item.target_price ?? "-"} />
         </div>
+          <InfoLine label="进入规则" value={item.entry_rule_code || item.buy_point_type || "-"} />
+          <InfoLine label="交易体系" value={labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} />
+          <InfoLine label="卖点规则" value={ruleListText(item.active_sell_rule_codes_json)} />
+          <InfoLine label="止损规则" value={ruleListText(item.active_stop_rule_codes_json)} />
         <div style={{ display: "grid", gridTemplateColumns: isOpen ? "1fr 1fr" : "1fr", gap: 8 }}>
           <Button block fill="outline" onClick={() => showExecutions(item)} style={{ borderRadius: 14 }}>执行流水</Button>
           {isOpen && <Button block color="danger" fill="outline" onClick={() => openSellForm(item)} style={{ borderRadius: 14 }}>确认全部卖出</Button>}
@@ -511,8 +539,9 @@ export function WatchPoolPage() {
               <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
             </strong>
             <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="signal_generated" />
+              <StatusPill label={item.trading_system_name || labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} status="signal_generated" />
               <StatusPill label={labelOf(lifecycleOptions, status)} status={status} />
+              <StatusPill label={`阶段：${item.system_stage || "observe"}`} status={status} />
             </div>
           </div>
           <StatusPill label={monitorOff ? "监控关闭" : "监控中"} status={monitorOff ? "invalid" : "watching"} />
@@ -524,6 +553,7 @@ export function WatchPoolPage() {
         <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
           <InfoLine label="入选理由" value={item.entry_reason || item.reason || item || "用户手动关注"} />
           <InfoLine label="失效条件" value={item.invalid_condition || "-"} />
+          <InfoLine label="核心参数" value={coreParamText(item)} />
           <InfoLine label="风险标签" value={riskText} />
           <InfoLine label="下一步" value={nextAction(item)} />
           {item.user_remark ? <InfoLine label="备注" value={item.user_remark} /> : null}
@@ -571,6 +601,13 @@ export function WatchPoolPage() {
                     <p style={{ margin: "3px 0 0", fontSize: 12, color: "#888" }}>
                       {item.sector_name || "未分类"} · {String(item.created_at || "").slice(0, 10) || "-"}
                     </p>
+                    <p style={{ margin: "5px 0 0", fontSize: 12, color: "#52607a" }}>
+                      {item.trading_system_name || labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} · 阶段 {item.system_stage || "observe"}
+                    </p>
+                    {coreParamText(item) && (
+                      <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{coreParamText(item)}</p>
+                    )}
+                    <p style={{ margin: "3px 0 0", fontSize: 12, color: "#4052d2" }}>{nextAction(item)}</p>
                   </div>
                   <XueqiuButton item={item} />
                 </div>
@@ -600,6 +637,12 @@ export function WatchPoolPage() {
             <div className="card-headline"><span className="icon-badge">{tradeSummary.open ?? 0}</span><h2>交易</h2></div>
             <span className="soft-tag">持仓 {tradeSummary.open ?? 0} / 总数 {tradeSummary.total ?? trades.length}</span>
           </div>
+          {pendingTradeSignals.length ? (
+            <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+              <div style={{ color: "#e34d59", fontWeight: 800, fontSize: 13 }}>卖点/止损提醒</div>
+              {pendingTradeSignals.map(renderSignalCardV2)}
+            </div>
+          ) : null}
           {trades.length ? <div className="stack-list">{trades.map(renderTradeCardV2)}</div> : <div className="empty-panel">暂无交易记录</div>}
         </article>
       )}
@@ -641,7 +684,8 @@ export function WatchPoolPage() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
               <Field label="板块" value={watchDetail.sector_name} />
               <Field label="标签" value={(watchDetail.labels || []).join(" / ")} />
-              <Field label="交易体系" value={watchDetail.trading_system} />
+              <Field label="交易体系" value={watchDetail.trading_system_name || watchDetail.trading_system_code || watchDetail.trading_system} />
+              <Field label="当前阶段" value={watchDetail.system_stage || "observe"} />
               <Field label="入选来源" value={watchDetail.entry_source || "手动"} />
               <Field label="入选时间" value={String(watchDetail.created_at || "").slice(0, 10)} />
               <Field label="操作策略" value={(watchDetail.operation_strategies || []).join(",")} />
@@ -649,6 +693,8 @@ export function WatchPoolPage() {
               {watchDetail.entry_price != null && <Field label="入选价" value={watchDetail.entry_price} />}
               {watchDetail.key_observe_price != null && <Field label="关键观察价" value={`${watchDetail.key_observe_price}`} />}
               {watchDetail.auto_remove_price != null && <Field label="自动剔除价" value={`${watchDetail.auto_remove_price}`} />}
+              <Field label="核心参数" value={coreParamText(watchDetail)} />
+              <Field label="下一步" value={nextAction(watchDetail)} />
             </div>
 
             {(watchDetail.entry_reason || watchDetail.invalid_condition || watchDetail.user_remark || watchDetail.remark) && (

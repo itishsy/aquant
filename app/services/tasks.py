@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, time
+from types import SimpleNamespace
 from typing import Callable
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,8 @@ from app.models import (
     MktHotStock,
     MktLimitUpStock,
     MktStockQuote,
+    TradingRuleDefinition,
+    TradingSystemRuleBinding,
     WatchPool,
     WatchSignal,
     WatchTrade,
@@ -29,6 +32,15 @@ def _serialize(data: dict) -> dict:
 
 
 class TaskService:
+    SAFE_RULE_EXECUTORS = {
+        "always_false",
+        "not_break_price",
+        "macd_bottom_divergence",
+        "macd_top_divergence",
+        "macd_dead_cross",
+        "break_price",
+    }
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -205,7 +217,7 @@ class TaskService:
 
         return affected
 
-    def _run(self, task_name: str, fn: Callable[[], int]) -> ConfigTaskLog:
+    def _run(self, task_name: str, fn: Callable[[], int | tuple[int, str]]) -> ConfigTaskLog:
         task = self.db.query(ConfigTask).filter(ConfigTask.task_name == task_name).first()
         log = ConfigTaskLog(
             task_id=task.task_id if task else None,
@@ -218,9 +230,15 @@ class TaskService:
         self.db.add(log)
         self.db.commit()
         try:
-            affected = fn()
+            outcome = fn()
+            if isinstance(outcome, tuple):
+                affected, error_summary = outcome
+            else:
+                affected, error_summary = outcome, ""
             log.run_status = "success"
             log.affected_rows = affected
+            if error_summary:
+                log.error_message = error_summary[:2000]
         except Exception as exc:
             log.run_status = "failed"
             log.error_message = str(exc)
@@ -537,6 +555,354 @@ class TaskService:
         from app.services.signal_engine import SignalEngine
 
         return self._run("scan_watch_signals", lambda: len(SignalEngine(self.db).scan()))
+
+    def scan_watch_rules(self, trade_date: date) -> ConfigTaskLog:
+        def _do() -> int:
+            from app.rule_executors import RuleContext, get_executor
+            from app.services.notification import NotificationService
+            from app.services.kline import KlineService
+
+            kline_service = KlineService(self.db)
+            notification_service = NotificationService()
+            provider = ProviderFactory.create()
+            notification_errors: list[str] = []
+            rows = (
+                self.db.query(WatchPool)
+                .filter(
+                    WatchPool.active.is_(True),
+                    WatchPool.system_stage == "observe",
+                    WatchPool.trading_system_code.isnot(None),
+                    WatchPool.trading_system_code != "",
+                )
+                .all()
+            )
+            if not rows:
+                return 0
+
+            quote_map = {
+                row.stock_code: row.latest_price
+                for row in self.db.query(MktStockQuote)
+                .filter(MktStockQuote.stock_code.in_([item.stock_code for item in rows]))
+                .all()
+            }
+
+            def _provider_5m_bars(stock_code: str) -> list[SimpleNamespace]:
+                if not hasattr(provider, "get_intraday_kline"):
+                    return []
+                start_time = datetime.combine(trade_date, time(9, 30))
+                end_time = datetime.combine(trade_date, time(15, 0))
+                bars = []
+                for item in provider.get_intraday_kline(stock_code, "5m", start_time, end_time) or []:
+                    bars.append(
+                        SimpleNamespace(
+                            close_price=item.get("close"),
+                            volume=item.get("volume", 0.0),
+                            kline_time=item.get("kline_time") or item.get("trade_time"),
+                        )
+                    )
+                return bars
+
+            def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition, watch: WatchPool) -> dict:
+                config = {
+                    "binding_id": binding.binding_id,
+                    "rule_code": rule.rule_code,
+                    "rule_name": rule.rule_name,
+                    "rule_type": rule.rule_type,
+                    "timeframe": rule.timeframe,
+                    "executor_key": rule.executor_key,
+                    "required": binding.required,
+                    "logic_group": binding.logic_group,
+                    "logic_operator": binding.logic_operator,
+                    "config_json": binding.config_json or {},
+                }
+                if rule.executor_key == "macd_bottom_divergence":
+                    config["kline_bars"] = (
+                        kline_service.get_15m_kline(watch.stock_code, 80)
+                        if rule.timeframe == "15m"
+                        else _provider_5m_bars(watch.stock_code)
+                    )
+                elif rule.executor_key == "not_break_price":
+                    daily = kline_service.get_daily_kline(watch.stock_code, 5)
+                    if daily:
+                        latest = daily[-1]
+                        config["latest_close"] = latest.close_price
+                        config["latest_time"] = datetime.combine(latest.trade_date, datetime.min.time())
+                return config
+
+            def _duplicate_exists(watch: WatchPool, rule_code: str, trigger_date: date) -> bool:
+                return bool(
+                    self.db.query(WatchSignal.signal_id)
+                    .filter(
+                        WatchSignal.watch_id == watch.id,
+                        WatchSignal.rule_code == rule_code,
+                        WatchSignal.trigger_date == trigger_date,
+                    )
+                    .first()
+                )
+
+            def _save_signal(watch: WatchPool, rule: TradingRuleDefinition, result) -> int:
+                trigger_time = result.trigger_time or datetime.utcnow()
+                trigger_date = trigger_time.date() if hasattr(trigger_time, "date") else trade_date
+                if _duplicate_exists(watch, rule.rule_code, trigger_date):
+                    return 0
+                signal = WatchSignal(
+                    watch_id=watch.id,
+                    stock_code=watch.stock_code,
+                    stock_name=watch.stock_name,
+                    signal_type="buy",
+                    buy_point_type=rule.rule_code,
+                    trading_system=watch.trading_system_code or watch.trading_system,
+                    trading_system_code=watch.trading_system_code,
+                    rule_code=rule.rule_code,
+                    rule_type=rule.rule_type,
+                    strategy_name=f"rule_executor:{rule.executor_key}",
+                    signal_level=result.signal_level or "B",
+                    kline_period=rule.timeframe,
+                    trigger_time=trigger_time,
+                    trigger_date=trigger_date,
+                    trigger_price=result.trigger_price,
+                    trigger_reason=result.reason,
+                    risk_desc=result.risk_desc,
+                    signal_status="buy_pending_confirm",
+                    user_action="pending",
+                    trigger_signature=f"rule:{watch.id}:{rule.rule_code}:{trigger_date.isoformat()}",
+                    raw_snapshot=result.snapshot or {},
+                    snapshot_json=result.snapshot or {},
+                )
+                self.db.add(signal)
+                self.db.flush()
+                watch.latest_signal_id = signal.signal_id
+                watch.status = "buy_pending_confirm"
+                watch.next_action = "等待人工确认买入"
+                notify_result = notification_service.notify_buy_signal(
+                    signal,
+                    trading_system_name=watch.trading_system_code or watch.trading_system,
+                    rule_name=rule.rule_name,
+                )
+                if notify_result.error:
+                    notification_errors.append(f"{watch.stock_code}/{rule.rule_code}: {notify_result.error}")
+                return 1
+
+            affected = 0
+            for watch in rows:
+                bindings = (
+                    self.db.query(TradingSystemRuleBinding, TradingRuleDefinition)
+                    .join(TradingRuleDefinition, TradingRuleDefinition.rule_code == TradingSystemRuleBinding.rule_code)
+                    .filter(
+                        TradingSystemRuleBinding.system_code == watch.trading_system_code,
+                        TradingSystemRuleBinding.stage == "observe",
+                        TradingSystemRuleBinding.enabled.is_(True),
+                        TradingRuleDefinition.enabled.is_(True),
+                    )
+                    .order_by(TradingSystemRuleBinding.sort_order.asc(), TradingSystemRuleBinding.binding_id.asc())
+                    .all()
+                )
+                results = []
+                for binding, rule in bindings:
+                    if rule.executor_key not in self.SAFE_RULE_EXECUTORS:
+                        continue
+                    executor = get_executor(rule.executor_key)
+                    if executor is None:
+                        continue
+                    rule_config = _rule_config(binding, rule, watch)
+                    context = RuleContext(
+                        watch_id=watch.id,
+                        stock_code=watch.stock_code,
+                        stock_name=watch.stock_name,
+                        trading_system_code=watch.trading_system_code,
+                        stage=watch.system_stage or "observe",
+                        system_params=watch.system_params_json or {},
+                        rule_config=rule_config,
+                        trade_date=trade_date,
+                        latest_price=quote_map.get(watch.stock_code),
+                    )
+                    result = executor.execute(context)
+                    results.append((binding, rule, result))
+                    affected += 1
+                required_ok = all(result.triggered for binding, _rule, result in results if binding.required)
+                if not required_ok:
+                    continue
+                buy_results = [
+                    (binding, rule, result)
+                    for binding, rule, result in results
+                    if rule.rule_type == "buy_signal" and result.triggered
+                ]
+                if not buy_results:
+                    continue
+                for _binding, rule, result in buy_results:
+                    affected += _save_signal(watch, rule, result)
+            return affected, "; ".join(notification_errors[:5])
+
+        return self._run("scan_watch_rules", _do)
+
+    def scan_trade_rules(self, trade_date: date) -> ConfigTaskLog:
+        def _do() -> int | tuple[int, str]:
+            from app.rule_executors import RuleContext, get_executor
+            from app.services.kline import KlineService
+            from app.services.notification import NotificationService
+
+            kline_service = KlineService(self.db)
+            notification_service = NotificationService()
+            provider = ProviderFactory.create()
+            notification_errors: list[str] = []
+            trades = (
+                self.db.query(WatchTrade)
+                .filter(
+                    WatchTrade.trade_status.in_(["open", "holding"]),
+                    WatchTrade.current_stage == "trading",
+                    WatchTrade.trading_system_code.isnot(None),
+                    WatchTrade.trading_system_code != "",
+                )
+                .all()
+            )
+            if not trades:
+                return 0
+
+            quote_map = {
+                row.stock_code: row.latest_price
+                for row in self.db.query(MktStockQuote)
+                .filter(MktStockQuote.stock_code.in_([item.stock_code for item in trades]))
+                .all()
+            }
+
+            def _provider_bars(stock_code: str, timeframe: str) -> list[SimpleNamespace]:
+                if not hasattr(provider, "get_intraday_kline"):
+                    return []
+                start_time = datetime.combine(trade_date, time(9, 30))
+                end_time = datetime.combine(trade_date, time(15, 0))
+                return [
+                    SimpleNamespace(
+                        close_price=item.get("close"),
+                        volume=item.get("volume", 0.0),
+                        kline_time=item.get("kline_time") or item.get("trade_time"),
+                    )
+                    for item in provider.get_intraday_kline(stock_code, timeframe, start_time, end_time) or []
+                ]
+
+            def _bindings(trade: WatchTrade) -> list[tuple[TradingSystemRuleBinding, TradingRuleDefinition]]:
+                active_codes = set(trade.active_sell_rule_codes_json or []) | set(trade.active_stop_rule_codes_json or [])
+                query = (
+                    self.db.query(TradingSystemRuleBinding, TradingRuleDefinition)
+                    .join(TradingRuleDefinition, TradingRuleDefinition.rule_code == TradingSystemRuleBinding.rule_code)
+                    .filter(
+                        TradingSystemRuleBinding.system_code == trade.trading_system_code,
+                        TradingSystemRuleBinding.stage.in_(["trading", "sell", "stop_loss"]),
+                        TradingSystemRuleBinding.enabled.is_(True),
+                        TradingRuleDefinition.enabled.is_(True),
+                    )
+                )
+                if active_codes:
+                    query = query.filter(TradingSystemRuleBinding.rule_code.in_(active_codes))
+                return query.order_by(TradingSystemRuleBinding.stage.asc(), TradingSystemRuleBinding.sort_order.asc()).all()
+
+            def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition, trade: WatchTrade) -> dict:
+                config = {
+                    "binding_id": binding.binding_id,
+                    "rule_code": rule.rule_code,
+                    "rule_name": rule.rule_name,
+                    "rule_type": rule.rule_type,
+                    "timeframe": rule.timeframe,
+                    "executor_key": rule.executor_key,
+                    "required": binding.required,
+                    "logic_group": binding.logic_group,
+                    "logic_operator": binding.logic_operator,
+                    "config_json": binding.config_json or {},
+                }
+                if rule.executor_key in {"macd_top_divergence", "macd_dead_cross"}:
+                    config["kline_bars"] = _provider_bars(trade.stock_code, rule.timeframe)
+                elif rule.executor_key == "break_price":
+                    daily = kline_service.get_daily_kline(trade.stock_code, 5)
+                    if daily:
+                        latest = daily[-1]
+                        config["latest_close"] = latest.close_price
+                        config["latest_time"] = datetime.combine(latest.trade_date, datetime.min.time())
+                return config
+
+            def _duplicate_exists(trade: WatchTrade, rule_code: str, trigger_date: date) -> bool:
+                return bool(
+                    self.db.query(WatchSignal.signal_id)
+                    .filter(
+                        WatchSignal.related_trade_id == trade.id,
+                        WatchSignal.rule_code == rule_code,
+                        WatchSignal.trigger_date == trigger_date,
+                    )
+                    .first()
+                )
+
+            def _save_signal(trade: WatchTrade, watch: WatchPool | None, rule: TradingRuleDefinition, result) -> int:
+                trigger_time = result.trigger_time or datetime.utcnow()
+                trigger_date = trigger_time.date() if hasattr(trigger_time, "date") else trade_date
+                if _duplicate_exists(trade, rule.rule_code, trigger_date):
+                    return 0
+                is_stop = rule.rule_type == "stop_loss"
+                signal = WatchSignal(
+                    watch_id=trade.watch_id,
+                    stock_code=trade.stock_code,
+                    stock_name=trade.stock_name,
+                    signal_type="risk" if is_stop else "sell",
+                    buy_point_type=rule.rule_code,
+                    trading_system=trade.trading_system_code or trade.trading_system,
+                    trading_system_code=trade.trading_system_code,
+                    rule_code=rule.rule_code,
+                    rule_type=rule.rule_type,
+                    strategy_name=f"rule_executor:{rule.executor_key}",
+                    signal_level=result.signal_level or ("S" if is_stop else "B"),
+                    kline_period=rule.timeframe,
+                    trigger_time=trigger_time,
+                    trigger_date=trigger_date,
+                    trigger_price=result.trigger_price,
+                    trigger_reason=result.reason,
+                    risk_desc=result.risk_desc,
+                    signal_status="stop_loss_pending" if is_stop else "sell_signal_pending",
+                    user_action="pending",
+                    related_trade_id=trade.id,
+                    trigger_signature=f"trade-rule:{trade.id}:{rule.rule_code}:{trigger_date.isoformat()}",
+                    raw_snapshot=result.snapshot or {},
+                    snapshot_json=result.snapshot or {},
+                )
+                self.db.add(signal)
+                self.db.flush()
+                trade.latest_trade_signal_id = signal.signal_id
+                if watch:
+                    watch.latest_signal_id = signal.signal_id
+                    watch.status = "sell_signal_pending"
+                    watch.next_action = "等待人工确认卖出或止损"
+                notify_result = notification_service.notify_trade_signal(
+                    signal,
+                    trading_system_name=trade.trading_system_code or trade.trading_system,
+                    rule_name=rule.rule_name,
+                )
+                if notify_result.error:
+                    notification_errors.append(f"{trade.stock_code}/{rule.rule_code}: {notify_result.error}")
+                return 1
+
+            affected = 0
+            for trade in trades:
+                watch = self.db.query(WatchPool).filter(WatchPool.id == trade.watch_id).first() if trade.watch_id else None
+                for binding, rule in _bindings(trade):
+                    if rule.executor_key not in self.SAFE_RULE_EXECUTORS:
+                        continue
+                    executor = get_executor(rule.executor_key)
+                    if executor is None:
+                        continue
+                    context = RuleContext(
+                        watch_id=trade.watch_id or 0,
+                        stock_code=trade.stock_code,
+                        stock_name=trade.stock_name,
+                        trading_system_code=trade.trading_system_code,
+                        stage=trade.current_stage or "trading",
+                        system_params=trade.system_params_json or {},
+                        rule_config=_rule_config(binding, rule, trade),
+                        trade_date=trade_date,
+                        latest_price=quote_map.get(trade.stock_code),
+                    )
+                    result = executor.execute(context)
+                    affected += 1
+                    if result.triggered:
+                        affected += _save_signal(trade, watch, rule, result)
+            return affected, "; ".join(notification_errors[:5])
+
+        return self._run("scan_trade_rules", _do)
 
     def auto_remove_watch_pool(self, trade_date: date) -> ConfigTaskLog:
         def _do() -> int:
