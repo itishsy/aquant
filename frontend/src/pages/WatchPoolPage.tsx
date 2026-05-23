@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Dialog, ErrorBlock, Input, Popup, Selector, SpinLoading, TextArea, Toast } from "antd-mobile";
 import { apiDelete, apiGet, apiPost, apiPut } from "../api/client";
 import { PageShell } from "../components/PageShell";
-import { StockLink } from "../components/StockLink";
+import { StockLink, toXueqiuUrl } from "../components/StockLink";
 
 
 const ASSISTANT_NOTE = "仅作为交易辅助，请结合个人交易规则确认。";
@@ -91,6 +91,29 @@ function InfoLine({ label, value }: { label: string; value: any }) {
       <span style={{ color: "#98a2b3", fontSize: 11, fontWeight: 700 }}>{label}</span>
       <span style={{ color: "#32415f", fontSize: 13, lineHeight: 1.45 }}>{value}</span>
     </div>
+  );
+}
+
+function XueqiuButton({ item }: { item: any }) {
+  const url = toXueqiuUrl(item?.stock_code);
+  if (!url) return null;
+  return (
+    <Button
+      size="mini"
+      fill="outline"
+      onClick={(event) => { event.stopPropagation(); window.open(url, "_blank"); }}
+      style={{
+        borderRadius: 999,
+        padding: "4px 10px",
+        fontSize: 11,
+        fontWeight: 800,
+        color: "#4052d2",
+        borderColor: "#cfd7ff",
+        background: "#f7f9ff",
+      }}
+    >
+      雪球
+    </Button>
   );
 }
 
@@ -357,7 +380,7 @@ export function WatchPoolPage() {
             <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
             <p style={{ marginTop: 4 }}>{labelOf(tradingSystemOptions, item.trading_system)} / {signalTypeLabels[item.signal_type] || item.signal_type}</p>
           </div>
-          <span className="score-badge">{item.signal_level}</span>
+          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gap: 4, color: "#64748b", fontSize: 13, lineHeight: 1.55 }}>
           <p>买点类型：{buyPointLabels[item.buy_point_type] || item.buy_point_type || "-"}</p>
@@ -386,7 +409,7 @@ export function WatchPoolPage() {
             <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
             <p style={{ marginTop: 4 }}>{labelOf(tradingSystemOptions, item.trading_system)} / {item.trade_status || "-"}</p>
           </div>
-          <span className="score-badge">{formatMoney(item.pnl_amount)}</span>
+          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gap: 4, color: "#64748b", fontSize: 13, lineHeight: 1.55 }}>
           <p>买入价：{item.average_buy_price ?? item.first_buy_price ?? "-"}</p>
@@ -419,9 +442,7 @@ export function WatchPoolPage() {
               <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="signal_generated" />
             </div>
           </div>
-          <span style={{ borderRadius: 16, padding: "8px 10px", minWidth: 44, textAlign: "center", color: "#fff", background: isRisk ? "linear-gradient(135deg,#e34d59,#c83b46)" : "linear-gradient(135deg,#5570ff,#4052d2)", fontWeight: 900 }}>
-            {item.signal_level || "-"}
-          </span>
+          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
           <MiniStat label="触发价" value={item.trigger_price ?? "-"} />
@@ -458,9 +479,7 @@ export function WatchPoolPage() {
               <StatusPill label={item.trade_status || "-"} status={item.trade_status} />
             </div>
           </div>
-          <span style={{ borderRadius: 16, padding: "8px 10px", minWidth: 74, textAlign: "right", color: pnl >= 0 ? "#e34d59" : "#00a870", background: pnl >= 0 ? "#fff1f1" : "#eefaf4", fontWeight: 900 }}>
-            {formatMoney(item.pnl_amount)}
-          </span>
+          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
           <MiniStat label="买入均价" value={item.average_buy_price ?? item.first_buy_price ?? "-"} />
@@ -553,7 +572,7 @@ export function WatchPoolPage() {
                       {item.sector_name || "未分类"} · {String(item.created_at || "").slice(0, 10) || "-"}
                     </p>
                   </div>
-                  <span style={{ fontSize: 11, color: "#4b63ee", fontWeight: 700 }}>详情</span>
+                  <XueqiuButton item={item} />
                 </div>
               ))}
             </div>

@@ -89,6 +89,25 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
   );
 }
 
+function calculateEma(values: number[], period: number) {
+  const alpha = 2 / (period + 1);
+  const result: number[] = [];
+  values.forEach((value, index) => {
+    result.push(index === 0 ? value : value * alpha + result[index - 1] * (1 - alpha));
+  });
+  return result;
+}
+
+function calculateMacd(closes: number[]) {
+  if (!closes.length) return { dif: [], dea: [], hist: [] };
+  const ema12 = calculateEma(closes, 12);
+  const ema26 = calculateEma(closes, 26);
+  const dif = closes.map((_, index) => Number((ema12[index] - ema26[index]).toFixed(4)));
+  const dea = calculateEma(dif, 9).map((value) => Number(value.toFixed(4)));
+  const hist = dif.map((value, index) => Number(((value - dea[index]) * 2).toFixed(4)));
+  return { dif, dea, hist };
+}
+
 export function KlineChart({ data, loading }: { data: any[]; loading: boolean }) {
   const containerRef = (el: HTMLDivElement | null) => {
     if (!el || !data.length) return;
@@ -99,37 +118,41 @@ export function KlineChart({ data, loading }: { data: any[]; loading: boolean })
     const ma5 = data.map((d) => d.ma5 ?? null);
     const ma10 = data.map((d) => d.ma10 ?? null);
     const ma20 = data.map((d) => d.ma20 ?? null);
+    const closes = data.map((d) => Number(d.close || 0));
+    const macd = calculateMacd(closes);
 
     chart.setOption({
       animation: false,
       tooltip: { trigger: "axis" },
+      legend: { top: 0, itemWidth: 10, itemHeight: 6, textStyle: { fontSize: 10 } },
       grid: [
-        { left: 44, right: 8, top: 8, height: 0 },
-        { left: 44, right: 8, top: 8, height: "62%" },
-        { left: 44, right: 8, top: "74%", height: "16%" },
+        { left: 36, right: 12, top: 28, height: 132 },
+        { left: 36, right: 12, top: 184, height: 48 },
+        { left: 36, right: 12, top: 258, height: 56 },
       ],
       xAxis: [
-        { type: "category", data: dates, boundaryGap: true, gridIndex: 0, axisLabel: { show: false }, axisTick: { show: false } },
-        { type: "category", data: dates, boundaryGap: true, gridIndex: 1, axisLabel: { show: false }, axisTick: { show: false } },
-        { type: "category", data: dates, gridIndex: 2, axisLabel: { show: false } },
+        { type: "category", data: dates, boundaryGap: true, axisLabel: { fontSize: 10, interval: Math.max(1, Math.floor(data.length / 6)) } },
+        { type: "category", data: dates, gridIndex: 1, axisLabel: { show: false } },
+        { type: "category", data: dates, gridIndex: 2, axisLabel: { fontSize: 10, interval: Math.max(1, Math.floor(data.length / 6)) } },
       ],
       yAxis: [
-        { type: "value", gridIndex: 0, show: false },
-        { type: "value", gridIndex: 1, scale: true, splitLine: { lineStyle: { color: "#f0f0f0" } }, axisLabel: { fontSize: 10 } },
-        { type: "value", gridIndex: 2, axisLabel: { show: false } },
+        { type: "value", scale: true, axisLabel: { fontSize: 10 } },
+        { type: "value", gridIndex: 1, axisLabel: { fontSize: 10 } },
+        { type: "value", gridIndex: 2, scale: true, axisLabel: { fontSize: 10 } },
       ],
-      dataZoom: [
-        { type: "inside", xAxisIndex: [0, 1, 2], zoomOnMouseWheel: true, moveOnMouseMove: true },
-        { type: "slider", xAxisIndex: [0, 1, 2], bottom: 2, height: 18, borderColor: "#e8ecf4", fillerColor: "rgba(75,99,238,0.08)", handleSize: "90%", start: Math.max(0, 100 - 60 / data.length * 100), end: 100 },
-      ],
+      dataZoom: [{ type: "inside", xAxisIndex: [0, 1, 2] }],
       series: [
-        { name: "K线", type: "candlestick", data: values, xAxisIndex: 1, yAxisIndex: 1,
+        { name: "日K", type: "candlestick", data: values,
           itemStyle: { color: "#e34d59", color0: "#00b578", borderColor: "#e34d59", borderColor0: "#00b578" } },
-        { name: "MA5", type: "line", data: ma5, xAxisIndex: 1, yAxisIndex: 1, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#f59e0b" } },
-        { name: "MA10", type: "line", data: ma10, xAxisIndex: 1, yAxisIndex: 1, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#3b82f6" } },
-        { name: "MA20", type: "line", data: ma20, xAxisIndex: 1, yAxisIndex: 1, smooth: true, symbol: "none", lineStyle: { width: 1.5, color: "#8b5cf6" } },
-        { name: "量", type: "bar", data: volumes, xAxisIndex: 2, yAxisIndex: 2,
+        { name: "MA5", type: "line", data: ma5, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#f59e0b" } },
+        { name: "MA10", type: "line", data: ma10, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#4b63ee" } },
+        { name: "MA20", type: "line", data: ma20, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#64748b" } },
+        { name: "量", type: "bar", data: volumes, xAxisIndex: 1, yAxisIndex: 1,
           itemStyle: { color: (params: any) => { const d = data[params.dataIndex]; return d.close >= d.open ? "#e34d59" : "#00b578"; } } },
+        { name: "MACD", type: "bar", data: macd.hist, xAxisIndex: 2, yAxisIndex: 2,
+          itemStyle: { color: (params: any) => (params.data >= 0 ? "#e34d59" : "#00b578") } },
+        { name: "DIF", type: "line", data: macd.dif, xAxisIndex: 2, yAxisIndex: 2, symbol: "none", lineStyle: { width: 1, color: "#4b63ee" } },
+        { name: "DEA", type: "line", data: macd.dea, xAxisIndex: 2, yAxisIndex: 2, symbol: "none", lineStyle: { width: 1, color: "#f59e0b" } },
       ],
     });
 
@@ -138,8 +161,8 @@ export function KlineChart({ data, loading }: { data: any[]; loading: boolean })
     return () => { window.removeEventListener("resize", handleResize); chart.dispose(); };
   };
 
-  if (loading) return <div style={{ height: 280, display: "grid", placeItems: "center" }}><SpinLoading /></div>;
+  if (loading) return <div style={{ height: 350, display: "grid", placeItems: "center" }}><SpinLoading /></div>;
   if (!data.length) return <div style={{ height: 120, display: "grid", placeItems: "center", color: "#888" }}>暂无K线数据</div>;
 
-  return <div ref={containerRef} style={{ width: "100%", height: 340 }} />;
+  return <div ref={containerRef} style={{ width: "100%", height: 350 }} />;
 }

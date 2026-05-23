@@ -211,7 +211,7 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
               <div style={{ borderRadius: 24, background: "#fff", boxShadow: "0 12px 36px rgba(31,43,77,0.08)", overflow: "hidden" }}>
                 <div style={{ padding: "12px 14px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <strong style={{ color: "#18223d", fontSize: 16 }}>日K线</strong>
-                  <span style={{ color: "#8a94a8", fontSize: 12 }}>复用市场页行情</span>
+                  <span style={{ color: "#8a94a8", fontSize: 12 }}>日K线</span>
                 </div>
                 <KlineChart data={klineData} loading={loadingKline} />
               </div>
