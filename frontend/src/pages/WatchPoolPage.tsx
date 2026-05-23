@@ -663,7 +663,7 @@ export function WatchPoolPage() {
             <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>仅作为交易辅助，请结合个人交易规则确认。</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               <Button block fill="outline" size="small" onClick={() => openEdit(watchDetail)}>编辑</Button>
-              <Button block fill="outline" size="small" onClick={() => {
+              <Button block fill="none" size="small" style={{ fontSize: 12 }} onClick={() => {
                 const code = (watchDetail.stock_code || "").trim().toUpperCase();
                 const marketPrefix = code.match(/^(SH|SZ|BJ)\d{6}$/);
                 const marketSuffix = code.match(/^(\d{6})\.(SH|SZ|BJ)$/);
