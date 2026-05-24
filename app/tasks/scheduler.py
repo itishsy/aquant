@@ -37,6 +37,28 @@ def build_scheduler() -> BackgroundScheduler:
         misfire_grace_time=300,
     )
     scheduler.add_job(
+        run_watch_kline_prepare,
+        trigger="interval",
+        minutes=5,
+        id="prepare_watch_kline_data",
+        name="Prepare watch-pool trading system K-line data",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
+        run_trade_kline_prepare,
+        trigger="interval",
+        minutes=5,
+        id="prepare_trade_kline_data",
+        name="Prepare active trade trading system K-line data",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
         run_watch_signal_scan,
         trigger="interval",
         minutes=15,
@@ -106,6 +128,22 @@ def run_watch_rule_scan() -> None:
     db: Session = SystemSessionLocal()
     try:
         TaskService(db).scan_watch_rules(date.today())
+    finally:
+        db.close()
+
+
+def run_watch_kline_prepare() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).prepare_watch_kline_data(date.today())
+    finally:
+        db.close()
+
+
+def run_trade_kline_prepare() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).prepare_trade_kline_data(date.today())
     finally:
         db.close()
 

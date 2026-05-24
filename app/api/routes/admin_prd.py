@@ -246,6 +246,9 @@ def list_tasks(db: Session = Depends(get_db), admin=Depends(require_admin)):
             "owner_module": row.owner_module,
             "enabled": row.enabled,
             "running": row.running,
+            "retry_times": row.retry_times,
+            "timeout_seconds": row.timeout_seconds,
+            "config_json": row.config_json or {},
             "latest_run_status": latest_logs[row.task_name].run_status if row.task_name in latest_logs else None,
             "latest_started_at": latest_logs[row.task_name].started_at.isoformat() if row.task_name in latest_logs and latest_logs[row.task_name].started_at else None,
             "latest_finished_at": latest_logs[row.task_name].finished_at.isoformat() if row.task_name in latest_logs and latest_logs[row.task_name].finished_at else None,
@@ -261,12 +264,12 @@ def get_task(task_id: int, db: Session = Depends(get_db), admin=Depends(require_
     row = db.query(ConfigTask).filter_by(task_id=task_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="NOT_FOUND")
-    return ok({"task_id": row.task_id, "task_name": row.task_name, "task_type": row.task_type, "enabled": row.enabled, "running": row.running})
+    return ok({"task_id": row.task_id, "task_name": row.task_name, "task_type": row.task_type, "enabled": row.enabled, "running": row.running, "config_json": row.config_json or {}})
 
 
 @router.post("/tasks")
 def create_task(payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    row = ConfigTask(task_name=payload["task_name"], task_type=payload.get("task_type", "manual"), owner_module=payload.get("owner_module", ""), cron_expression=payload.get("cron_expression", ""))
+    row = ConfigTask(task_name=payload["task_name"], task_type=payload.get("task_type", "manual"), owner_module=payload.get("owner_module", ""), cron_expression=payload.get("cron_expression", ""), config_json=payload.get("config_json") or {})
     db.add(row)
     db.flush()
     record_operation(db, "create", "config_task", row.task_id, "新增任务", payload)
@@ -279,7 +282,7 @@ def update_task(task_id: int, payload: dict, db: Session = Depends(get_db), admi
     row = db.query(ConfigTask).filter_by(task_id=task_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="NOT_FOUND")
-    for key in ["cron_expression", "retry_times", "timeout_seconds", "enabled"]:
+    for key in ["cron_expression", "retry_times", "timeout_seconds", "enabled", "config_json"]:
         if key in payload:
             setattr(row, key, payload[key])
     record_operation(db, "update", "config_task", task_id, "编辑任务", payload)
@@ -302,6 +305,8 @@ def run_config_task(task_id: int, db: Session = Depends(get_db), admin=Depends(r
         "collect_limit_up_daily": svc.collect_limit_up_daily,
         "update_watch_daily_kline": svc.update_watch_daily_kline,
         "update_watch_15m_kline": svc.update_watch_15m_kline,
+        "prepare_watch_kline_data": svc.prepare_watch_kline_data,
+        "prepare_trade_kline_data": svc.prepare_trade_kline_data,
         "update_watch_prices": svc.update_watch_prices,
         "scan_watch_signals": svc.scan_watch_signals,
         "scan_watch_rules": svc.scan_watch_rules,

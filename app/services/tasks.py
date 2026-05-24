@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, time
-from types import SimpleNamespace
 from typing import Callable
 
 from sqlalchemy.orm import Session
@@ -225,6 +224,14 @@ class TaskService:
             run_status="running",
             started_at=datetime.utcnow(),
         )
+        skip_reason = self._skip_reason(task)
+        if skip_reason:
+            log.run_status = "skipped"
+            log.error_message = skip_reason
+            log.finished_at = datetime.utcnow()
+            self.db.add(log)
+            self.db.commit()
+            return log
         if task:
             task.running = True
         self.db.add(log)
@@ -248,6 +255,40 @@ class TaskService:
             log.finished_at = datetime.utcnow()
             self.db.commit()
         return log
+
+    def _skip_reason(self, task: ConfigTask | None) -> str:
+        if task and not task.enabled:
+            return "task is disabled"
+        config = task.config_json or {} if task else {}
+        now = datetime.utcnow()
+        run_window = str(config.get("run_window") or "").strip()
+        if run_window and not self._in_run_window(run_window, now):
+            return f"outside run_window {run_window}"
+        if config.get("only_trade_day"):
+            try:
+                provider = ProviderFactory.create()
+                if hasattr(provider, "is_trade_day") and not provider.is_trade_day(now.date()):
+                    return "not a trade day"
+            except Exception as exc:
+                return f"trade day check failed: {exc}"
+        return ""
+
+    @staticmethod
+    def _in_run_window(run_window: str, now: datetime) -> bool:
+        try:
+            start_text, end_text = run_window.split("-", 1)
+            start = time.fromisoformat(start_text.strip())
+            end = time.fromisoformat(end_text.strip())
+        except ValueError:
+            return True
+        current = now.time()
+        if start <= end:
+            return start <= current <= end
+        return current >= start or current <= end
+
+    def _task_config(self, task_name: str) -> dict:
+        task = self.db.query(ConfigTask).filter(ConfigTask.task_name == task_name).first()
+        return task.config_json or {} if task else {}
 
     def collect_market_daily(self, trade_date: date) -> ConfigTaskLog:
         def _do() -> int:
@@ -511,6 +552,38 @@ class TaskService:
     def update_watch_15m_kline(self, trade_date: date) -> ConfigTaskLog:
         return self._run("update_watch_15m_kline", lambda: 0)
 
+    def prepare_watch_kline_data(self, trade_date: date) -> ConfigTaskLog:
+        def _do() -> tuple[int, str]:
+            from app.services.kline_collection import KlineCollectionService
+
+            config = self._task_config("prepare_watch_kline_data")
+            service = KlineCollectionService(
+                self.db,
+                max_requests_per_run=int(config.get("max_requests_per_run") or 100),
+                max_stocks_per_run=int(config["max_stocks_per_run"]) if config.get("max_stocks_per_run") else None,
+                timeframes=config.get("timeframes") or None,
+            )
+            affected = service.prepare_watch_rule_data(trade_date)
+            return affected, service.error_summary()
+
+        return self._run("prepare_watch_kline_data", _do)
+
+    def prepare_trade_kline_data(self, trade_date: date) -> ConfigTaskLog:
+        def _do() -> tuple[int, str]:
+            from app.services.kline_collection import KlineCollectionService
+
+            config = self._task_config("prepare_trade_kline_data")
+            service = KlineCollectionService(
+                self.db,
+                max_requests_per_run=int(config.get("max_requests_per_run") or 100),
+                max_stocks_per_run=int(config["max_stocks_per_run"]) if config.get("max_stocks_per_run") else None,
+                timeframes=config.get("timeframes") or None,
+            )
+            affected = service.prepare_trade_rule_data(trade_date)
+            return affected, service.error_summary()
+
+        return self._run("prepare_trade_kline_data", _do)
+
     def update_watch_prices(self, trade_date: date) -> ConfigTaskLog:
         def _do() -> int:
             provider = ProviderFactory.create()
@@ -558,14 +631,16 @@ class TaskService:
 
     def scan_watch_rules(self, trade_date: date) -> ConfigTaskLog:
         def _do() -> int:
-            from app.rule_executors import RuleContext, get_executor
+            from app.rule_executors import RuleContext, RuleResult, get_executor
             from app.services.notification import NotificationService
-            from app.services.kline import KlineService
+            from app.services.rule_data_requirements import RuleDataRequirementService
+            from app.services.technical_context import TechnicalContextService
 
-            kline_service = KlineService(self.db)
             notification_service = NotificationService()
-            provider = ProviderFactory.create()
+            requirement_service = RuleDataRequirementService(self.db)
+            technical_service = TechnicalContextService(self.db)
             notification_errors: list[str] = []
+            technical_warnings: list[str] = []
             rows = (
                 self.db.query(WatchPool)
                 .filter(
@@ -589,23 +664,7 @@ class TaskService:
                 .all()
             }
 
-            def _provider_5m_bars(stock_code: str) -> list[SimpleNamespace]:
-                if not hasattr(provider, "get_intraday_kline"):
-                    return []
-                start_time = datetime.combine(trade_date, time(9, 30))
-                end_time = datetime.combine(trade_date, time(15, 0))
-                bars = []
-                for item in provider.get_intraday_kline(stock_code, "5m", start_time, end_time) or []:
-                    bars.append(
-                        SimpleNamespace(
-                            close_price=item.get("close"),
-                            volume=item.get("volume", 0.0),
-                            kline_time=item.get("kline_time") or item.get("trade_time"),
-                        )
-                    )
-                return bars
-
-            def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition, watch: WatchPool) -> dict:
+            def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition, technical: dict) -> dict:
                 config = {
                     "binding_id": binding.binding_id,
                     "rule_code": rule.rule_code,
@@ -618,19 +677,29 @@ class TaskService:
                     "logic_operator": binding.logic_operator,
                     "config_json": binding.config_json or {},
                 }
-                if rule.executor_key == "macd_bottom_divergence":
-                    config["kline_bars"] = (
-                        kline_service.get_15m_kline(watch.stock_code, 80)
-                        if rule.timeframe == "15m"
-                        else _provider_5m_bars(watch.stock_code)
-                    )
-                elif rule.executor_key == "not_break_price":
-                    daily = kline_service.get_daily_kline(watch.stock_code, 5)
-                    if daily:
-                        latest = daily[-1]
-                        config["latest_close"] = latest.close_price
-                        config["latest_time"] = datetime.combine(latest.trade_date, datetime.min.time())
+                bars = technical.get("bars") or []
+                if bars:
+                    config["kline_bars"] = bars
+                    latest = bars[-1]
+                    config["latest_close"] = latest.close_price
+                    config["latest_time"] = latest.kline_time
                 return config
+
+            def _insufficient_result(rule: TradingRuleDefinition, technical: dict) -> RuleResult:
+                reason = f"Insufficient kline data for {rule.rule_code}: {technical.get('reason') or 'not enough bars'}"
+                return RuleResult(
+                    triggered=False,
+                    rule_code=rule.rule_code,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    reason=reason,
+                    snapshot={
+                        "timeframe": rule.timeframe,
+                        "executor_key": rule.executor_key,
+                        "technical_status": technical.get("status"),
+                        "freshness": technical.get("freshness") or {},
+                    },
+                )
 
             def _duplicate_exists(watch: WatchPool, rule_code: str, trigger_date: date) -> bool:
                 return bool(
@@ -709,7 +778,16 @@ class TaskService:
                     executor = get_executor(rule.executor_key)
                     if executor is None:
                         continue
-                    rule_config = _rule_config(binding, rule, watch)
+                    requirement = requirement_service.rule_requirement(binding, rule)
+                    technical = technical_service.get_context(
+                        watch.stock_code,
+                        requirement["timeframe"],
+                        requirement["lookback_bars"],
+                        requirement["indicators"],
+                    )
+                    rule_config = _rule_config(binding, rule, technical)
+                    if technical.get("status") != "ok":
+                        technical_warnings.append(f"{watch.stock_code}/{rule.rule_code}: {technical.get('reason')}")
                     context = RuleContext(
                         watch_id=watch.id,
                         stock_code=watch.stock_code,
@@ -718,10 +796,11 @@ class TaskService:
                         stage=watch.system_stage or "observe",
                         system_params=watch.system_params_json or {},
                         rule_config=rule_config,
+                        technical=technical,
                         trade_date=trade_date,
                         latest_price=quote_map.get(watch.stock_code),
                     )
-                    result = executor.execute(context)
+                    result = _insufficient_result(rule, technical) if technical.get("status") != "ok" else executor.execute(context)
                     results.append((binding, rule, result))
                     affected += 1
                 required_ok = all(result.triggered for binding, _rule, result in results if binding.required)
@@ -736,20 +815,22 @@ class TaskService:
                     continue
                 for _binding, rule, result in buy_results:
                     affected += _save_signal(watch, rule, result)
-            return affected, "; ".join(notification_errors[:5])
+            return affected, "; ".join((notification_errors + technical_warnings)[:5])
 
         return self._run("scan_watch_rules", _do)
 
     def scan_trade_rules(self, trade_date: date) -> ConfigTaskLog:
         def _do() -> int | tuple[int, str]:
-            from app.rule_executors import RuleContext, get_executor
-            from app.services.kline import KlineService
+            from app.rule_executors import RuleContext, RuleResult, get_executor
             from app.services.notification import NotificationService
+            from app.services.rule_data_requirements import RuleDataRequirementService
+            from app.services.technical_context import TechnicalContextService
 
-            kline_service = KlineService(self.db)
             notification_service = NotificationService()
-            provider = ProviderFactory.create()
+            requirement_service = RuleDataRequirementService(self.db)
+            technical_service = TechnicalContextService(self.db)
             notification_errors: list[str] = []
+            technical_warnings: list[str] = []
             trades = (
                 self.db.query(WatchTrade)
                 .filter(
@@ -770,20 +851,6 @@ class TaskService:
                 .all()
             }
 
-            def _provider_bars(stock_code: str, timeframe: str) -> list[SimpleNamespace]:
-                if not hasattr(provider, "get_intraday_kline"):
-                    return []
-                start_time = datetime.combine(trade_date, time(9, 30))
-                end_time = datetime.combine(trade_date, time(15, 0))
-                return [
-                    SimpleNamespace(
-                        close_price=item.get("close"),
-                        volume=item.get("volume", 0.0),
-                        kline_time=item.get("kline_time") or item.get("trade_time"),
-                    )
-                    for item in provider.get_intraday_kline(stock_code, timeframe, start_time, end_time) or []
-                ]
-
             def _bindings(trade: WatchTrade) -> list[tuple[TradingSystemRuleBinding, TradingRuleDefinition]]:
                 active_codes = set(trade.active_sell_rule_codes_json or []) | set(trade.active_stop_rule_codes_json or [])
                 query = (
@@ -800,7 +867,7 @@ class TaskService:
                     query = query.filter(TradingSystemRuleBinding.rule_code.in_(active_codes))
                 return query.order_by(TradingSystemRuleBinding.stage.asc(), TradingSystemRuleBinding.sort_order.asc()).all()
 
-            def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition, trade: WatchTrade) -> dict:
+            def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition, technical: dict) -> dict:
                 config = {
                     "binding_id": binding.binding_id,
                     "rule_code": rule.rule_code,
@@ -813,15 +880,29 @@ class TaskService:
                     "logic_operator": binding.logic_operator,
                     "config_json": binding.config_json or {},
                 }
-                if rule.executor_key in {"macd_top_divergence", "macd_dead_cross"}:
-                    config["kline_bars"] = _provider_bars(trade.stock_code, rule.timeframe)
-                elif rule.executor_key == "break_price":
-                    daily = kline_service.get_daily_kline(trade.stock_code, 5)
-                    if daily:
-                        latest = daily[-1]
-                        config["latest_close"] = latest.close_price
-                        config["latest_time"] = datetime.combine(latest.trade_date, datetime.min.time())
+                bars = technical.get("bars") or []
+                if bars:
+                    config["kline_bars"] = bars
+                    latest = bars[-1]
+                    config["latest_close"] = latest.close_price
+                    config["latest_time"] = latest.kline_time
                 return config
+
+            def _insufficient_result(rule: TradingRuleDefinition, technical: dict) -> RuleResult:
+                reason = f"Insufficient kline data for {rule.rule_code}: {technical.get('reason') or 'not enough bars'}"
+                return RuleResult(
+                    triggered=False,
+                    rule_code=rule.rule_code,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    reason=reason,
+                    snapshot={
+                        "timeframe": rule.timeframe,
+                        "executor_key": rule.executor_key,
+                        "technical_status": technical.get("status"),
+                        "freshness": technical.get("freshness") or {},
+                    },
+                )
 
             def _duplicate_exists(trade: WatchTrade, rule_code: str, trigger_date: date) -> bool:
                 return bool(
@@ -890,6 +971,15 @@ class TaskService:
                     executor = get_executor(rule.executor_key)
                     if executor is None:
                         continue
+                    requirement = requirement_service.rule_requirement(binding, rule)
+                    technical = technical_service.get_context(
+                        trade.stock_code,
+                        requirement["timeframe"],
+                        requirement["lookback_bars"],
+                        requirement["indicators"],
+                    )
+                    if technical.get("status") != "ok":
+                        technical_warnings.append(f"{trade.stock_code}/{rule.rule_code}: {technical.get('reason')}")
                     context = RuleContext(
                         watch_id=trade.watch_id or 0,
                         stock_code=trade.stock_code,
@@ -897,15 +987,16 @@ class TaskService:
                         trading_system_code=trade.trading_system_code,
                         stage=trade.current_stage or "trading",
                         system_params=trade.system_params_json or {},
-                        rule_config=_rule_config(binding, rule, trade),
+                        rule_config=_rule_config(binding, rule, technical),
+                        technical=technical,
                         trade_date=trade_date,
                         latest_price=quote_map.get(trade.stock_code),
                     )
-                    result = executor.execute(context)
+                    result = _insufficient_result(rule, technical) if technical.get("status") != "ok" else executor.execute(context)
                     affected += 1
                     if result.triggered:
                         affected += _save_signal(trade, watch, rule, result)
-            return affected, "; ".join(notification_errors[:5])
+            return affected, "; ".join((notification_errors + technical_warnings)[:5])
 
         return self._run("scan_trade_rules", _do)
 

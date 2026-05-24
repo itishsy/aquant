@@ -1,6 +1,7 @@
-from datetime import date
+from datetime import date, timedelta
 
-from app.models import ConfigTask, MktStockKlineDaily, WatchPool, WatchSignal, WatchTrade
+from app.models import ConfigTask, WatchPool, WatchSignal, WatchTrade
+from app.services.kline_repository import KlineRepository
 from app.services.prd_v1 import SeedService
 from app.services.tasks import TaskService
 
@@ -46,18 +47,22 @@ def test_scan_trade_rules_generates_platform_break_support_signal(db_session):
         remaining_amount=100,
     )
     db_session.add(trade)
-    db_session.add(
-        MktStockKlineDaily(
-            stock_code="603019.SH",
-            trade_date=date(2026, 5, 24),
-            source="test",
-            open_price=23.2,
-            high_price=23.4,
-            low_price=22.0,
-            close_price=22.5,
-            volume=100000,
-            amount=2250000,
-        )
+    KlineRepository(db_session).upsert_rows(
+        "603019.SH",
+        "daily",
+        [
+            {
+                "trade_date": date(2026, 5, 20) + timedelta(days=idx),
+                "open": 23.2,
+                "high": 23.4,
+                "low": 22.0,
+                "close": 22.5,
+                "volume": 100000,
+                "amount": 2250000,
+            }
+            for idx in range(5)
+        ],
+        "test",
     )
     db_session.commit()
 
@@ -78,3 +83,30 @@ def test_scan_trade_rules_generates_platform_break_support_signal(db_session):
     second = TaskService(db_session).scan_trade_rules(date(2026, 5, 24))
     assert second.run_status == "success"
     assert db_session.query(WatchSignal).filter(WatchSignal.related_trade_id == trade.id).count() == 1
+
+
+def test_scan_trade_rules_does_not_call_provider_when_data_missing(db_session, monkeypatch):
+    SeedService(db_session).init_defaults()
+    trade = WatchTrade(
+        stock_code="603019.SH",
+        stock_name="中科曙光",
+        trade_status="open",
+        trading_system="platform_breakout",
+        trading_system_code="platform_breakout",
+        system_params_json={"platform_support_price": 23.0},
+        active_stop_rule_codes_json=["break_platform_support"],
+        active_sell_rule_codes_json=[],
+        current_stage="trading",
+    )
+    db_session.add(trade)
+    db_session.commit()
+
+    def _raise_provider():
+        raise AssertionError("provider must not be called during scan_trade_rules")
+
+    monkeypatch.setattr("app.services.tasks.ProviderFactory.create", _raise_provider)
+    log = TaskService(db_session).scan_trade_rules(date(2026, 5, 24))
+
+    assert log.run_status == "success"
+    assert db_session.query(WatchSignal).count() == 0
+    assert "Need" in (log.error_message or "")

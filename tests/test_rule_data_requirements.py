@@ -1,0 +1,117 @@
+from datetime import date
+
+from app.models import TradingRuleDefinition, TradingSystemRuleBinding, WatchPool, WatchTrade
+from app.services.prd_v1 import SeedService
+from app.services.rule_data_requirements import RuleDataRequirementService
+
+
+def _platform_watch(**overrides):
+    data = {
+        "stock_code": "603019.SH",
+        "stock_name": "Test Stock",
+        "active": True,
+        "status": "watching",
+        "system_stage": "observe",
+        "monitor_enabled": True,
+        "signal_enabled": True,
+        "trading_system_code": "platform_breakout",
+        "trading_system": "platform_breakout",
+    }
+    data.update(overrides)
+    return WatchPool(**data)
+
+
+def test_platform_breakout_watch_requirements_include_daily_5m_15m(db_session):
+    SeedService(db_session).init_defaults()
+    db_session.add(_platform_watch())
+    db_session.commit()
+
+    requirements = RuleDataRequirementService(db_session).build_watch_requirements(date(2026, 5, 24))
+
+    stock = requirements["603019.SH"]
+    assert set(stock) == {"daily", "5m", "15m"}
+    assert stock["daily"]["lookback_bars"] == 5
+    assert stock["daily"]["indicators"] == []
+    assert stock["daily"]["reasons"] == ["not_break_platform_upper"]
+    assert stock["5m"]["lookback_bars"] == 120
+    assert stock["5m"]["indicators"] == ["macd"]
+    assert stock["5m"]["reasons"] == ["b5_divergence"]
+    assert stock["15m"]["lookback_bars"] == 120
+    assert stock["15m"]["indicators"] == ["macd"]
+    assert stock["15m"]["reasons"] == ["b15_divergence"]
+
+
+def test_platform_breakout_trade_requirements_include_daily_5m_30m(db_session):
+    SeedService(db_session).init_defaults()
+    db_session.add(
+        WatchTrade(
+            stock_code="603019.SH",
+            stock_name="Test Stock",
+            trade_status="open",
+            current_stage="trading",
+            trading_system_code="platform_breakout",
+            trading_system="platform_breakout",
+            active_sell_rule_codes_json=["m5_top_divergence", "m30_dead_cross"],
+            active_stop_rule_codes_json=["break_platform_support"],
+        )
+    )
+    db_session.commit()
+
+    requirements = RuleDataRequirementService(db_session).build_trade_requirements(date(2026, 5, 24))
+
+    stock = requirements["603019.SH"]
+    assert set(stock) == {"daily", "5m", "30m"}
+    assert stock["daily"]["lookback_bars"] == 5
+    assert stock["daily"]["reasons"] == ["break_platform_support"]
+    assert stock["5m"]["lookback_bars"] == 120
+    assert stock["5m"]["indicators"] == ["macd"]
+    assert stock["5m"]["reasons"] == ["m5_top_divergence"]
+    assert stock["30m"]["lookback_bars"] == 120
+    assert stock["30m"]["indicators"] == ["macd"]
+    assert stock["30m"]["reasons"] == ["m30_dead_cross"]
+
+
+def test_watch_requirements_skip_monitor_disabled_watch(db_session):
+    SeedService(db_session).init_defaults()
+    db_session.add(_platform_watch(monitor_enabled=False))
+    db_session.commit()
+
+    requirements = RuleDataRequirementService(db_session).build_watch_requirements(date(2026, 5, 24))
+
+    assert requirements == {}
+
+
+def test_watch_requirements_merge_duplicate_timeframe_requirements(db_session):
+    SeedService(db_session).init_defaults()
+    db_session.add(
+        TradingRuleDefinition(
+            rule_code="custom_5m_confirm",
+            rule_name="Custom 5m Confirm",
+            rule_type="confirm",
+            timeframe="5m",
+            executor_key="macd_bottom_divergence",
+            enabled=True,
+        )
+    )
+    db_session.add(
+        TradingSystemRuleBinding(
+            system_code="platform_breakout",
+            rule_code="custom_5m_confirm",
+            stage="observe",
+            required=False,
+            logic_group="bottom_divergence",
+            logic_operator="OR",
+            enabled=True,
+            sort_order=9,
+            config_json={"data": {"timeframe": "5m", "lookback_bars": 150, "indicators": ["ma", "macd"]}},
+        )
+    )
+    db_session.add(_platform_watch())
+    db_session.commit()
+
+    requirements = RuleDataRequirementService(db_session).build_watch_requirements(date(2026, 5, 24))
+
+    five_minute = requirements["603019.SH"]["5m"]
+    assert five_minute["lookback_bars"] == 150
+    assert five_minute["indicators"] == ["macd", "ma"]
+    assert five_minute["reasons"] == ["b5_divergence", "custom_5m_confirm"]

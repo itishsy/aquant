@@ -265,6 +265,29 @@ class MktStockKline15m(TimestampMixin, SystemBase):
     collected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class MktStockKline(TimestampMixin, SystemBase):
+    __tablename__ = "mkt_stock_kline"
+    __table_args__ = (
+        UniqueConstraint("stock_code", "timeframe", "kline_time", "source", name="uq_mkt_stock_kline_code_tf_time_source"),
+        Index("ix_mkt_stock_kline_code_tf_time", "stock_code", "timeframe", "kline_time"),
+        Index("ix_mkt_stock_kline_code_tf_date", "stock_code", "timeframe", "trade_date"),
+    )
+
+    kline_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), index=True)
+    kline_time: Mapped[datetime] = mapped_column(DateTime, index=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
+    open_price: Mapped[float] = mapped_column(Float)
+    high_price: Mapped[float] = mapped_column(Float)
+    low_price: Mapped[float] = mapped_column(Float)
+    close_price: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float, default=0.0)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    source: Mapped[str] = mapped_column(String(32), default="mock", index=True)
+    source_update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class WatchPool(TimestampMixin, SystemBase):
     __tablename__ = "watch_pool"
     __table_args__ = (
@@ -580,6 +603,7 @@ class ConfigTask(TimestampMixin, SystemBase):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     retry_times: Mapped[int] = mapped_column(Integer, default=0)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
     running: Mapped[bool] = mapped_column(Boolean, default=False)
 
 

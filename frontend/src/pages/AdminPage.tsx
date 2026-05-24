@@ -400,6 +400,10 @@ export function AdminPage() {
               await apiPost(`/admin/tasks/${task.task_id}/run`);
               Toast.show({ content: `已触发 ${task.task_name}` });
               loadAll();
+            }} onSaveConfig={async (task, config) => {
+              await apiPut(`/admin/tasks/${task.task_id}`, { config_json: config });
+              Toast.show({ content: "任务配置已保存" });
+              loadAll();
             }} />
           )}
 
@@ -454,7 +458,7 @@ function TableCard({ rows, empty }: { rows: string[]; empty: string }) {
   );
 }
 
-const WATCH_MONITOR_TASKS = new Set(["scan_watch_rules", "scan_trade_rules", "auto_remove_watch_pool", "update_watch_prices"]);
+const WATCH_MONITOR_TASKS = new Set(["scan_watch_rules", "scan_trade_rules", "prepare_watch_kline_data", "prepare_trade_kline_data", "auto_remove_watch_pool", "update_watch_prices"]);
 
 function taskErrorText(value?: string | null) {
   if (!value) return "-";
@@ -466,18 +470,31 @@ function taskTimeText(value?: string | null) {
   return String(value).replace("T", " ").slice(0, 19);
 }
 
-function TaskPanel({ tasks, onRun }: { tasks: any[]; onRun: (task: any) => void }) {
+function taskConfigSummary(config?: Record<string, any>) {
+  if (!config || !Object.keys(config).length) return "未配置";
+  const parts = [
+    config.interval_minutes ? `间隔 ${config.interval_minutes} 分钟` : "",
+    config.run_window ? `窗口 ${config.run_window}` : "",
+    Array.isArray(config.timeframes) && config.timeframes.length ? `周期 ${config.timeframes.join("/")}` : "",
+    config.max_requests_per_run ? `请求上限 ${config.max_requests_per_run}` : "",
+    config.max_stocks_per_run ? `股票上限 ${config.max_stocks_per_run}` : "",
+    config.only_trade_day ? "仅交易日" : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : JSON.stringify(config);
+}
+
+function TaskPanel({ tasks, onRun, onSaveConfig }: { tasks: any[]; onRun: (task: any) => void; onSaveConfig: (task: any, config: Record<string, any>) => void }) {
   const watchTasks = tasks.filter((task) => WATCH_MONITOR_TASKS.has(task.task_name));
   const otherTasks = tasks.filter((task) => !WATCH_MONITOR_TASKS.has(task.task_name));
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <TaskGroup title="自选监控" tasks={watchTasks} onRun={onRun} />
-      <TaskGroup title="其他任务" tasks={otherTasks} onRun={onRun} />
+      <TaskGroup title="自选监控" tasks={watchTasks} onRun={onRun} onSaveConfig={onSaveConfig} />
+      <TaskGroup title="其他任务" tasks={otherTasks} onRun={onRun} onSaveConfig={onSaveConfig} />
     </div>
   );
 }
 
-function TaskGroup({ title, tasks, onRun }: { title: string; tasks: any[]; onRun: (task: any) => void }) {
+function TaskGroup({ title, tasks, onRun, onSaveConfig }: { title: string; tasks: any[]; onRun: (task: any) => void; onSaveConfig: (task: any, config: Record<string, any>) => void }) {
   return (
     <div style={{ background: "#fff", borderRadius: 14, padding: 14, display: "grid", gap: 10 }}>
       <h3 style={{ margin: 0, color: "#1d2d50" }}>{title}</h3>
@@ -488,8 +505,20 @@ function TaskGroup({ title, tasks, onRun }: { title: string; tasks: any[]; onRun
               <strong style={{ color: "#1d2d50" }}>{task.task_name}</strong>
               <p style={{ margin: "4px 0 0", color: "#667085", fontSize: 12 }}>{task.owner_module || "-"} / {task.task_type || "-"} / {task.enabled ? "enabled" : "disabled"}</p>
             </div>
-            <Button size="mini" color="primary" onClick={() => onRun(task)}>手动执行</Button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button size="mini" fill="outline" onClick={() => {
+                const raw = window.prompt("编辑任务配置 JSON", JSON.stringify(task.config_json || {}, null, 2));
+                if (raw == null) return;
+                try {
+                  onSaveConfig(task, JSON.parse(raw));
+                } catch {
+                  Toast.show({ content: "JSON 格式不正确" });
+                }
+              }}>编辑配置</Button>
+              <Button size="mini" color="primary" onClick={() => onRun(task)}>手动执行</Button>
+            </div>
           </div>
+          <div style={{ fontSize: 12, color: "#667085" }}>执行计划：{taskConfigSummary(task.config_json)}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, fontSize: 12, color: "#344054" }}>
             <span>最近运行：{taskTimeText(task.latest_started_at)}</span>
             <span>状态：{task.latest_run_status || "-"}</span>

@@ -136,6 +136,8 @@ class SeedService:
         ("collect_limit_up_daily", "market"),
         ("update_watch_daily_kline", "market"),
         ("update_watch_15m_kline", "market"),
+        ("prepare_watch_kline_data", "kline"),
+        ("prepare_trade_kline_data", "kline"),
         ("update_watch_prices", "signal"),
         ("scan_watch_signals", "signal"),
         ("scan_watch_rules", "signal"),
@@ -155,6 +157,22 @@ class SeedService:
         ("limit_relay", "涨停接力", "用于承载涨停接力类交易规则的体系定义。", "观察 -> 接力确认 -> 交易中 -> 卖出/止损 -> 复盘", 3),
         ("oversold_rebound", "超跌反弹", "用于承载超跌修复类交易规则的体系定义。", "观察 -> 反弹确认 -> 交易中 -> 卖出/止损 -> 复盘", 4),
     ]
+    TASK_CONFIG_DEFAULTS = {
+        "prepare_watch_kline_data": {
+            "interval_minutes": 5,
+            "timeframes": ["daily", "5m", "15m", "30m"],
+            "max_requests_per_run": 100,
+            "source_priority": ["mock"],
+        },
+        "prepare_trade_kline_data": {
+            "interval_minutes": 5,
+            "timeframes": ["daily", "5m", "15m", "30m"],
+            "max_requests_per_run": 100,
+            "source_priority": ["mock"],
+        },
+        "scan_watch_rules": {"interval_minutes": 10},
+        "scan_trade_rules": {"interval_minutes": 10},
+    }
     PLATFORM_BREAKOUT_PARAMS = [
         ("platform_upper_price", "箱体上沿", "number", True, None, "平台箱体上沿价格。", 1),
         ("platform_support_price", "平台支撑位", "number", True, None, "平台结构的关键支撑价格。", 2),
@@ -207,9 +225,13 @@ class SeedService:
                     )
                     created += 1
         for name, owner in self.TASKS:
-            if not self.db.query(ConfigTask).filter_by(task_name=name).first():
-                self.db.add(ConfigTask(task_name=name, task_type="scheduled", owner_module=owner, enabled=True))
+            task = self.db.query(ConfigTask).filter_by(task_name=name).first()
+            default_config = self.TASK_CONFIG_DEFAULTS.get(name, {})
+            if not task:
+                self.db.add(ConfigTask(task_name=name, task_type="scheduled", owner_module=owner, enabled=True, config_json=default_config))
                 created += 1
+            elif default_config and not task.config_json:
+                task.config_json = default_config
         for code, label in self._dict_items(self.DICTS["buy_point_type"]):
             if not self.db.query(ConfigStrategy).filter_by(strategy_name=label).first():
                 self.db.add(

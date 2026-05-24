@@ -16,6 +16,7 @@ class RuleContext:
     stage: str
     system_params: dict[str, Any] = field(default_factory=dict)
     rule_config: dict[str, Any] = field(default_factory=dict)
+    technical: dict[str, Any] | None = None
     trade_date: date | None = None
     latest_price: Decimal | float | None = None
 

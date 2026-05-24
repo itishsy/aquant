@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from app.models import (
     ConfigTask,
@@ -9,7 +9,50 @@ from app.models import (
     WatchSignal,
 )
 from app.services.prd_v1 import SeedService
+from app.services.kline_repository import KlineRepository
 from app.services.tasks import TaskService
+
+
+def _seed_daily_bars(db_session, stock_code="603019.SH", close_price=25.05, count=5):
+    repo = KlineRepository(db_session)
+    start = date(2026, 5, 20)
+    repo.upsert_rows(
+        stock_code,
+        "daily",
+        [
+            {
+                "trade_date": start + timedelta(days=idx),
+                "open": close_price - 0.2,
+                "high": close_price + 0.2,
+                "low": close_price - 0.5,
+                "close": close_price,
+                "volume": 100000 + idx,
+            }
+            for idx in range(count)
+        ],
+        "test",
+    )
+
+
+def _seed_divergence_bars(db_session, stock_code="603019.SH", timeframe="5m"):
+    closes = [25.8, 25.4, 25.0, 24.8, 24.6, 24.55, 24.62, 24.74, 24.88, 25.05]
+    start = datetime(2026, 5, 24, 9, 35)
+    KlineRepository(db_session).upsert_rows(
+        stock_code,
+        timeframe,
+        [
+            {
+                "kline_time": start + timedelta(minutes=5 * idx),
+                "open": close - 0.08,
+                "high": close + 0.12,
+                "low": close - 0.15,
+                "close": close,
+                "volume": 10000 - idx * 350,
+            }
+            for idx, close in enumerate(closes)
+        ],
+        "test",
+    )
 
 
 def test_seed_includes_scan_watch_rules_task(db_session):
@@ -97,7 +140,17 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
         },
     )
     db_session.add(watch)
+    for rule_code in ["b5_divergence", "b15_divergence"]:
+        binding = db_session.query(TradingSystemRuleBinding).filter_by(
+            system_code="platform_breakout",
+            rule_code=rule_code,
+            stage="observe",
+        ).first()
+        binding.config_json = {"data": {"timeframe": "5m" if rule_code == "b5_divergence" else "15m", "lookback_bars": 10, "indicators": ["macd"]}}
     db_session.commit()
+    _seed_daily_bars(db_session)
+    _seed_divergence_bars(db_session, timeframe="5m")
+    _seed_divergence_bars(db_session, timeframe="15m")
 
     log = TaskService(db_session).scan_watch_rules(date(2026, 5, 24))
     signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
@@ -121,6 +174,35 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
     assert second.run_status == "success"
     assert second.affected_rows == 0
     assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == len(signals)
+
+
+def test_scan_watch_rules_does_not_call_provider_and_reports_missing_data(db_session, monkeypatch):
+    SeedService(db_session).init_defaults()
+    db_session.add(
+        WatchPool(
+            stock_code="603019.SH",
+            stock_name="中科曙光",
+            active=True,
+            status="watching",
+            monitor_enabled=True,
+            signal_enabled=True,
+            system_stage="observe",
+            trading_system_code="platform_breakout",
+            trading_system="platform_breakout",
+            system_params_json={"platform_upper_price": 24.0},
+        )
+    )
+    db_session.commit()
+
+    def _raise_provider():
+        raise AssertionError("provider must not be called during scan_watch_rules")
+
+    monkeypatch.setattr("app.services.tasks.ProviderFactory.create", _raise_provider)
+    log = TaskService(db_session).scan_watch_rules(date(2026, 5, 24))
+
+    assert log.run_status == "success"
+    assert db_session.query(WatchSignal).count() == 0
+    assert "Need" in (log.error_message or "")
 
 
 def _add_false_observe_rule(db_session, system_code="filter_system"):
