@@ -39,7 +39,7 @@ def test_common_dictionaries_include_watch_pool_codes_and_are_idempotent(client,
         "uptrend": "上涨趋势",
         "relay": "追涨接力",
     }
-    assert set(by_type["watch_waiting"]) == {
+    assert set(by_type["watch_lifecycle_status"]) == {
         "watching",
         "signal_generated",
         "waiting_buy_point",
@@ -433,6 +433,113 @@ def test_watch_pool_add_with_trading_system_instance_params(client, db_session):
     assert "not_break_platform_upper" in data["active_rule_codes_json"]
 
 
+def test_watch_pool_update_accepts_trading_system_instance_params(client, db_session):
+    SeedService(db_session).init_defaults()
+    created = client.post("/api/h5/watch-pool", json={
+        "stock_code": "688011.SH",
+        "stock_name": "Dynamic Param Test",
+        "trading_system_code": "platform_breakout",
+        "entry_reason": "platform retest",
+        "system_params_json": {
+            "platform_upper_price": 20.5,
+            "platform_support_price": 19.2,
+            "key_observe_price": 20.8,
+            "invalid_condition": "close below platform support",
+        },
+    })
+    assert created.status_code == 200
+    watch_id = created.json()["data"]["watch_id"]
+
+    updated = client.put(f"/api/h5/watch-pool/{watch_id}", json={
+        "trading_system_code": "platform_breakout",
+        "trading_system": "platform_breakout",
+        "entry_reason": "adjust platform params",
+        "system_params_json": {
+            "platform_upper_price": 21.5,
+            "platform_support_price": 20.2,
+            "key_observe_price": 21.8,
+            "auto_remove_price": 19.9,
+            "invalid_condition": "close below updated support",
+        },
+        "key_observe_price": 21.8,
+        "auto_remove_price": 19.9,
+        "invalid_condition": "close below updated support",
+        "risk_tags": ["break_support"],
+        "user_remark": "updated from detail drawer",
+        "adjust_reason": "raise platform box",
+    })
+
+    assert updated.status_code == 200
+    data = updated.json()["data"]
+    assert data["trading_system_code"] == "platform_breakout"
+    assert data["system_params_json"]["platform_upper_price"] == 21.5
+    assert data["system_params_json"]["platform_support_price"] == 20.2
+    assert data["system_params_json"]["key_observe_price"] == 21.8
+    assert data["system_params_json"]["auto_remove_price"] == 19.9
+    assert data["key_observe_price"] == 21.8
+    assert data["auto_remove_price"] == 19.9
+    assert data["invalid_condition"] == "close below updated support"
+    assert data["risk_tags"] == ["break_support"]
+    assert data["user_remark"] == "updated from detail drawer"
+
+
+def test_h5_signal_and_trade_return_rule_display_fields(client, db_session):
+    SeedService(db_session).init_defaults()
+    watch = WatchPool(
+        stock_code="688012.SH",
+        stock_name="Rule Display Test",
+        active=True,
+        status="trading",
+        trading_system="platform_breakout",
+        trading_system_code="platform_breakout",
+    )
+    db_session.add(watch)
+    db_session.flush()
+    signal = WatchSignal(
+        watch_id=watch.id,
+        stock_code=watch.stock_code,
+        stock_name=watch.stock_name,
+        signal_type="buy",
+        buy_point_type="b5_divergence",
+        trading_system="platform_breakout",
+        trading_system_code="platform_breakout",
+        rule_code="b5_divergence",
+        rule_type="buy_signal",
+        strategy_name="rule_executor:macd_bottom_divergence",
+        trigger_date=date(2026, 5, 5),
+        trigger_time=datetime(2026, 5, 5, 10, 30),
+        signal_status="buy_pending_confirm",
+    )
+    db_session.add(signal)
+    db_session.flush()
+    trade = WatchTrade(
+        signal_id=signal.signal_id,
+        watch_id=watch.id,
+        stock_code=watch.stock_code,
+        stock_name=watch.stock_name,
+        trading_system="platform_breakout",
+        trading_system_code="platform_breakout",
+        entry_rule_code="b5_divergence",
+        active_sell_rule_codes_json=["m5_top_divergence", "m30_dead_cross"],
+        active_stop_rule_codes_json=["break_platform_support"],
+        trade_status="open",
+    )
+    db_session.add(trade)
+    db_session.commit()
+
+    signal_payload = client.get("/api/h5/watch-signals/recent").json()["data"][0]
+    assert signal_payload["rule_name"] == "5分钟底背离"
+    assert signal_payload["rule_timeframe"] == "5m"
+    assert signal_payload["trading_system_name"] == "平台突破"
+    assert signal_payload["rule_display_name"] == "5分钟底背离"
+
+    trade_payload = client.get("/api/h5/watch-trades/recent").json()["data"][0]
+    assert trade_payload["entry_rule_display_name"] == "5分钟底背离"
+    assert trade_payload["trading_system_name"] == "平台突破"
+    assert [item["display_name"] for item in trade_payload["active_sell_rules"]] == ["5分钟顶背离", "30分钟死叉"]
+    assert [item["display_name"] for item in trade_payload["active_stop_rules"]] == ["收破平台支撑位"]
+
+
 def test_watch_pool_add_with_system_code_requires_defined_params(client, db_session):
     SeedService(db_session).init_defaults()
     response = client.post("/api/h5/watch-pool", json={
@@ -488,12 +595,11 @@ def test_watch_pool_blacklist_requires_explicit_confirmation(db_session):
     restored = service.add_watch(_watch_payload(stock_code="000002.SZ", confirm_blacklist_risk=True))
     assert restored.id == watch.id
     assert restored.status == "watching"
-    assert restored.status == "watching"
-    assert restored is False
+    assert restored.active is True
 
 
 def test_h5_signal_confirm_buy_creates_watch_trade_and_execution(client, db_session):
-    watch = WatchPool(stock_code="603019.SH", stock_name="中科曙光", reason="用户手动加入", pool_status="watching", monitor_enabled=True, active=True)
+    watch = WatchPool(stock_code="603019.SH", stock_name="中科曙光", reason="用户手动加入", status="watching", monitor_enabled=True, active=True)
     db_session.add(watch)
     db_session.flush()
     watch.status = "buy_pending_confirm"
@@ -533,7 +639,7 @@ def test_h5_signal_confirm_buy_creates_watch_trade_and_execution(client, db_sess
 
 
 def test_h5_confirm_sell_generates_trade_review(client, db_session):
-    watch = WatchPool(stock_code="603019.SH", stock_name="中科曙光", reason="用户手动加入", pool_status="watching", monitor_enabled=True, active=True)
+    watch = WatchPool(stock_code="603019.SH", stock_name="中科曙光", reason="用户手动加入", status="watching", monitor_enabled=True, active=True)
     db_session.add(watch)
     db_session.flush()
     watch.status = "buy_pending_confirm"
@@ -598,6 +704,11 @@ def test_watch_pool_filters_update_invalid_and_signal_abandon(client, db_session
     abandoned = client.post(f"/api/h5/watch-signals/{signal.signal_id}/abandon", json={"reason": "price moved away"})
     assert abandoned.status_code == 200
     assert abandoned.json()["data"]["abandoned_flag"] is True
+    restored_watch = db_session.get(WatchPool, watch.id)
+    assert restored_watch.status == "watching"
+    assert restored_watch.system_stage == "observe"
+    assert restored_watch.monitor_enabled is True
+    assert restored_watch.signal_enabled is True
 
     invalid = client.post(f"/api/h5/watch-pool/{watch.id}/invalid", json={"invalid_reason": "setup failed"})
     assert invalid.status_code == 200
@@ -605,7 +716,7 @@ def test_watch_pool_filters_update_invalid_and_signal_abandon(client, db_session
 
 
 def test_confirm_buy_requires_pending_confirm_and_buy_point_and_stop_loss(client, db_session):
-    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", pool_status="watching", waiting="watching", monitor_enabled=True, active=True)
+    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", status="watching", monitor_enabled=True, active=True)
     db_session.add(watch)
     db_session.flush()
     signal = WatchSignal(
@@ -635,7 +746,7 @@ def test_confirm_buy_requires_pending_confirm_and_buy_point_and_stop_loss(client
 
 
 def test_confirm_sell_rejects_partial_exit(client, db_session):
-    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", pool_status="trading", waiting="trading", monitor_enabled=False, active=True)
+    watch = WatchPool(stock_code="000001.SZ", stock_name="Ping An", status="trading", monitor_enabled=False, active=True)
     trade = WatchTrade(watch_id=1, stock_code="000001.SZ", stock_name="Ping An", first_buy_price=10, average_buy_price=10, total_buy_amount=100, remaining_amount=100, trade_status="open")
     db_session.add(watch)
     db_session.flush()

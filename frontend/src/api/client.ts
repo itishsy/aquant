@@ -1,10 +1,12 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 
 async function parseResponse<T>(response: Response): Promise<T> {
+  const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(`API ${response.status}`);
+    const detail = payload && typeof payload === "object" && "detail" in payload ? (payload as any).detail : "";
+    const message = typeof detail === "string" && detail ? detail : `API ${response.status}`;
+    throw new Error(message);
   }
-  const payload = await response.json();
   if (payload && typeof payload === "object" && "success" in payload && "data" in payload) {
     return payload.data as T;
   }

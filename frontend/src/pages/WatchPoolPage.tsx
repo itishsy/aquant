@@ -16,6 +16,24 @@ const tradingSystemOptions = [
   { label: "超跌反弹", value: "oversold_rebound" },
 ];
 
+type TradingSystemDefinition = {
+  system_code: string;
+  system_name: string;
+  enabled: boolean;
+};
+
+type TradingSystemParamDefinition = {
+  param_id: number;
+  system_code: string;
+  param_key: string;
+  param_name: string;
+  param_type: "number" | "text" | "select" | "boolean";
+  required: boolean;
+  default_value?: string | null;
+  description?: string;
+  sort_order: number;
+};
+
 const lifecycleOptions = [
   { label: "全部状态", value: "" },
   { label: "观察中", value: "watching" },
@@ -146,7 +164,36 @@ function coreParamText(item: any) {
 
 function ruleListText(value: any) {
   const items = Array.isArray(value) ? value : [];
-  return items.length ? items.join(" / ") : "-";
+  return items.length
+    ? items.map((item) => typeof item === "string" ? item : (item.display_name || item.rule_name || item.rule_code || "-")).join(" / ")
+    : "-";
+}
+
+function signalRuleText(item: any) {
+  return item.rule_display_name || item.rule_name || buyPointLabels[item.buy_point_type] || item.rule_code || item.buy_point_type || "-";
+}
+
+function tradingSystemText(item: any) {
+  return item.trading_system_name || labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system);
+}
+
+function shortError(value?: string | null) {
+  if (!value) return "";
+  return value.length > 48 ? `${value.slice(0, 48)}...` : value;
+}
+
+function notificationStatusText(item: any) {
+  if (item.notification_sent) return "邮件已发送";
+  if (item.notification_error) return `邮件发送失败：${shortError(item.notification_error)}`;
+  return "邮件待发送或不需要提醒";
+}
+
+function rulePreviewConclusionText(preview: any) {
+  if (!preview) return "";
+  if (preview.would_generate_signal) return "满足买点条件，若正式扫描会生成买点信号";
+  if (!preview.required_passed) return "必要条件未满足，暂不会生成信号";
+  if (!preview.buy_signal_triggered) return "必要条件满足，但买点信号未触发";
+  return "暂不会生成信号";
 }
 
 export function WatchPoolPage() {
@@ -162,9 +209,13 @@ export function WatchPoolPage() {
   const [tradingSystem, setTradingSystem] = useState("");
   const [lifecycleStatus, setLifecycleStatus] = useState("");
   const [editing, setEditing] = useState<any | null>(null);
+  const [tradingSystems, setTradingSystems] = useState<TradingSystemDefinition[]>([]);
+  const [editSystemParams, setEditSystemParams] = useState<TradingSystemParamDefinition[]>([]);
   const [buyForm, setBuyForm] = useState<any | null>(null);
   const [sellForm, setSellForm] = useState<any | null>(null);
   const [watchDetail, setWatchDetail] = useState<any>(null);
+  const [rulePreview, setRulePreview] = useState<any | null>(null);
+  const [rulePreviewLoading, setRulePreviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -201,6 +252,23 @@ export function WatchPoolPage() {
     load();
   }, [tradingSystem, lifecycleStatus]);
 
+  useEffect(() => {
+    apiGet<TradingSystemDefinition[]>("/h5/trading-systems")
+      .then((rows) => setTradingSystems(rows || []))
+      .catch(() => setTradingSystems([]));
+  }, []);
+
+  useEffect(() => {
+    const systemCode = editing?.trading_system_code || editing?.trading_system;
+    if (!systemCode) {
+      setEditSystemParams([]);
+      return;
+    }
+    apiGet<TradingSystemParamDefinition[]>(`/h5/trading-systems/${systemCode}/params`)
+      .then((rows) => setEditSystemParams(rows || []))
+      .catch(() => setEditSystemParams([]));
+  }, [editing?.trading_system_code, editing?.trading_system]);
+
   const buySignals = useMemo(() => signals.filter((item) => item.signal_type === "buy"), [signals]);
   const riskSignals = useMemo(() => signals.filter((item) => item.signal_type !== "buy"), [signals]);
   const pendingTradeSignals = useMemo(
@@ -222,16 +290,89 @@ export function WatchPoolPage() {
   );
 }
 
+  const availableTradingSystemOptions = useMemo(() => {
+    if (!tradingSystems.length) return tradingSystemOptions.filter((item) => item.value);
+    return tradingSystems.map((item) => ({ label: item.system_name, value: item.system_code }));
+  }, [tradingSystems]);
+
+  function normalizeEditParams(item: any) {
+    const params = { ...(item.system_params_json || {}) };
+    if (params.key_observe_price == null && item.key_observe_price != null) params.key_observe_price = item.key_observe_price;
+    if (params.auto_remove_price == null && item.auto_remove_price != null) params.auto_remove_price = item.auto_remove_price;
+    if (params.invalid_condition == null && item.invalid_condition) params.invalid_condition = item.invalid_condition;
+    return Object.fromEntries(Object.entries(params).map(([key, value]) => [key, value == null ? "" : String(value)]));
+  }
+
+  function updateEditParam(paramKey: string, value: string) {
+    if (!editing) return;
+    const nextParams = { ...(editing.system_params_json || {}), [paramKey]: value };
+    setEditing({
+      ...editing,
+      system_params_json: nextParams,
+      key_observe_price: paramKey === "key_observe_price" ? value : editing.key_observe_price,
+      auto_remove_price: paramKey === "auto_remove_price" ? value : editing.auto_remove_price,
+      invalid_condition: paramKey === "invalid_condition" ? value : editing.invalid_condition,
+    });
+  }
+
+  function changeEditSystem(systemCode: string) {
+    if (!editing) return;
+    const nextParams: Record<string, string> = {};
+    if (editing.key_observe_price) nextParams.key_observe_price = editing.key_observe_price;
+    if (editing.auto_remove_price) nextParams.auto_remove_price = editing.auto_remove_price;
+    if (editing.invalid_condition) nextParams.invalid_condition = editing.invalid_condition;
+    setEditing({
+      ...editing,
+      trading_system: systemCode,
+      trading_system_code: systemCode,
+      system_params_json: nextParams,
+    });
+  }
+
+  function renderEditParam(param: TradingSystemParamDefinition) {
+    const value = String(editing?.system_params_json?.[param.param_key] ?? "");
+    const label = `${param.param_name}${param.required ? " *" : ""}`;
+    return (
+      <div key={param.param_key} style={{ display: "grid", gap: 4 }}>
+        <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>{label}</span>
+        {param.param_type === "text" ? (
+          <TextArea value={value} rows={2} placeholder={param.description || param.param_name} onChange={(next) => updateEditParam(param.param_key, next)} />
+        ) : param.param_type === "boolean" ? (
+          <Selector
+            options={[{ label: "是", value: "true" }, { label: "否", value: "false" }]}
+            value={[value || "false"]}
+            onChange={(next) => updateEditParam(param.param_key, String(next[0] || "false"))}
+          />
+        ) : (
+          <Input type={param.param_type === "number" ? "number" : "text"} value={value} placeholder={param.description || param.param_name} onChange={(next) => updateEditParam(param.param_key, next)} />
+        )}
+      </div>
+    );
+  }
+
+  function buildEditSystemParams() {
+    const raw = editing?.system_params_json || {};
+    const booleanKeys = new Set(editSystemParams.filter((param) => param.param_type === "boolean").map((param) => param.param_key));
+    return Object.fromEntries(Object.entries(raw).map(([key, value]) => [
+      key,
+      booleanKeys.has(key) ? value === true || value === "true" : value,
+    ]));
+  }
+
   function openEdit(item: any) {
+    const systemCode = item.trading_system_code || item.trading_system || "platform_breakout";
+    const params = normalizeEditParams(item);
     setEditing({
       watch_id: item.watch_id,
       stock_name: item.stock_name,
       stock_code: item.stock_code,
-      trading_system: item.trading_system || "uptrend",
+      trading_system: systemCode,
+      trading_system_code: systemCode,
+      system_params_json: params,
       entry_reason: item.entry_reason || item.reason || "",
-      key_observe_price: item.key_observe_price != null ? String(item.key_observe_price) : "",
-      auto_remove_price: item.auto_remove_price != null ? String(item.auto_remove_price) : "",
-      invalid_condition: item.invalid_condition || "",
+      key_observe_price: params.key_observe_price || "",
+      auto_remove_price: params.auto_remove_price || "",
+      invalid_condition: params.invalid_condition || item.invalid_condition || "",
       risk_tags: item.risk_tags || [],
       user_remark: item.user_remark || item.remark || "",
       adjust_reason: "",
@@ -272,12 +413,23 @@ export function WatchPoolPage() {
       return;
     }
     try {
+      const missingParam = editSystemParams.find((param) => param.required && !String(editing.system_params_json?.[param.param_key] ?? "").trim());
+      if (missingParam) {
+        Toast.show({ content: `请填写${missingParam.param_name}` });
+        return;
+      }
+      const keyObservePrice = editing.system_params_json?.key_observe_price || editing.key_observe_price;
+      const autoRemovePrice = editing.system_params_json?.auto_remove_price || editing.auto_remove_price;
+      const invalidCondition = editing.system_params_json?.invalid_condition || editing.invalid_condition;
+      const systemParams = buildEditSystemParams();
       const updated = await apiPut<any>(`/h5/watch-pool/${editing.watch_id}`, {
+        trading_system_code: editing.trading_system_code || editing.trading_system,
         trading_system: editing.trading_system,
+        system_params_json: systemParams,
         entry_reason: editing.entry_reason,
-        key_observe_price: editing.key_observe_price && editing.key_observe_price.trim() ? Number(editing.key_observe_price) : null,
-        auto_remove_price: editing.auto_remove_price && editing.auto_remove_price.trim() ? Number(editing.auto_remove_price) : null,
-        invalid_condition: editing.invalid_condition,
+        key_observe_price: keyObservePrice && String(keyObservePrice).trim() ? Number(keyObservePrice) : null,
+        auto_remove_price: autoRemovePrice && String(autoRemovePrice).trim() ? Number(autoRemovePrice) : null,
+        invalid_condition: invalidCondition,
         risk_tags: editing.risk_tags,
         user_remark: editing.user_remark,
         adjust_reason: editing.adjust_reason,
@@ -286,8 +438,8 @@ export function WatchPoolPage() {
       setEditing(null);
       setWatchDetail(updated);
       setItems((prev) => prev.map((item) => item.watch_id === updated.watch_id ? updated : item));
-    } catch {
-      Toast.show({ content: "保存失败，请重试" });
+    } catch (err: any) {
+      Toast.show({ content: err?.message || "保存失败，请重试" });
     }
   }
 
@@ -388,6 +540,7 @@ export function WatchPoolPage() {
         ? item
         : await apiGet<any>(`/h5/watch-pool/${item.watch_id}`);
       setWatchDetail(watch);
+      setRulePreview(null);
       openEdit(watch);
     } catch {
       Toast.show({ content: "获取观察记录失败" });
@@ -401,7 +554,7 @@ export function WatchPoolPage() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <div>
             <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
-            <p style={{ marginTop: 4 }}>{labelOf(tradingSystemOptions, item.trading_system)} / {signalTypeLabels[item.signal_type] || item.signal_type}</p>
+            <p style={{ marginTop: 4 }}>{tradingSystemText(item)} / {signalTypeLabels[item.signal_type] || item.signal_type}</p>
           </div>
           <XueqiuButton item={item} />
         </div>
@@ -462,7 +615,7 @@ export function WatchPoolPage() {
             </strong>
             <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
               <StatusPill label={signalTypeLabels[item.signal_type] || item.signal_type} status={isRisk ? "sell_signal_pending" : item.signal_status} />
-              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system)} status="signal_generated" />
+              <StatusPill label={tradingSystemText(item)} status="signal_generated" />
             </div>
           </div>
           <XueqiuButton item={item} />
@@ -473,6 +626,7 @@ export function WatchPoolPage() {
           <MiniStat label="目标价" value={item.target_price ?? "-"} tone="#4b63ee" />
         </div>
         <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 9 }}>
+          <InfoLine label="触发规则" value={signalRuleText(item)} />
           <InfoLine label="买点类型" value={buyPointLabels[item.buy_point_type] || item.buy_point_type || "-"} />
           <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${item.signal_status || "-"}`} />
           <InfoLine label="触发原因" value={item.trigger_reason || ASSISTANT_NOTE} />
@@ -498,7 +652,7 @@ export function WatchPoolPage() {
               <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
             </strong>
             <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <StatusPill label={labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} status="trading" />
+              <StatusPill label={tradingSystemText(item)} status="trading" />
               <StatusPill label={item.trade_status || "-"} status={item.trade_status} />
               <StatusPill label={`阶段 ${item.current_stage || "trading"}`} status="trading" />
             </div>
@@ -518,6 +672,101 @@ export function WatchPoolPage() {
           <InfoLine label="交易体系" value={labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} />
           <InfoLine label="卖点规则" value={ruleListText(item.active_sell_rule_codes_json)} />
           <InfoLine label="止损规则" value={ruleListText(item.active_stop_rule_codes_json)} />
+          <InfoLine label="进入规则" value={item.entry_rule_display_name || item.entry_rule_name || item.entry_rule_code || item.buy_point_type || "-"} />
+          <InfoLine label="交易体系" value={tradingSystemText(item)} />
+          <InfoLine label="卖点规则" value={ruleListText(item.active_sell_rules || item.active_sell_rule_codes_json)} />
+          <InfoLine label="止损规则" value={ruleListText(item.active_stop_rules || item.active_stop_rule_codes_json)} />
+        <div style={{ display: "grid", gridTemplateColumns: isOpen ? "1fr 1fr" : "1fr", gap: 8 }}>
+          <Button block fill="outline" onClick={() => showExecutions(item)} style={{ borderRadius: 14 }}>执行流水</Button>
+          {isOpen && <Button block color="danger" fill="outline" onClick={() => openSellForm(item)} style={{ borderRadius: 14 }}>确认全部卖出</Button>}
+        </div>
+      </div>
+    );
+  }
+
+  async function previewWatchRules(item: any) {
+    if (!item?.watch_id) return;
+    setRulePreviewLoading(true);
+    try {
+      const data = await apiPost<any>(`/h5/watch-pool/${item.watch_id}/rule-preview`);
+      setRulePreview(data);
+    } catch (err: any) {
+      Toast.show({ content: err?.message || "规则试算失败" });
+    } finally {
+      setRulePreviewLoading(false);
+    }
+  }
+
+  function renderSignalCardV3(item: any) {
+    const canConfirmBuy = item.signal_status === "buy_pending_confirm";
+    const isRisk = item.signal_type !== "buy";
+    return (
+      <div key={item.signal_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
+            </strong>
+            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <StatusPill label={signalTypeLabels[item.signal_type] || item.signal_type} status={isRisk ? "sell_signal_pending" : item.signal_status} />
+              <StatusPill label={tradingSystemText(item)} status="signal_generated" />
+              {item.rule_timeframe && <StatusPill label={item.rule_timeframe} status="signal_generated" />}
+            </div>
+          </div>
+          <XueqiuButton item={item} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <MiniStat label="触发价" value={item.trigger_price ?? "-"} />
+          <MiniStat label="止损位" value={item.stop_loss_price ?? "-"} tone="#e34d59" />
+          <MiniStat label="目标价" value={item.target_price ?? "-"} tone="#4b63ee" />
+        </div>
+        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 9 }}>
+          <InfoLine label="触发规则" value={signalRuleText(item)} />
+          <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${item.signal_status || "-"}`} />
+          <InfoLine label="邮件提醒" value={notificationStatusText(item)} />
+          <InfoLine label="触发原因" value={item.trigger_reason || ASSISTANT_NOTE} />
+          <InfoLine label="风险说明" value={item.risk_desc || "-"} />
+          <p style={{ margin: 0, color: "#8a94a8", fontSize: 12, lineHeight: 1.55 }}>{ASSISTANT_NOTE}</p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: canConfirmBuy ? "1.1fr 1fr" : "1fr", gap: 8 }}>
+          {canConfirmBuy && <Button block color="primary" onClick={() => openBuyForm(item)} style={{ borderRadius: 14, fontWeight: 800 }}>确认买入</Button>}
+          <Button block fill="outline" onClick={() => abandonSignal(item)} style={{ borderRadius: 14 }}>放弃本次机会</Button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderTradeCardV3(item: any) {
+    const isOpen = ["open", "holding"].includes(item.trade_status);
+    const pnl = Number(item.pnl_amount) || 0;
+    return (
+      <div key={item.trade_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
+            </strong>
+            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <StatusPill label={tradingSystemText(item)} status="trading" />
+              <StatusPill label={item.trade_status || "-"} status={item.trade_status} />
+              <StatusPill label={`阶段 ${item.current_stage || "trading"}`} status="trading" />
+            </div>
+          </div>
+          <XueqiuButton item={item} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <MiniStat label="买入均价" value={item.average_buy_price ?? item.first_buy_price ?? "-"} />
+          <MiniStat label="剩余数量" value={item.remaining_amount ?? "-"} />
+          <MiniStat label="盈亏率" value={`${formatMoney((Number(item.pnl_ratio) || 0) * 100)}%`} tone={pnl >= 0 ? "#e34d59" : "#00a870"} />
+        </div>
+        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <InfoLine label="止损价" value={item.stop_loss_price ?? "-"} />
+          <InfoLine label="目标价" value={item.target_price ?? "-"} />
+          <InfoLine label="进入规则" value={item.entry_rule_display_name || item.entry_rule_name || item.entry_rule_code || item.buy_point_type || "-"} />
+          <InfoLine label="交易体系" value={tradingSystemText(item)} />
+          <InfoLine label="卖点规则" value={ruleListText(item.active_sell_rules || item.active_sell_rule_codes_json)} />
+          <InfoLine label="止损规则" value={ruleListText(item.active_stop_rules || item.active_stop_rule_codes_json)} />
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: isOpen ? "1fr 1fr" : "1fr", gap: 8 }}>
           <Button block fill="outline" onClick={() => showExecutions(item)} style={{ borderRadius: 14 }}>执行流水</Button>
           {isOpen && <Button block color="danger" fill="outline" onClick={() => openSellForm(item)} style={{ borderRadius: 14 }}>确认全部卖出</Button>}
@@ -624,8 +873,8 @@ export function WatchPoolPage() {
             <span className="soft-tag">今日 {todaySignals} / 总数 {signalSummary.total ?? signals.length}</span>
           </div>
           <div className="stack-list">
-            {buySignals.map(renderSignalCardV2)}
-            {riskSignals.map(renderSignalCardV2)}
+            {buySignals.map(renderSignalCardV3)}
+            {riskSignals.map(renderSignalCardV3)}
             {!buySignals.length && !riskSignals.length && <div className="empty-panel">暂无信号</div>}
           </div>
         </article>
@@ -643,7 +892,7 @@ export function WatchPoolPage() {
               {pendingTradeSignals.map(renderSignalCardV2)}
             </div>
           ) : null}
-          {trades.length ? <div className="stack-list">{trades.map(renderTradeCardV2)}</div> : <div className="empty-panel">暂无交易记录</div>}
+          {trades.length ? <div className="stack-list">{trades.map(renderTradeCardV3)}</div> : <div className="empty-panel">暂无交易记录</div>}
         </article>
       )}
 
@@ -707,8 +956,24 @@ export function WatchPoolPage() {
             )}
 
             <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>仅作为交易辅助，请结合个人交易规则确认。</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            {rulePreview && (
+              <div style={{ borderRadius: 12, background: rulePreview.would_generate_signal ? "#fff1f1" : "#f7f9ff", padding: 12, display: "grid", gap: 8 }}>
+                <strong style={{ color: rulePreview.would_generate_signal ? "#e34d59" : "#22375c", fontSize: 14 }}>规则试算：{rulePreviewConclusionText(rulePreview)}</strong>
+                {(rulePreview.rules || []).map((rule: any) => (
+                  <div key={rule.rule_code} style={{ borderRadius: 10, background: "#fff", padding: 10, display: "grid", gap: 4 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <strong style={{ color: "#17213b", fontSize: 13 }}>{rule.rule_display_name || rule.rule_name || rule.rule_code}</strong>
+                      <span style={{ color: rule.triggered ? "#00a870" : "#e34d59", fontSize: 12, fontWeight: 800 }}>{rule.triggered ? "满足" : "未满足"}</span>
+                    </div>
+                    <div style={{ color: "#667085", fontSize: 12 }}>{rule.rule_type} / {rule.timeframe} / {rule.required ? "必需" : "可选"} / {rule.logic_group || "-"}</div>
+                    <div style={{ color: "#475467", fontSize: 12 }}>{rule.reason || "暂无原因"}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
               <Button block fill="outline" size="small" onClick={() => openEdit(watchDetail)}>编辑</Button>
+              <Button block fill="outline" size="small" loading={rulePreviewLoading} onClick={() => previewWatchRules(watchDetail)}>试算</Button>
               <Button block fill="none" size="small" style={{ fontSize: 12 }} onClick={() => {
                 const code = (watchDetail.stock_code || "").trim().toUpperCase();
                 const marketPrefix = code.match(/^(SH|SZ|BJ)\d{6}$/);
@@ -732,17 +997,24 @@ export function WatchPoolPage() {
 
             <div style={{ borderRadius: 12, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
               <div style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>交易体系</div>
-              <Selector options={tradingSystemOptions.filter((item) => item.value)} value={[editing.trading_system]} onChange={(value) => setEditing({ ...editing, trading_system: value[0] })} />
+              <Selector options={availableTradingSystemOptions} value={[editing.trading_system_code || editing.trading_system]} onChange={(value) => changeEditSystem(String(value[0] || ""))} />
+            </div>
+
+            <div style={{ borderRadius: 12, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+              <div style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>交易体系参数</div>
+              {editSystemParams.length ? editSystemParams.map((param) => renderEditParam(param)) : (
+                <div style={{ color: "#98a2b3", fontSize: 12 }}>当前体系暂无参数定义</div>
+              )}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div style={{ display: "grid", gap: 4 }}>
                 <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>关键观察价</span>
-                <Input type="number" value={editing.key_observe_price} placeholder="12.00" onChange={(value) => setEditing({ ...editing, key_observe_price: value })} />
+                <Input type="number" value={editing.key_observe_price} placeholder="12.00" onChange={(value) => updateEditParam("key_observe_price", value)} />
               </div>
               <div style={{ display: "grid", gap: 4 }}>
                 <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>自动剔除价</span>
-                <Input type="number" value={editing.auto_remove_price} placeholder="跌破后软剔除" onChange={(value) => setEditing({ ...editing, auto_remove_price: value })} />
+                <Input type="number" value={editing.auto_remove_price} placeholder="跌破后软剔除" onChange={(value) => updateEditParam("auto_remove_price", value)} />
               </div>
             </div>
 
@@ -753,7 +1025,7 @@ export function WatchPoolPage() {
               </div>
               <div style={{ display: "grid", gap: 4 }}>
                 <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>失效条件</span>
-                <TextArea value={editing.invalid_condition} rows={2} placeholder="什么情况下不再观察" onChange={(value) => setEditing({ ...editing, invalid_condition: value })} />
+                <TextArea value={editing.invalid_condition} rows={2} placeholder="什么情况下不再观察" onChange={(value) => updateEditParam("invalid_condition", value)} />
               </div>
             </div>
 

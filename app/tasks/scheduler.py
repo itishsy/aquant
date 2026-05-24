@@ -48,6 +48,28 @@ def build_scheduler() -> BackgroundScheduler:
         misfire_grace_time=300,
     )
     scheduler.add_job(
+        run_watch_rule_scan,
+        trigger="interval",
+        minutes=10,
+        id="scan_watch_rules",
+        name="Scan watch-pool trading system rules",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
+        run_trade_rule_scan,
+        trigger="interval",
+        minutes=10,
+        id="scan_trade_rules",
+        name="Scan active trade trading system rules",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
         run_watch_auto_remove,
         trigger="interval",
         minutes=15,
@@ -76,6 +98,22 @@ def run_watch_signal_scan() -> None:
     db: Session = SystemSessionLocal()
     try:
         TaskService(db).scan_watch_signals(date.today())
+    finally:
+        db.close()
+
+
+def run_watch_rule_scan() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).scan_watch_rules(date.today())
+    finally:
+        db.close()
+
+
+def run_trade_rule_scan() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).scan_trade_rules(date.today())
     finally:
         db.close()
 

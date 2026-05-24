@@ -1,3 +1,8 @@
+from datetime import datetime
+
+from app.models import ConfigTaskLog
+
+
 def test_admin_can_create_and_edit_trading_system(client):
     created = client.post(
         "/api/admin/trading-systems",
@@ -101,3 +106,29 @@ def test_admin_can_manage_rule_param_and_binding(client):
     assert data["stage"] == "trading"
     assert data["logic_operator"] == "OR"
     assert data["enabled"] is False
+
+
+def test_admin_tasks_include_latest_run_summary(client, db_session):
+    response = client.get("/api/admin/tasks")
+    assert response.status_code == 200
+    task = next(item for item in response.json()["data"] if item["task_name"] == "scan_watch_rules")
+    db_session.add(
+        ConfigTaskLog(
+            task_id=task["task_id"],
+            task_name="scan_watch_rules",
+            run_status="success",
+            started_at=datetime(2026, 5, 24, 10, 0),
+            finished_at=datetime(2026, 5, 24, 10, 1),
+            affected_rows=3,
+            error_message="",
+        )
+    )
+    db_session.commit()
+
+    refreshed = client.get("/api/admin/tasks")
+    assert refreshed.status_code == 200
+    payload = next(item for item in refreshed.json()["data"] if item["task_name"] == "scan_watch_rules")
+    assert payload["owner_module"] == "signal"
+    assert payload["latest_run_status"] == "success"
+    assert payload["latest_affected_rows"] == 3
+    assert payload["latest_started_at"].startswith("2026-05-24T10:00:00")

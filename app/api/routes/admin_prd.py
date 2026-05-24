@@ -235,7 +235,25 @@ def source_field_mappings(source_id: int, db: Session = Depends(get_db), admin=D
 @router.get("/tasks")
 def list_tasks(db: Session = Depends(get_db), admin=Depends(require_admin)):
     SeedService(db).init_defaults()
-    return ok([{"task_id": row.task_id, "task_name": row.task_name, "task_type": row.task_type, "enabled": row.enabled, "running": row.running} for row in db.query(ConfigTask).all()])
+    latest_logs: dict[str, ConfigTaskLog] = {}
+    for log in db.query(ConfigTaskLog).order_by(ConfigTaskLog.started_at.desc()).limit(300).all():
+        latest_logs.setdefault(log.task_name, log)
+    return ok([
+        {
+            "task_id": row.task_id,
+            "task_name": row.task_name,
+            "task_type": row.task_type,
+            "owner_module": row.owner_module,
+            "enabled": row.enabled,
+            "running": row.running,
+            "latest_run_status": latest_logs[row.task_name].run_status if row.task_name in latest_logs else None,
+            "latest_started_at": latest_logs[row.task_name].started_at.isoformat() if row.task_name in latest_logs and latest_logs[row.task_name].started_at else None,
+            "latest_finished_at": latest_logs[row.task_name].finished_at.isoformat() if row.task_name in latest_logs and latest_logs[row.task_name].finished_at else None,
+            "latest_affected_rows": latest_logs[row.task_name].affected_rows if row.task_name in latest_logs else None,
+            "latest_error_message": latest_logs[row.task_name].error_message if row.task_name in latest_logs else None,
+        }
+        for row in db.query(ConfigTask).order_by(ConfigTask.task_id.asc()).all()
+    ])
 
 
 @router.get("/tasks/{task_id}")
@@ -319,12 +337,12 @@ def rerun_task(task_id: int, db: Session = Depends(get_db), admin=Depends(requir
 
 @router.get("/tasks/{task_id}/logs")
 def task_logs(task_id: int, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    return ok([{"log_id": row.log_id, "task_name": row.task_name, "run_status": row.run_status, "error_message": row.error_message} for row in db.query(ConfigTaskLog).filter(ConfigTaskLog.task_id == task_id).order_by(ConfigTaskLog.started_at.desc()).all()])
+    return ok([{"log_id": row.log_id, "task_name": row.task_name, "run_status": row.run_status, "started_at": row.started_at, "finished_at": row.finished_at, "affected_rows": row.affected_rows, "error_message": row.error_message} for row in db.query(ConfigTaskLog).filter(ConfigTaskLog.task_id == task_id).order_by(ConfigTaskLog.started_at.desc()).all()])
 
 
 @router.get("/task-logs")
 def all_task_logs(db: Session = Depends(get_db), admin=Depends(require_admin)):
-    return ok([{"log_id": row.log_id, "task_name": row.task_name, "run_status": row.run_status, "error_message": row.error_message} for row in db.query(ConfigTaskLog).order_by(ConfigTaskLog.started_at.desc()).limit(100).all()])
+    return ok([{"log_id": row.log_id, "task_name": row.task_name, "run_status": row.run_status, "started_at": row.started_at, "finished_at": row.finished_at, "affected_rows": row.affected_rows, "error_message": row.error_message} for row in db.query(ConfigTaskLog).order_by(ConfigTaskLog.started_at.desc()).limit(100).all()])
 
 
 @router.get("/dictionaries")

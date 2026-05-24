@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
@@ -23,8 +24,10 @@ from app.models import (
     ReviewMonthly,
     ReviewTrade,
     ReviewWeekly,
+    TradingRuleDefinition,
     TradingSystemDefinition,
     TradingSystemParamDefinition,
+    TradingSystemRuleBinding,
     WatchPool,
     WatchPoolStatusLog,
     WatchSignal,
@@ -104,6 +107,183 @@ def _system_name_map(db: Session, system_codes: list[str | None]) -> dict[str, s
     return {row.system_code: row.system_name for row in rows}
 
 
+def _rule_map(db: Session, rule_codes: list[str | None]) -> dict[str, TradingRuleDefinition]:
+    codes = sorted({code for code in rule_codes if code})
+    if not codes:
+        return {}
+    rows = db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code.in_(codes)).all()
+    return {row.rule_code: row for row in rows}
+
+
+def _rule_payload(rule_code: str | None, rule: TradingRuleDefinition | None = None) -> dict | None:
+    if not rule_code:
+        return None
+    return {
+        "rule_code": rule_code,
+        "rule_name": rule.rule_name if rule else rule_code,
+        "rule_type": rule.rule_type if rule else None,
+        "timeframe": rule.timeframe if rule else None,
+        "executor_key": rule.executor_key if rule else None,
+        "display_name": rule.rule_name if rule else rule_code,
+    }
+
+
+def _rule_payloads(rule_codes: list[str] | None, rule_map: dict[str, TradingRuleDefinition] | None = None) -> list[dict]:
+    rule_map = rule_map or {}
+    return [
+        payload
+        for payload in (_rule_payload(code, rule_map.get(code)) for code in (rule_codes or []))
+        if payload
+    ]
+
+
+SAFE_RULE_EXECUTORS = {
+    "always_false",
+    "not_break_price",
+    "macd_bottom_divergence",
+    "macd_top_divergence",
+    "macd_dead_cross",
+    "break_price",
+}
+
+
+def _simplify_snapshot(snapshot: dict | None) -> dict:
+    if not isinstance(snapshot, dict):
+        return {}
+    keys = [
+        "latest_price",
+        "latest_close",
+        "latest_time",
+        "timeframe",
+        "rule_code",
+        "executor_key",
+        "bars_count",
+        "last_macd",
+        "last_dif",
+        "last_dea",
+    ]
+    return {key: snapshot[key] for key in keys if key in snapshot}
+
+
+def _evaluate_observe_rules(db: Session, watch: WatchPool, trade_date: date) -> dict:
+    from app.providers.factory import ProviderFactory
+    from app.rule_executors import RuleContext, get_executor
+    from app.services.kline import KlineService
+
+    if not watch.trading_system_code:
+        raise HTTPException(status_code=400, detail="watch has no trading_system_code")
+
+    kline_service = KlineService(db)
+    provider = ProviderFactory.create()
+    quote = db.query(MktStockQuote).filter(MktStockQuote.stock_code == watch.stock_code).first()
+
+    def _provider_5m_bars(stock_code: str) -> list[SimpleNamespace]:
+        if not hasattr(provider, "get_intraday_kline"):
+            return []
+        start_time = datetime.combine(trade_date, time(9, 30))
+        end_time = datetime.combine(trade_date, time(15, 0))
+        bars = []
+        for item in provider.get_intraday_kline(stock_code, "5m", start_time, end_time) or []:
+            bars.append(
+                SimpleNamespace(
+                    close_price=item.get("close"),
+                    volume=item.get("volume", 0.0),
+                    kline_time=item.get("kline_time") or item.get("trade_time"),
+                )
+            )
+        return bars
+
+    def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition) -> dict:
+        config = {
+            "binding_id": binding.binding_id,
+            "rule_code": rule.rule_code,
+            "rule_name": rule.rule_name,
+            "rule_type": rule.rule_type,
+            "timeframe": rule.timeframe,
+            "executor_key": rule.executor_key,
+            "required": binding.required,
+            "logic_group": binding.logic_group,
+            "logic_operator": binding.logic_operator,
+            "config_json": binding.config_json or {},
+        }
+        if rule.executor_key == "macd_bottom_divergence":
+            config["kline_bars"] = (
+                kline_service.get_15m_kline(watch.stock_code, 80)
+                if rule.timeframe == "15m"
+                else _provider_5m_bars(watch.stock_code)
+            )
+        elif rule.executor_key == "not_break_price":
+            daily = kline_service.get_daily_kline(watch.stock_code, 5)
+            if daily:
+                latest = daily[-1]
+                config["latest_close"] = latest.close_price
+                config["latest_time"] = datetime.combine(latest.trade_date, datetime.min.time())
+        return config
+
+    bindings = (
+        db.query(TradingSystemRuleBinding, TradingRuleDefinition)
+        .join(TradingRuleDefinition, TradingRuleDefinition.rule_code == TradingSystemRuleBinding.rule_code)
+        .filter(
+            TradingSystemRuleBinding.system_code == watch.trading_system_code,
+            TradingSystemRuleBinding.stage == "observe",
+            TradingSystemRuleBinding.enabled.is_(True),
+            TradingRuleDefinition.enabled.is_(True),
+        )
+        .order_by(TradingSystemRuleBinding.sort_order.asc(), TradingSystemRuleBinding.binding_id.asc())
+        .all()
+    )
+    results = []
+    for binding, rule in bindings:
+        executor = get_executor(rule.executor_key) if rule.executor_key in SAFE_RULE_EXECUTORS else None
+        result = None
+        reason = "safe executor is not registered; skipped preview"
+        if executor is not None:
+            context = RuleContext(
+                watch_id=watch.id,
+                stock_code=watch.stock_code,
+                stock_name=watch.stock_name,
+                trading_system_code=watch.trading_system_code,
+                stage=watch.system_stage or "observe",
+                system_params=watch.system_params_json or {},
+                rule_config=_rule_config(binding, rule),
+                trade_date=trade_date,
+                latest_price=quote.latest_price if quote else None,
+            )
+            result = executor.execute(context)
+            reason = result.reason
+        results.append(
+            {
+                "rule_code": rule.rule_code,
+                "rule_name": rule.rule_name,
+                "rule_display_name": rule.rule_name or rule.rule_code,
+                "rule_type": rule.rule_type,
+                "timeframe": rule.timeframe,
+                "executor_key": rule.executor_key,
+                "required": binding.required,
+                "logic_group": binding.logic_group,
+                "logic_operator": binding.logic_operator,
+                "triggered": bool(result.triggered) if result else False,
+                "trigger_price": result.trigger_price if result else None,
+                "reason": reason,
+                "snapshot": _simplify_snapshot(result.snapshot if result else {}),
+            }
+        )
+
+    required_passed = all(item["triggered"] for item in results if item["required"])
+    buy_signal_triggered = any(item["triggered"] for item in results if item["rule_type"] == "buy_signal")
+    return {
+        "watch_id": watch.id,
+        "stock_code": watch.stock_code,
+        "stock_name": watch.stock_name,
+        "trading_system_code": watch.trading_system_code,
+        "system_stage": watch.system_stage or "observe",
+        "required_passed": required_passed,
+        "buy_signal_triggered": buy_signal_triggered,
+        "would_generate_signal": required_passed and buy_signal_triggered,
+        "rules": results,
+    }
+
+
 def _trading_system_dict(row: TradingSystemDefinition) -> dict:
     return {
         "system_id": row.system_id,
@@ -131,7 +311,15 @@ def _trading_param_dict(row: TradingSystemParamDefinition) -> dict:
     }
 
 
-def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
+def _signal_dict(
+    row: WatchSignal,
+    quote: MktStockQuote | None = None,
+    rule: TradingRuleDefinition | None = None,
+    trading_system_name: str | None = None,
+) -> dict:
+    rule_code = row.rule_code or row.buy_point_type
+    rule_name = rule.rule_name if rule else rule_code
+    rule_timeframe = rule.timeframe if rule else row.kline_period
     data = {
         "signal_id": row.signal_id,
         "watch_id": row.watch_id,
@@ -141,6 +329,9 @@ def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
         "buy_point_type": row.buy_point_type,
         "trading_system_code": row.trading_system_code,
         "rule_code": row.rule_code,
+        "rule_name": rule_name,
+        "rule_timeframe": rule_timeframe,
+        "rule_display_name": rule_name or rule_code,
         "rule_type": row.rule_type,
         "strategy_name": row.strategy_name,
         "signal_level": row.signal_level,
@@ -155,6 +346,7 @@ def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
         "signal_status": row.signal_status,
         "user_action": row.user_action,
         "trading_system": row.trading_system,
+        "trading_system_name": trading_system_name or row.trading_system_code or row.trading_system,
         "buy_point_confirmed": row.buy_point_confirmed,
         "buy_point_confirm_time": row.buy_point_confirm_time,
         "buy_point_confirm_price": row.buy_point_confirm_price,
@@ -173,7 +365,14 @@ def _signal_dict(row: WatchSignal, quote: MktStockQuote | None = None) -> dict:
     return data
 
 
-def _trade_dict(row: WatchTrade, quote: MktStockQuote | None = None) -> dict:
+def _trade_dict(
+    row: WatchTrade,
+    quote: MktStockQuote | None = None,
+    rule_map: dict[str, TradingRuleDefinition] | None = None,
+    trading_system_name: str | None = None,
+) -> dict:
+    rule_map = rule_map or {}
+    entry_rule = rule_map.get(row.entry_rule_code or "")
     data = {
         "trade_id": row.id,
         "signal_id": row.signal_id,
@@ -183,10 +382,15 @@ def _trade_dict(row: WatchTrade, quote: MktStockQuote | None = None) -> dict:
         "trade_source": row.trade_source,
         "trading_system": row.trading_system,
         "trading_system_code": row.trading_system_code,
+        "trading_system_name": trading_system_name or row.trading_system_code or row.trading_system,
         "entry_rule_code": row.entry_rule_code,
+        "entry_rule_name": entry_rule.rule_name if entry_rule else row.entry_rule_code,
+        "entry_rule_display_name": entry_rule.rule_name if entry_rule else row.entry_rule_code,
         "system_params_json": row.system_params_json or {},
         "active_sell_rule_codes_json": row.active_sell_rule_codes_json or [],
         "active_stop_rule_codes_json": row.active_stop_rule_codes_json or [],
+        "active_sell_rules": _rule_payloads(row.active_sell_rule_codes_json or [], rule_map),
+        "active_stop_rules": _rule_payloads(row.active_stop_rule_codes_json or [], rule_map),
         "current_stage": row.current_stage or "trading",
         "latest_trade_signal_id": row.latest_trade_signal_id,
         "buy_reason": row.buy_reason,
@@ -457,6 +661,12 @@ def update_watch(watch_id: int, payload: dict, db: Session = Depends(get_db), us
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/watch-pool/{watch_id}/rule-preview")
+def preview_watch_rules(watch_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    watch = PrdWatchPoolService(db).get_watch(watch_id)
+    return ok(_evaluate_observe_rules(db, watch, date.today()))
+
+
 @router.post("/watch-pool/{watch_id}/invalid")
 def mark_watch_invalid(watch_id: int, payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
     try:
@@ -529,14 +739,24 @@ def list_watch_signals(signal_type: str | None = None, db: Session = Depends(get
         query = query.filter(WatchSignal.signal_type == signal_type)
     rows = query.order_by(WatchSignal.trigger_time.desc()).limit(100).all()
     quotes = _quote_map(db, [row.stock_code for row in rows])
-    return ok([_signal_dict(row, quotes.get(row.stock_code)) for row in rows])
+    rules = _rule_map(db, [row.rule_code or row.buy_point_type for row in rows])
+    systems = _system_name_map(db, [row.trading_system_code or row.trading_system for row in rows])
+    return ok([
+        _signal_dict(row, quotes.get(row.stock_code), rules.get(row.rule_code or row.buy_point_type), systems.get(row.trading_system_code or row.trading_system))
+        for row in rows
+    ])
 
 
 @router.get("/watch-signals/recent")
 def recent_watch_signals(limit: int = 10, db: Session = Depends(get_db), user=Depends(require_login)):
     rows = db.query(WatchSignal).order_by(WatchSignal.trigger_time.desc()).limit(min(limit, 50)).all()
     quotes = _quote_map(db, [row.stock_code for row in rows])
-    return ok([_signal_dict(row, quotes.get(row.stock_code)) for row in rows])
+    rules = _rule_map(db, [row.rule_code or row.buy_point_type for row in rows])
+    systems = _system_name_map(db, [row.trading_system_code or row.trading_system for row in rows])
+    return ok([
+        _signal_dict(row, quotes.get(row.stock_code), rules.get(row.rule_code or row.buy_point_type), systems.get(row.trading_system_code or row.trading_system))
+        for row in rows
+    ])
 
 
 @router.get("/watch-signals/summary")
@@ -554,7 +774,13 @@ def get_watch_signal(signal_id: int, db: Session = Depends(get_db), user=Depends
     row = db.query(WatchSignal).filter(WatchSignal.signal_id == signal_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="signal not found")
-    return ok(_signal_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
+    rule_code = row.rule_code or row.buy_point_type
+    return ok(_signal_dict(
+        row,
+        _quote_map(db, [row.stock_code]).get(row.stock_code),
+        _rule_map(db, [rule_code]).get(rule_code),
+        _system_name_map(db, [row.trading_system_code or row.trading_system]).get(row.trading_system_code or row.trading_system),
+    ))
 
 
 @router.post("/watch-signals/{signal_id}/ignore")
@@ -613,14 +839,17 @@ def abandon_signal(signal_id: int, payload: dict | None = None, db: Session = De
         watch = db.query(WatchPool).filter(WatchPool.id == row.watch_id).first()
         if watch:
             old_status = watch.status or watch.status
-            watch.status = "waiting_buy_point"
-            watch.status = "waiting_buy_point"
+            watch.status = "watching"
+            watch.system_stage = "observe"
+            watch.monitor_enabled = True
+            watch.signal_enabled = True
+            watch.next_action = "等待下一次买点"
             db.add(
                 WatchPoolStatusLog(
                     watch_id=watch.id,
                     stock_code=watch.stock_code,
                     from_status=old_status,
-                    to_status="waiting_buy_point",
+                    to_status="watching",
                     change_reason=reason,
                     operator_type="user",
                     operation_type="abandon_signal",
@@ -762,14 +991,30 @@ def list_watch_trades(status: str | None = None, db: Session = Depends(get_db), 
         query = query.filter(WatchTrade.trade_status == status)
     rows = query.order_by(WatchTrade.created_at.desc()).limit(100).all()
     quotes = _quote_map(db, [row.stock_code for row in rows])
-    return ok([_trade_dict(row, quotes.get(row.stock_code)) for row in rows])
+    rule_codes = []
+    for row in rows:
+        rule_codes.extend([row.entry_rule_code, *(row.active_sell_rule_codes_json or []), *(row.active_stop_rule_codes_json or [])])
+    rules = _rule_map(db, rule_codes)
+    systems = _system_name_map(db, [row.trading_system_code or row.trading_system for row in rows])
+    return ok([
+        _trade_dict(row, quotes.get(row.stock_code), rules, systems.get(row.trading_system_code or row.trading_system))
+        for row in rows
+    ])
 
 
 @router.get("/watch-trades/recent")
 def recent_watch_trades(limit: int = 10, db: Session = Depends(get_db), user=Depends(require_login)):
     rows = db.query(WatchTrade).order_by(WatchTrade.created_at.desc()).limit(min(limit, 50)).all()
     quotes = _quote_map(db, [row.stock_code for row in rows])
-    return ok([_trade_dict(row, quotes.get(row.stock_code)) for row in rows])
+    rule_codes = []
+    for row in rows:
+        rule_codes.extend([row.entry_rule_code, *(row.active_sell_rule_codes_json or []), *(row.active_stop_rule_codes_json or [])])
+    rules = _rule_map(db, rule_codes)
+    systems = _system_name_map(db, [row.trading_system_code or row.trading_system for row in rows])
+    return ok([
+        _trade_dict(row, quotes.get(row.stock_code), rules, systems.get(row.trading_system_code or row.trading_system))
+        for row in rows
+    ])
 
 
 @router.get("/watch-trades/summary")
@@ -786,7 +1031,13 @@ def get_watch_trade(trade_id: int, db: Session = Depends(get_db), user=Depends(r
     row = db.query(WatchTrade).filter(WatchTrade.id == trade_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="trade not found")
-    return ok(_trade_dict(row, _quote_map(db, [row.stock_code]).get(row.stock_code)))
+    rule_codes = [row.entry_rule_code, *(row.active_sell_rule_codes_json or []), *(row.active_stop_rule_codes_json or [])]
+    return ok(_trade_dict(
+        row,
+        _quote_map(db, [row.stock_code]).get(row.stock_code),
+        _rule_map(db, rule_codes),
+        _system_name_map(db, [row.trading_system_code or row.trading_system]).get(row.trading_system_code or row.trading_system),
+    ))
 
 
 @router.get("/watch-trades/{trade_id}/executions")

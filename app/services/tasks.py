@@ -570,7 +570,10 @@ class TaskService:
                 self.db.query(WatchPool)
                 .filter(
                     WatchPool.active.is_(True),
+                    WatchPool.monitor_enabled.is_(True),
+                    WatchPool.signal_enabled.is_(True),
                     WatchPool.system_stage == "observe",
+                    WatchPool.status == "watching",
                     WatchPool.trading_system_code.isnot(None),
                     WatchPool.trading_system_code != "",
                 )
@@ -673,6 +676,8 @@ class TaskService:
                 self.db.flush()
                 watch.latest_signal_id = signal.signal_id
                 watch.status = "buy_pending_confirm"
+                watch.system_stage = "buy_confirm"
+                watch.signal_enabled = False
                 watch.next_action = "等待人工确认买入"
                 notify_result = notification_service.notify_buy_signal(
                     signal,
