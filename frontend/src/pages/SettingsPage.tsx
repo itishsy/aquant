@@ -73,6 +73,13 @@ export function SettingsPage() {
     return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  function fmtTaskRunDate(iso?: string) {
+    if (!iso) return "未运行";
+    const d = new Date(iso + "Z");
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
   function statusText(status?: string) {
     if (status === "success") return "成功";
     if (status === "failed") return "失败";
@@ -135,15 +142,22 @@ export function SettingsPage() {
                         执行
                       </Button>
                     </div>
+                    <div style={{ fontSize: 11, display: "grid", gridTemplateColumns: "minmax(92px, 1.4fr) minmax(72px, 0.9fr) minmax(92px, 1fr) minmax(58px, auto)", gap: 8, color: "#7b879c", fontWeight: 700, padding: "4px 0", borderBottom: "1px solid #e6eaf2" }}>
+                      <span>任务</span>
+                      <span>执行计划</span>
+                      <span>最近一次执行时间</span>
+                      <span style={{ textAlign: "right" }}>运行状态</span>
+                    </div>
                     {(group.tasks || []).map((task: any) => {
                       const log = task.latest_log || {};
                       const currentStatus = task.running ? "running" : log.run_status;
-                      const successTime = log.run_status === "success" ? fmtTime(log.finished_at) : null;
+                      const lastRunTime = fmtTaskRunDate(log.finished_at || log.started_at);
                       return (
-                        <div key={task.task_id} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "center", padding: "4px 0", borderBottom: "1px solid #eee" }}>
+                        <div key={task.task_id} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "minmax(92px, 1.4fr) minmax(72px, 0.9fr) minmax(92px, 1fr) minmax(58px, auto)", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #eee" }}>
                           <span style={{ color: "#334" }}>{task.task_label || task.task_name}</span>
-                          <span style={{ color: statusColor(currentStatus), fontWeight: 700, fontSize: 11 }}>{statusText(currentStatus)}</span>
-                          <span style={{ color: "#aaa", fontSize: 11, minWidth: 75, textAlign: "right" }}>{successTime || "-"}</span>
+                          <span style={{ color: "#667085", fontSize: 11 }}>{task.execution_plan || task.cron_expression || "手动执行"}</span>
+                          <span style={{ color: "#667085", fontSize: 11 }}>{lastRunTime}</span>
+                          <span style={{ color: statusColor(currentStatus), fontWeight: 700, fontSize: 11, textAlign: "right" }}>{statusText(currentStatus)}</span>
                         </div>
                       );
                     })}

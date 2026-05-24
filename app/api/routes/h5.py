@@ -469,6 +469,18 @@ TASK_LABELS = {
     "aggregate_review_metrics": "复盘指标汇总",
 }
 
+TASK_EXECUTION_PLANS = {
+    "collect_market_daily": "每日18点",
+    "collect_hot_sector_rank": "每日18点",
+    "collect_hot_stock_rank": "每日18点",
+    "collect_limit_up_daily": "每日18点",
+    "update_watch_prices": "每5分钟",
+    "scan_watch_signals": "每15分钟",
+    "scan_watch_rules": "每10分钟",
+    "scan_trade_rules": "每10分钟",
+    "auto_remove_watch_pool": "每15分钟",
+}
+
 MODULE_LABELS = {
     "market": "数据采集",
     "kline": "K 线更新",
@@ -493,10 +505,12 @@ def _task_log_dict(row: ConfigTaskLog | None) -> dict | None:
 
 
 def _task_dict(row: ConfigTask, latest_log: ConfigTaskLog | None = None) -> dict:
+    execution_plan = TASK_EXECUTION_PLANS.get(row.task_name) or row.cron_expression or "手动执行"
     return {
         "task_id": row.task_id,
         "task_name": row.task_name,
         "task_label": TASK_LABELS.get(row.task_name, row.task_name),
+        "execution_plan": execution_plan,
         "task_type": row.task_type,
         "owner_module": row.owner_module,
         "owner_label": MODULE_LABELS.get(row.owner_module, row.owner_module or "其他任务"),
