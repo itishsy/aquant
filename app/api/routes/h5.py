@@ -1345,6 +1345,23 @@ def save_preference(payload: dict, db: Session = Depends(get_db), user=Depends(r
     return ok({"saved": True})
 
 
+@router.get("/me/notification-email")
+def notification_email(db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(MyUserPreference).filter_by(preference_type="notification", preference_key="email").first()
+    return ok({"email": row.preference_value.get("address", "") if row else ""})
+
+
+@router.put("/me/notification-email")
+def save_notification_email(payload: dict, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(MyUserPreference).filter_by(preference_type="notification", preference_key="email").first()
+    if not row:
+        row = MyUserPreference(preference_type="notification", preference_key="email")
+        db.add(row)
+    row.preference_value = {"address": payload.get("email", "").strip()}
+    db.commit()
+    return ok({"saved": True})
+
+
 @router.get("/me/notification-settings")
 def notification_settings(db: Session = Depends(get_db), user=Depends(require_login)):
     SeedService(db).init_defaults()

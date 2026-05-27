@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, ErrorBlock, SpinLoading, Toast } from "antd-mobile";
-import { apiGet, apiPost } from "../api/client";
+import { Button, ErrorBlock, Input, SpinLoading, Toast } from "antd-mobile";
+import { apiGet, apiPost, apiPut } from "../api/client";
 import { PageShell } from "../components/PageShell";
 
 export function SettingsPage() {
@@ -13,6 +13,8 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [collecting, setCollecting] = useState(false);
   const [runningTaskId, setRunningTaskId] = useState<number | null>(null);
+  const [notifyEmail, setNotifyEmail] = useState("");
+  const [emailSaving, setEmailSaving] = useState(false);
 
   async function load() {
     try {
@@ -30,6 +32,7 @@ export function SettingsPage() {
       setBackendEntry(entryData);
       setTaskData(tasksData);
       setTaskLogs(logsData || []);
+      apiGet<any>("/h5/me/notification-email").then((d) => setNotifyEmail(d.email || "")).catch(() => {});
       setError("");
     } catch (err) {
       setError(String(err));
@@ -49,6 +52,15 @@ export function SettingsPage() {
     } finally {
       setCollecting(false);
     }
+  }
+
+  async function saveEmail() {
+    setEmailSaving(true);
+    try {
+      await apiPut("/h5/me/notification-email", { email: notifyEmail.trim() });
+      Toast.show({ content: "邮箱已保存" });
+    } catch { Toast.show({ content: "保存失败" }); }
+    finally { setEmailSaving(false); }
   }
 
   async function runGroup(group: any) {
@@ -114,6 +126,22 @@ export function SettingsPage() {
                 <strong>待办提醒</strong>
                 <p>待复盘：{todos?.pending_reviews ?? 0} / 未读消息：{todos?.unread_notifications ?? 0}</p>
               </div>
+            </div>
+
+            <div className="row-card">
+              <div style={{ flex: 1 }}>
+                <strong>邮件通知</strong>
+                <p style={{ fontSize: 12, color: "#888", marginTop: 4 }}>接收买卖信号提醒</p>
+                <Input
+                  value={notifyEmail}
+                  onChange={setNotifyEmail}
+                  placeholder="输入接收提醒的邮箱"
+                  style={{ marginTop: 6 }}
+                />
+              </div>
+              <Button size="small" color="primary" loading={emailSaving} onClick={saveEmail}>
+                保存
+              </Button>
             </div>
 
             <div className="row-card" style={{ display: "grid", gap: 12 }}>
