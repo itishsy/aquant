@@ -105,7 +105,7 @@ def test_scan_watch_rules_executes_safe_rule_without_signal(db_session):
     )
     db_session.commit()
 
-    log = TaskService(db_session).scan_watch_rules(date(2026, 5, 24))
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
 
     assert log.run_status == "success"
     assert log.affected_rows == 1
@@ -120,6 +120,7 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
             stock_name="中科曙光",
             latest_price=25.05,
             change_pct=1.2,
+            source_update_time=datetime(2026, 5, 24, 10, 20),
         )
     )
     watch = WatchPool(
@@ -152,7 +153,7 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
     _seed_divergence_bars(db_session, timeframe="5m")
     _seed_divergence_bars(db_session, timeframe="15m")
 
-    log = TaskService(db_session).scan_watch_rules(date(2026, 5, 24))
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
     signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
 
     assert log.run_status == "success"
@@ -161,6 +162,15 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
     assert {signal.signal_status for signal in signals} == {"buy_pending_confirm"}
     assert all(signal.rule_code in {"b5_divergence", "b15_divergence"} for signal in signals)
     assert all(signal.trading_system_code == "platform_breakout" for signal in signals)
+    for signal in signals:
+        snapshot = signal.snapshot_json
+        assert snapshot["data_status"] == "ok"
+        assert snapshot["timeframe"] in {"5m", "15m"}
+        assert snapshot["latest_kline_time"] is not None
+        assert snapshot["expected_latest_time"] is not None
+        assert snapshot["bar_count"] == 10
+        assert snapshot["required_bars"] == 10
+        assert snapshot["executor_key"] == "macd_bottom_divergence"
     assert all(signal.notification_sent is False for signal in signals)
     assert all(signal.notification_error for signal in signals)
     assert "email notification is disabled" in (log.error_message or "")
@@ -202,7 +212,226 @@ def test_scan_watch_rules_does_not_call_provider_and_reports_missing_data(db_ses
 
     assert log.run_status == "success"
     assert db_session.query(WatchSignal).count() == 0
-    assert "Need" in (log.error_message or "")
+    assert "No kline data" in (log.error_message or "")
+
+
+def _add_not_break_filter_system(db_session, system_code="quote_system"):
+    db_session.add(
+        TradingRuleDefinition(
+            rule_code=f"{system_code}_not_break",
+            rule_name="Not break price",
+            rule_type="filter",
+            timeframe="daily",
+            executor_key="not_break_price",
+            enabled=True,
+        )
+    )
+    db_session.add(
+        TradingSystemRuleBinding(
+            system_code=system_code,
+            rule_code=f"{system_code}_not_break",
+            stage="observe",
+            required=True,
+            logic_group="quote",
+            logic_operator="AND",
+            enabled=True,
+            sort_order=1,
+            config_json={"data": {"timeframe": "daily", "lookback_bars": 5, "indicators": []}},
+        )
+    )
+
+
+def test_scan_watch_rules_skips_not_break_price_when_quote_is_stale(db_session):
+    _add_not_break_filter_system(db_session)
+    db_session.add(
+        MktStockQuote(
+            stock_code="000003.SZ",
+            stock_name="娴嬭瘯鑲＄エ",
+            latest_price=25.0,
+            source_update_time=datetime(2026, 5, 24, 10, 0),
+        )
+    )
+    _add_watch(
+        db_session,
+        stock_code="000003.SZ",
+        trading_system_code="quote_system",
+        trading_system="quote_system",
+        system_params_json={"platform_upper_price": 24.0},
+    )
+    _seed_daily_bars(db_session, stock_code="000003.SZ", close_price=25.0)
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
+
+    assert log.run_status == "success"
+    assert log.affected_rows == 1
+    assert db_session.query(WatchSignal).count() == 0
+    assert "Quote stale" in (log.error_message or "")
+
+
+def test_scan_watch_rules_executes_not_break_price_when_quote_is_fresh(db_session):
+    _add_not_break_filter_system(db_session, system_code="fresh_quote_system")
+    db_session.add(
+        MktStockQuote(
+            stock_code="000004.SZ",
+            stock_name="娴嬭瘯鑲＄エ",
+            latest_price=25.0,
+            source_update_time=datetime(2026, 5, 24, 10, 15),
+        )
+    )
+    _add_watch(
+        db_session,
+        stock_code="000004.SZ",
+        trading_system_code="fresh_quote_system",
+        trading_system="fresh_quote_system",
+        system_params_json={"platform_upper_price": 24.0},
+    )
+    _seed_daily_bars(db_session, stock_code="000004.SZ", close_price=25.0)
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
+
+    assert log.run_status == "success"
+    assert log.affected_rows == 1
+    assert db_session.query(WatchSignal).count() == 0
+    assert "Quote stale" not in (log.error_message or "")
+
+
+def test_scan_watch_rules_does_not_generate_signal_when_kline_is_stale(db_session):
+    SeedService(db_session).init_defaults()
+    db_session.add(
+        MktStockQuote(
+            stock_code="603019.SH",
+            stock_name="涓鏇欏厜",
+            latest_price=25.05,
+            change_pct=1.2,
+            source_update_time=datetime(2026, 5, 24, 14, 45),
+        )
+    )
+    watch = WatchPool(
+        stock_code="603019.SH",
+        stock_name="涓鏇欏厜",
+        active=True,
+        status="watching",
+        monitor_enabled=True,
+        signal_enabled=True,
+        system_stage="observe",
+        trading_system_code="platform_breakout",
+        trading_system="platform_breakout",
+        system_params_json={
+            "platform_upper_price": 24.0,
+            "platform_support_price": 23.0,
+            "key_observe_price": 24.5,
+            "invalid_condition": "璺岀牬骞冲彴鏀拺",
+        },
+    )
+    db_session.add(watch)
+    for rule_code in ["b5_divergence", "b15_divergence"]:
+        binding = db_session.query(TradingSystemRuleBinding).filter_by(
+            system_code="platform_breakout",
+            rule_code=rule_code,
+            stage="observe",
+        ).first()
+        binding.config_json = {
+            "data": {
+                "timeframe": "5m" if rule_code == "b5_divergence" else "15m",
+                "lookback_bars": 10,
+                "indicators": ["macd"],
+            }
+        }
+    db_session.commit()
+    _seed_daily_bars(db_session)
+    _seed_divergence_bars(db_session, timeframe="5m")
+    _seed_divergence_bars(db_session, timeframe="15m")
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 14, 46)).scan_watch_rules(date(2026, 5, 24))
+
+    assert log.run_status == "success"
+    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
+    assert "older than expected" in (log.error_message or "")
+
+
+def _add_break_level_observe_rule(db_session, system_code: str, rule_type: str, rule_code: str):
+    db_session.add(
+        TradingRuleDefinition(
+            rule_code=rule_code,
+            rule_name=f"{rule_type} rule",
+            rule_type=rule_type,
+            timeframe="daily",
+            executor_key="break_level",
+            enabled=True,
+        )
+    )
+    db_session.add(
+        TradingSystemRuleBinding(
+            system_code=system_code,
+            rule_code=rule_code,
+            stage="observe",
+            required=False,
+            logic_group="observe_alert",
+            logic_operator="OR",
+            enabled=True,
+            sort_order=1,
+            config_json={
+                "data": {"timeframe": "daily", "lookback_bars": 5, "indicators": []},
+                "signal": {"target_value": 24.0, "break_type": "close_below", "threshold_pct": 0},
+            },
+        )
+    )
+
+
+def test_scan_watch_rules_generates_observe_risk_signal(db_session):
+    _add_break_level_observe_rule(db_session, "observe_risk_system", "observe_risk", "observe_risk_break")
+    watch = _add_watch(
+        db_session,
+        stock_code="000005.SZ",
+        trading_system_code="observe_risk_system",
+        trading_system="observe_risk_system",
+    )
+    _seed_daily_bars(db_session, stock_code="000005.SZ", close_price=23.5)
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    signal = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).first()
+
+    assert log.run_status == "success"
+    assert signal is not None
+    assert signal.signal_type == "risk"
+    assert signal.rule_type == "observe_risk"
+    assert signal.signal_status == "observe_risk_pending"
+    assert signal.snapshot_json["data_status"] == "ok"
+    assert signal.snapshot_json["timeframe"] == "daily"
+    assert signal.snapshot_json["latest_kline_time"] == datetime(2026, 5, 24).isoformat()
+    assert signal.snapshot_json["expected_latest_time"] == datetime(2026, 5, 24).isoformat()
+    assert signal.snapshot_json["bar_count"] == 5
+    assert signal.snapshot_json["required_bars"] == 5
+    assert signal.snapshot_json["executor_key"] == "break_level"
+    refreshed = db_session.get(WatchPool, watch.id)
+    assert refreshed.system_stage == "observe"
+    assert refreshed.status == "watching"
+    assert refreshed.next_action == "出现观察风险，请人工确认是否继续观察"
+
+
+def test_scan_watch_rules_generates_invalid_signal_without_buy_confirm_and_deduplicates(db_session):
+    _add_break_level_observe_rule(db_session, "observe_invalid_system", "invalid_signal", "observe_invalid_break")
+    watch = _add_watch(
+        db_session,
+        stock_code="000006.SZ",
+        trading_system_code="observe_invalid_system",
+        trading_system="observe_invalid_system",
+    )
+    _seed_daily_bars(db_session, stock_code="000006.SZ", close_price=23.5)
+
+    first = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    second = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert first.run_status == "success"
+    assert second.run_status == "success"
+    assert len(signals) == 1
+    assert signals[0].signal_type == "risk"
+    assert signals[0].rule_type == "invalid_signal"
+    assert signals[0].signal_status == "observe_invalid_pending"
+    refreshed = db_session.get(WatchPool, watch.id)
+    assert refreshed.system_stage == "observe"
+    assert refreshed.status == "watching"
 
 
 def _add_false_observe_rule(db_session, system_code="filter_system"):

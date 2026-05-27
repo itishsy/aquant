@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.providers.factory import ProviderFactory
 from app.services.kline_repository import KlineRepository
 from app.services.rule_data_requirements import RequirementMap, RuleDataRequirementService
@@ -19,6 +21,7 @@ class KlineFreshnessService:
         self.repository = repository
 
     def expected_latest_time(self, timeframe: str, now: datetime) -> datetime | None:
+        now = self._as_exchange_naive(now)
         timeframe = self._normalize_timeframe(timeframe)
         if timeframe == "daily":
             return datetime.combine(now.date(), time.min) if now.time() >= time(15, 0) else None
@@ -71,6 +74,13 @@ class KlineFreshnessService:
     def _in_continuous_trading_session(value: time) -> bool:
         return time(9, 30) < value <= time(11, 30) or time(13, 0) < value <= time(15, 0)
 
+    @staticmethod
+    def _as_exchange_naive(value: datetime) -> datetime:
+        """Interpret aware datetimes in the configured market timezone, stored as local-naive."""
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(ZoneInfo(get_settings().timezone)).replace(tzinfo=None)
+
 
 class KlineCollectionService:
     """Collect only the multi-timeframe K-line data required by trading-system rules."""
@@ -99,7 +109,7 @@ class KlineCollectionService:
         self.errors = []
         affected = 0
         requests = 0
-        now = self.now or datetime.utcnow()
+        now = self.now or datetime.now(ZoneInfo(get_settings().timezone))
         for stock_index, (stock_code, timeframe_map) in enumerate(requirements.items(), start=1):
             if self.max_stocks_per_run and stock_index > self.max_stocks_per_run:
                 self.errors.append("max_stocks_per_run reached")

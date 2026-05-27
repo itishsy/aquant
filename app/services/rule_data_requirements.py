@@ -20,6 +20,9 @@ class RuleDataRequirementService:
         "macd_dead_cross": {"indicators": ["macd"], "lookback_bars": 120},
         "not_break_price": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
         "break_price": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
+        "break_level": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
+        "break_ma": {"indicators": ["ma"], "lookback_bars": 30},
+        "pullback_to_level": {"indicators": [], "lookback_bars": 20},
     }
 
     def __init__(self, db: Session):

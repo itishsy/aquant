@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import (
     ConfigTask,
     ConfigTaskLog,
@@ -30,7 +32,59 @@ def _serialize(data: dict) -> dict:
     return json.loads(json.dumps(data, default=str))
 
 
+class QuoteFreshnessService:
+    """Validate quote freshness before rules consume MktStockQuote.latest_price."""
+
+    def __init__(self, max_age_minutes: int = 10):
+        self.max_age = timedelta(minutes=max(int(max_age_minutes or 10), 1))
+
+    def status(self, quote: MktStockQuote | None, now: datetime) -> dict:
+        if quote is None or quote.latest_price is None:
+            return {
+                "status": "missing_quote",
+                "latest_price": None,
+                "source_update_time": None,
+                "is_fresh": False,
+                "reason": "Quote latest_price is missing.",
+            }
+        updated_at = quote.source_update_time
+        if updated_at is None:
+            return {
+                "status": "stale_quote",
+                "latest_price": quote.latest_price,
+                "source_update_time": None,
+                "is_fresh": False,
+                "reason": "Quote source_update_time is missing.",
+            }
+        now_value = self._as_naive(now)
+        updated_value = self._as_naive(updated_at)
+        age = now_value - updated_value
+        if age > self.max_age:
+            return {
+                "status": "stale_quote",
+                "latest_price": quote.latest_price,
+                "source_update_time": updated_value.isoformat(),
+                "is_fresh": False,
+                "reason": (
+                    f"Quote stale: latest quote updated at {updated_value.isoformat()}, "
+                    f"max age {int(self.max_age.total_seconds() // 60)} minutes."
+                ),
+            }
+        return {
+            "status": "ok",
+            "latest_price": quote.latest_price,
+            "source_update_time": updated_value.isoformat(),
+            "is_fresh": True,
+            "reason": "",
+        }
+
+    @staticmethod
+    def _as_naive(value: datetime) -> datetime:
+        return value.replace(tzinfo=None) if value.tzinfo else value
+
+
 class TaskService:
+    PRICE_REQUIRED_EXECUTORS = {"not_break_price"}
     SAFE_RULE_EXECUTORS = {
         "always_false",
         "not_break_price",
@@ -38,10 +92,17 @@ class TaskService:
         "macd_top_divergence",
         "macd_dead_cross",
         "break_price",
+        "break_level",
+        "break_ma",
+        "pullback_to_level",
     }
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, now: datetime | None = None):
         self.db = db
+        self.now = now
+
+    def _current_time(self) -> datetime:
+        return self.now or datetime.now(ZoneInfo(get_settings().timezone))
 
     @staticmethod
     def _is_ignored_limit_up_plate(plate_name: str | None) -> bool:
@@ -639,6 +700,9 @@ class TaskService:
             notification_service = NotificationService()
             requirement_service = RuleDataRequirementService(self.db)
             technical_service = TechnicalContextService(self.db)
+            scan_now = self._current_time()
+            config = self._task_config("scan_watch_rules")
+            quote_freshness = QuoteFreshnessService(config.get("quote_max_age_minutes") or 10)
             notification_errors: list[str] = []
             technical_warnings: list[str] = []
             rows = (
@@ -658,7 +722,7 @@ class TaskService:
                 return 0
 
             quote_map = {
-                row.stock_code: row.latest_price
+                row.stock_code: quote_freshness.status(row, scan_now)
                 for row in self.db.query(MktStockQuote)
                 .filter(MktStockQuote.stock_code.in_([item.stock_code for item in rows]))
                 .all()
@@ -686,7 +750,7 @@ class TaskService:
                 return config
 
             def _insufficient_result(rule: TradingRuleDefinition, technical: dict) -> RuleResult:
-                reason = f"Insufficient kline data for {rule.rule_code}: {technical.get('reason') or 'not enough bars'}"
+                reason = f"Kline data not ready for {rule.rule_code}: {technical.get('reason') or 'not ready'}"
                 return RuleResult(
                     triggered=False,
                     rule_code=rule.rule_code,
@@ -701,6 +765,47 @@ class TaskService:
                     },
                 )
 
+            def _quote_not_ready_result(rule: TradingRuleDefinition, quote_status: dict) -> RuleResult:
+                reason = f"Quote stale for {rule.rule_code}: {quote_status.get('reason') or 'quote not ready'}"
+                return RuleResult(
+                    triggered=False,
+                    rule_code=rule.rule_code,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    reason=reason,
+                    snapshot={
+                        "timeframe": rule.timeframe,
+                        "executor_key": rule.executor_key,
+                        "quote_freshness": quote_status,
+                    },
+                )
+
+            def _signal_snapshot(rule: TradingRuleDefinition, result: RuleResult, technical: dict, quote_status: dict) -> dict:
+                freshness = technical.get("freshness") or {}
+                snapshot = dict(result.snapshot or {})
+                snapshot.update(
+                    {
+                        "data_status": technical.get("status"),
+                        "timeframe": technical.get("timeframe") or rule.timeframe,
+                        "latest_kline_time": freshness.get("latest_kline_time"),
+                        "expected_latest_time": freshness.get("expected_latest_time"),
+                        "bar_count": freshness.get("bar_count"),
+                        "required_bars": freshness.get("required_bars"),
+                        "enough_bars": freshness.get("enough_bars"),
+                        "kline_is_fresh": freshness.get("is_fresh"),
+                        "executor_key": rule.executor_key,
+                    }
+                )
+                if rule.executor_key in self.PRICE_REQUIRED_EXECUTORS:
+                    snapshot.update(
+                        {
+                            "quote_update_time": quote_status.get("source_update_time"),
+                            "quote_is_fresh": quote_status.get("is_fresh"),
+                            "quote_status": quote_status.get("status"),
+                        }
+                    )
+                return snapshot
+
             def _duplicate_exists(watch: WatchPool, rule_code: str, trigger_date: date) -> bool:
                 return bool(
                     self.db.query(WatchSignal.signal_id)
@@ -712,11 +817,12 @@ class TaskService:
                     .first()
                 )
 
-            def _save_signal(watch: WatchPool, rule: TradingRuleDefinition, result) -> int:
+            def _save_signal(watch: WatchPool, rule: TradingRuleDefinition, result, technical: dict, quote_status: dict) -> int:
                 trigger_time = result.trigger_time or datetime.utcnow()
                 trigger_date = trigger_time.date() if hasattr(trigger_time, "date") else trade_date
                 if _duplicate_exists(watch, rule.rule_code, trigger_date):
                     return 0
+                snapshot = _signal_snapshot(rule, result, technical, quote_status)
                 signal = WatchSignal(
                     watch_id=watch.id,
                     stock_code=watch.stock_code,
@@ -738,8 +844,8 @@ class TaskService:
                     signal_status="buy_pending_confirm",
                     user_action="pending",
                     trigger_signature=f"rule:{watch.id}:{rule.rule_code}:{trigger_date.isoformat()}",
-                    raw_snapshot=result.snapshot or {},
-                    snapshot_json=result.snapshot or {},
+                    raw_snapshot=snapshot,
+                    snapshot_json=snapshot,
                 )
                 self.db.add(signal)
                 self.db.flush()
@@ -755,6 +861,49 @@ class TaskService:
                 )
                 if notify_result.error:
                     notification_errors.append(f"{watch.stock_code}/{rule.rule_code}: {notify_result.error}")
+                return 1
+
+            def _observe_signal_status(rule_type: str) -> str:
+                if rule_type == "invalid_signal":
+                    return "observe_invalid_pending"
+                if rule_type == "remove_signal":
+                    return "observe_remove_pending"
+                return "observe_risk_pending"
+
+            def _save_observe_risk_signal(watch: WatchPool, rule: TradingRuleDefinition, result, technical: dict, quote_status: dict) -> int:
+                trigger_time = result.trigger_time or datetime.utcnow()
+                trigger_date = trigger_time.date() if hasattr(trigger_time, "date") else trade_date
+                if _duplicate_exists(watch, rule.rule_code, trigger_date):
+                    return 0
+                snapshot = _signal_snapshot(rule, result, technical, quote_status)
+                signal = WatchSignal(
+                    watch_id=watch.id,
+                    stock_code=watch.stock_code,
+                    stock_name=watch.stock_name,
+                    signal_type="risk",
+                    buy_point_type=rule.rule_code,
+                    trading_system=watch.trading_system_code or watch.trading_system,
+                    trading_system_code=watch.trading_system_code,
+                    rule_code=rule.rule_code,
+                    rule_type=rule.rule_type,
+                    strategy_name=f"rule_executor:{rule.executor_key}",
+                    signal_level=result.signal_level or "S",
+                    kline_period=rule.timeframe,
+                    trigger_time=trigger_time,
+                    trigger_date=trigger_date,
+                    trigger_price=result.trigger_price,
+                    trigger_reason=result.reason,
+                    risk_desc=result.risk_desc,
+                    signal_status=_observe_signal_status(rule.rule_type),
+                    user_action="pending",
+                    trigger_signature=f"observe-rule:{watch.id}:{rule.rule_code}:{trigger_date.isoformat()}",
+                    raw_snapshot=snapshot,
+                    snapshot_json=snapshot,
+                )
+                self.db.add(signal)
+                self.db.flush()
+                watch.latest_signal_id = signal.signal_id
+                watch.next_action = "出现观察风险，请人工确认是否继续观察"
                 return 1
 
             affected = 0
@@ -784,10 +933,23 @@ class TaskService:
                         requirement["timeframe"],
                         requirement["lookback_bars"],
                         requirement["indicators"],
+                        now=scan_now,
                     )
                     rule_config = _rule_config(binding, rule, technical)
                     if technical.get("status") != "ok":
                         technical_warnings.append(f"{watch.stock_code}/{rule.rule_code}: {technical.get('reason')}")
+                    quote_status = quote_map.get(
+                        watch.stock_code,
+                        {
+                            "status": "missing_quote",
+                            "latest_price": None,
+                            "source_update_time": None,
+                            "is_fresh": False,
+                            "reason": "Quote row is missing.",
+                        },
+                    )
+                    if rule.executor_key in self.PRICE_REQUIRED_EXECUTORS and quote_status.get("status") != "ok":
+                        technical_warnings.append(f"{watch.stock_code}/{rule.rule_code}: {quote_status.get('reason')}")
                     context = RuleContext(
                         watch_id=watch.id,
                         stock_code=watch.stock_code,
@@ -798,23 +960,35 @@ class TaskService:
                         rule_config=rule_config,
                         technical=technical,
                         trade_date=trade_date,
-                        latest_price=quote_map.get(watch.stock_code),
+                        latest_price=quote_status.get("latest_price"),
                     )
-                    result = _insufficient_result(rule, technical) if technical.get("status") != "ok" else executor.execute(context)
-                    results.append((binding, rule, result))
+                    if technical.get("status") != "ok":
+                        result = _insufficient_result(rule, technical)
+                    elif rule.executor_key in self.PRICE_REQUIRED_EXECUTORS and quote_status.get("status") != "ok":
+                        result = _quote_not_ready_result(rule, quote_status)
+                    else:
+                        result = executor.execute(context)
+                    results.append((binding, rule, result, technical, quote_status))
                     affected += 1
-                required_ok = all(result.triggered for binding, _rule, result in results if binding.required)
+                required_ok = all(result.triggered for binding, _rule, result, _technical, _quote_status in results if binding.required)
                 if not required_ok:
                     continue
+                risk_results = [
+                    (binding, rule, result, technical, quote_status)
+                    for binding, rule, result, technical, quote_status in results
+                    if rule.rule_type in {"observe_risk", "invalid_signal", "remove_signal"} and result.triggered
+                ]
+                for _binding, rule, result, technical, quote_status in risk_results:
+                    affected += _save_observe_risk_signal(watch, rule, result, technical, quote_status)
                 buy_results = [
-                    (binding, rule, result)
-                    for binding, rule, result in results
+                    (binding, rule, result, technical, quote_status)
+                    for binding, rule, result, technical, quote_status in results
                     if rule.rule_type == "buy_signal" and result.triggered
                 ]
                 if not buy_results:
                     continue
-                for _binding, rule, result in buy_results:
-                    affected += _save_signal(watch, rule, result)
+                for _binding, rule, result, technical, quote_status in buy_results:
+                    affected += _save_signal(watch, rule, result, technical, quote_status)
             return affected, "; ".join((notification_errors + technical_warnings)[:5])
 
         return self._run("scan_watch_rules", _do)
@@ -829,6 +1003,9 @@ class TaskService:
             notification_service = NotificationService()
             requirement_service = RuleDataRequirementService(self.db)
             technical_service = TechnicalContextService(self.db)
+            scan_now = self._current_time()
+            config = self._task_config("scan_trade_rules")
+            quote_freshness = QuoteFreshnessService(config.get("quote_max_age_minutes") or 10)
             notification_errors: list[str] = []
             technical_warnings: list[str] = []
             trades = (
@@ -845,7 +1022,7 @@ class TaskService:
                 return 0
 
             quote_map = {
-                row.stock_code: row.latest_price
+                row.stock_code: quote_freshness.status(row, scan_now)
                 for row in self.db.query(MktStockQuote)
                 .filter(MktStockQuote.stock_code.in_([item.stock_code for item in trades]))
                 .all()
@@ -889,7 +1066,7 @@ class TaskService:
                 return config
 
             def _insufficient_result(rule: TradingRuleDefinition, technical: dict) -> RuleResult:
-                reason = f"Insufficient kline data for {rule.rule_code}: {technical.get('reason') or 'not enough bars'}"
+                reason = f"Kline data not ready for {rule.rule_code}: {technical.get('reason') or 'not ready'}"
                 return RuleResult(
                     triggered=False,
                     rule_code=rule.rule_code,
@@ -904,6 +1081,47 @@ class TaskService:
                     },
                 )
 
+            def _quote_not_ready_result(rule: TradingRuleDefinition, quote_status: dict) -> RuleResult:
+                reason = f"Quote stale for {rule.rule_code}: {quote_status.get('reason') or 'quote not ready'}"
+                return RuleResult(
+                    triggered=False,
+                    rule_code=rule.rule_code,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    reason=reason,
+                    snapshot={
+                        "timeframe": rule.timeframe,
+                        "executor_key": rule.executor_key,
+                        "quote_freshness": quote_status,
+                    },
+                )
+
+            def _signal_snapshot(rule: TradingRuleDefinition, result: RuleResult, technical: dict, quote_status: dict) -> dict:
+                freshness = technical.get("freshness") or {}
+                snapshot = dict(result.snapshot or {})
+                snapshot.update(
+                    {
+                        "data_status": technical.get("status"),
+                        "timeframe": technical.get("timeframe") or rule.timeframe,
+                        "latest_kline_time": freshness.get("latest_kline_time"),
+                        "expected_latest_time": freshness.get("expected_latest_time"),
+                        "bar_count": freshness.get("bar_count"),
+                        "required_bars": freshness.get("required_bars"),
+                        "enough_bars": freshness.get("enough_bars"),
+                        "kline_is_fresh": freshness.get("is_fresh"),
+                        "executor_key": rule.executor_key,
+                    }
+                )
+                if rule.executor_key in self.PRICE_REQUIRED_EXECUTORS:
+                    snapshot.update(
+                        {
+                            "quote_update_time": quote_status.get("source_update_time"),
+                            "quote_is_fresh": quote_status.get("is_fresh"),
+                            "quote_status": quote_status.get("status"),
+                        }
+                    )
+                return snapshot
+
             def _duplicate_exists(trade: WatchTrade, rule_code: str, trigger_date: date) -> bool:
                 return bool(
                     self.db.query(WatchSignal.signal_id)
@@ -915,12 +1133,13 @@ class TaskService:
                     .first()
                 )
 
-            def _save_signal(trade: WatchTrade, watch: WatchPool | None, rule: TradingRuleDefinition, result) -> int:
+            def _save_signal(trade: WatchTrade, watch: WatchPool | None, rule: TradingRuleDefinition, result, technical: dict, quote_status: dict) -> int:
                 trigger_time = result.trigger_time or datetime.utcnow()
                 trigger_date = trigger_time.date() if hasattr(trigger_time, "date") else trade_date
                 if _duplicate_exists(trade, rule.rule_code, trigger_date):
                     return 0
                 is_stop = rule.rule_type == "stop_loss"
+                snapshot = _signal_snapshot(rule, result, technical, quote_status)
                 signal = WatchSignal(
                     watch_id=trade.watch_id,
                     stock_code=trade.stock_code,
@@ -943,8 +1162,8 @@ class TaskService:
                     user_action="pending",
                     related_trade_id=trade.id,
                     trigger_signature=f"trade-rule:{trade.id}:{rule.rule_code}:{trigger_date.isoformat()}",
-                    raw_snapshot=result.snapshot or {},
-                    snapshot_json=result.snapshot or {},
+                    raw_snapshot=snapshot,
+                    snapshot_json=snapshot,
                 )
                 self.db.add(signal)
                 self.db.flush()
@@ -977,9 +1196,22 @@ class TaskService:
                         requirement["timeframe"],
                         requirement["lookback_bars"],
                         requirement["indicators"],
+                        now=scan_now,
                     )
                     if technical.get("status") != "ok":
                         technical_warnings.append(f"{trade.stock_code}/{rule.rule_code}: {technical.get('reason')}")
+                    quote_status = quote_map.get(
+                        trade.stock_code,
+                        {
+                            "status": "missing_quote",
+                            "latest_price": None,
+                            "source_update_time": None,
+                            "is_fresh": False,
+                            "reason": "Quote row is missing.",
+                        },
+                    )
+                    if rule.executor_key in self.PRICE_REQUIRED_EXECUTORS and quote_status.get("status") != "ok":
+                        technical_warnings.append(f"{trade.stock_code}/{rule.rule_code}: {quote_status.get('reason')}")
                     context = RuleContext(
                         watch_id=trade.watch_id or 0,
                         stock_code=trade.stock_code,
@@ -990,12 +1222,17 @@ class TaskService:
                         rule_config=_rule_config(binding, rule, technical),
                         technical=technical,
                         trade_date=trade_date,
-                        latest_price=quote_map.get(trade.stock_code),
+                        latest_price=quote_status.get("latest_price"),
                     )
-                    result = _insufficient_result(rule, technical) if technical.get("status") != "ok" else executor.execute(context)
+                    if technical.get("status") != "ok":
+                        result = _insufficient_result(rule, technical)
+                    elif rule.executor_key in self.PRICE_REQUIRED_EXECUTORS and quote_status.get("status") != "ok":
+                        result = _quote_not_ready_result(rule, quote_status)
+                    else:
+                        result = executor.execute(context)
                     affected += 1
                     if result.triggered:
-                        affected += _save_signal(trade, watch, rule, result)
+                        affected += _save_signal(trade, watch, rule, result, technical, quote_status)
             return affected, "; ".join((notification_errors + technical_warnings)[:5])
 
         return self._run("scan_trade_rules", _do)

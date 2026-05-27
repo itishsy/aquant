@@ -81,6 +81,7 @@ function formatMoney(value: unknown) {
 
 function statusTone(status?: string) {
   if (["trading", "buy_pending_confirm", "sell_signal_pending"].includes(status || "")) return { color: "#e34d59", bg: "#fff1f1" };
+  if (["observe_risk_pending", "observe_invalid_pending", "observe_remove_pending"].includes(status || "")) return { color: "#e37318", bg: "#fff7e8" };
   if (["invalid", "removed", "blacklist"].includes(status || "")) return { color: "#7b879c", bg: "#eef2f7" };
   if (["signal_generated", "waiting_buy_point"].includes(status || "")) return { color: "#4b63ee", bg: "#eef2ff" };
   return { color: "#00a870", bg: "#eefaf4" };
@@ -186,6 +187,23 @@ function notificationStatusText(item: any) {
   if (item.notification_sent) return "邮件已发送";
   if (item.notification_error) return `邮件发送失败：${shortError(item.notification_error)}`;
   return "邮件待发送或不需要提醒";
+}
+
+function signalStatusText(status?: string) {
+  const labels: Record<string, string> = {
+    buy_pending_confirm: "买点待确认",
+    observe_risk_pending: "观察风险待确认",
+    observe_invalid_pending: "观察失效待确认",
+    observe_remove_pending: "观察剔除待确认",
+    sell_signal_pending: "卖点待处理",
+    stop_loss_pending: "止损待处理",
+    confirmed_buy: "已确认买入",
+    ignored: "已忽略",
+    false_positive: "误报",
+    invalid: "已失效",
+    abandoned: "已放弃",
+  };
+  return labels[status || ""] || status || "-";
 }
 
 function rulePreviewConclusionText(preview: any) {
@@ -561,7 +579,7 @@ export function WatchPoolPage() {
         <div style={{ display: "grid", gap: 4, color: "#64748b", fontSize: 13, lineHeight: 1.55 }}>
           <p>买点类型：{buyPointLabels[item.buy_point_type] || item.buy_point_type || "-"}</p>
           <p>触发价格：{item.trigger_price ?? "-"}</p>
-          <p>买点确认：{item.buy_point_confirmed ? "已确认" : "待确认"} / 状态：{item.signal_status || "-"}</p>
+          <p>买点确认：{item.buy_point_confirmed ? "已确认" : "待确认"} / 状态：{signalStatusText(item.signal_status)}</p>
           <p>止损位：{item.stop_loss_price ?? "-"}</p>
           <p>目标价：{item.target_price ?? "-"}</p>
           <p>风险说明：{item.risk_desc || "-"}</p>
@@ -628,7 +646,7 @@ export function WatchPoolPage() {
         <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 9 }}>
           <InfoLine label="触发规则" value={signalRuleText(item)} />
           <InfoLine label="买点类型" value={buyPointLabels[item.buy_point_type] || item.buy_point_type || "-"} />
-          <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${item.signal_status || "-"}`} />
+          <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${signalStatusText(item.signal_status)}`} />
           <InfoLine label="触发原因" value={item.trigger_reason || ASSISTANT_NOTE} />
           <InfoLine label="风险说明" value={item.risk_desc || "-"} />
           <p style={{ margin: 0, color: "#8a94a8", fontSize: 12, lineHeight: 1.55 }}>{ASSISTANT_NOTE}</p>
@@ -722,7 +740,7 @@ export function WatchPoolPage() {
         </div>
         <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 9 }}>
           <InfoLine label="触发规则" value={signalRuleText(item)} />
-          <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${item.signal_status || "-"}`} />
+          <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${signalStatusText(item.signal_status)}`} />
           <InfoLine label="邮件提醒" value={notificationStatusText(item)} />
           <InfoLine label="触发原因" value={item.trigger_reason || ASSISTANT_NOTE} />
           <InfoLine label="风险说明" value={item.risk_desc || "-"} />

@@ -23,7 +23,13 @@ def test_technical_context_returns_bars_and_macd(db_session):
         )
     repo.upsert_rows("000001.SZ", "5m", rows, "mock")
 
-    context = TechnicalContextService(db_session).get_context("000001.SZ", "5m", 30, ["macd"])
+    context = TechnicalContextService(db_session).get_context(
+        "000001.SZ",
+        "5m",
+        30,
+        ["macd"],
+        now=datetime(2026, 5, 22, 12, 0),
+    )
 
     assert context["status"] == "ok"
     assert len(context["bars"]) == 30
@@ -42,13 +48,54 @@ def test_technical_context_reports_insufficient_bars(db_session):
         "mock",
     )
 
-    context = TechnicalContextService(db_session).get_context("000001.SZ", "15m", 8, ["macd", "ma"])
+    context = TechnicalContextService(db_session).get_context(
+        "000001.SZ",
+        "15m",
+        8,
+        ["macd", "ma"],
+        now=datetime(2026, 5, 22, 12, 0),
+    )
 
     assert context["status"] == "insufficient_bars"
     assert context["freshness"]["bar_count"] == 1
     assert context["freshness"]["required_bars"] == 8
     assert context["freshness"]["enough_bars"] is False
     assert "Need 8 bars" in context["reason"]
+    assert context["indicators"] == {}
+
+
+def test_technical_context_reports_stale_data_when_latest_time_lags_expected(db_session):
+    repo = KlineRepository(db_session)
+    start = datetime(2026, 5, 27, 9, 40)
+    rows = []
+    for idx in range(30):
+        close = 10 + idx * 0.1
+        rows.append(
+            {
+                "kline_time": start + timedelta(minutes=5 * idx),
+                "open": close - 0.05,
+                "high": close + 0.1,
+                "low": close - 0.1,
+                "close": close,
+                "volume": 1000 + idx,
+            }
+        )
+    repo.upsert_rows("000001.SZ", "5m", rows, "mock")
+
+    context = TechnicalContextService(db_session).get_context(
+        "000001.SZ",
+        "5m",
+        30,
+        ["macd"],
+        now=datetime(2026, 5, 27, 14, 46),
+    )
+
+    assert context["status"] == "stale_data"
+    assert context["freshness"]["enough_bars"] is True
+    assert context["freshness"]["is_fresh"] is False
+    assert context["freshness"]["latest_kline_time"] == datetime(2026, 5, 27, 12, 5).isoformat()
+    assert context["freshness"]["expected_latest_time"] == datetime(2026, 5, 27, 14, 45).isoformat()
+    assert "older than expected" in context["reason"]
     assert context["indicators"] == {}
 
 

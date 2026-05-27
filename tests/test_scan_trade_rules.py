@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app.models import ConfigTask, WatchPool, WatchSignal, WatchTrade
 from app.services.kline_repository import KlineRepository
@@ -66,7 +66,7 @@ def test_scan_trade_rules_generates_platform_break_support_signal(db_session):
     )
     db_session.commit()
 
-    log = TaskService(db_session).scan_trade_rules(date(2026, 5, 24))
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_trade_rules(date(2026, 5, 24))
     signal = db_session.query(WatchSignal).filter(WatchSignal.related_trade_id == trade.id).first()
 
     assert log.run_status == "success"
@@ -76,6 +76,13 @@ def test_scan_trade_rules_generates_platform_break_support_signal(db_session):
     assert signal.rule_code == "break_platform_support"
     assert signal.signal_status == "stop_loss_pending"
     assert signal.related_trade_id == trade.id
+    assert signal.snapshot_json["data_status"] == "ok"
+    assert signal.snapshot_json["timeframe"] == "daily"
+    assert signal.snapshot_json["latest_kline_time"] == datetime(2026, 5, 24).isoformat()
+    assert signal.snapshot_json["expected_latest_time"] == datetime(2026, 5, 24).isoformat()
+    assert signal.snapshot_json["bar_count"] == 5
+    assert signal.snapshot_json["required_bars"] == 5
+    assert signal.snapshot_json["executor_key"] == "break_price"
     assert signal.notification_sent is False
     assert signal.notification_error
     assert "email notification is disabled" in (log.error_message or "")
@@ -109,4 +116,4 @@ def test_scan_trade_rules_does_not_call_provider_when_data_missing(db_session, m
 
     assert log.run_status == "success"
     assert db_session.query(WatchSignal).count() == 0
-    assert "Need" in (log.error_message or "")
+    assert "No kline data" in (log.error_message or "")

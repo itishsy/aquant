@@ -170,8 +170,8 @@ class SeedService:
             "max_requests_per_run": 100,
             "source_priority": ["mock"],
         },
-        "scan_watch_rules": {"interval_minutes": 10},
-        "scan_trade_rules": {"interval_minutes": 10},
+        "scan_watch_rules": {"interval_minutes": 10, "quote_max_age_minutes": 10},
+        "scan_trade_rules": {"interval_minutes": 10, "quote_max_age_minutes": 10},
     }
     PLATFORM_BREAKOUT_PARAMS = [
         ("platform_upper_price", "箱体上沿", "number", True, None, "平台箱体上沿价格。", 1),
@@ -188,6 +188,14 @@ class SeedService:
         ("m30_dead_cross", "30分钟死叉", "sell_signal", "30m", "macd_dead_cross", "30分钟 MACD 死叉卖出信号。"),
         ("break_platform_support", "收破平台支撑位", "stop_loss", "daily", "break_price", "日线收破平台支撑位止损信号。"),
     ]
+    GENERIC_OBSERVE_RULES = [
+        ("observe_break_key_price", "观察跌破关键观察价", "observe_risk", "daily", "break_level", "观察阶段跌破关键观察价的风险提醒。"),
+        ("observe_close_break_platform_support", "观察收破平台支撑位", "invalid_signal", "daily", "break_level", "观察阶段日线收破平台支撑位的失效提醒。"),
+        ("observe_break_ma5", "观察跌破 MA5", "observe_risk", "daily", "break_ma", "观察阶段跌破 MA5 的短线风险提醒。"),
+        ("observe_break_ma10", "观察跌破 MA10", "observe_risk", "daily", "break_ma", "观察阶段跌破 MA10 的趋势风险提醒。"),
+        ("observe_break_ma20", "观察跌破 MA20", "invalid_signal", "daily", "break_ma", "观察阶段跌破 MA20 的失效提醒。"),
+        ("observe_pullback_recent_high", "观察从近期高点回撤", "observe_risk", "daily", "pullback_to_level", "观察阶段从近期高点回撤到指定幅度的提醒。"),
+    ]
     PLATFORM_BREAKOUT_RULE_BINDINGS = [
         ("not_break_platform_upper", "observe", True, "platform_retest", "AND", 1),
         ("b5_divergence", "observe", False, "bottom_divergence", "OR", 2),
@@ -195,6 +203,14 @@ class SeedService:
         ("m5_top_divergence", "trading", False, "sell_signal", "OR", 1),
         ("m30_dead_cross", "trading", False, "sell_signal", "OR", 2),
         ("break_platform_support", "stop_loss", False, "stop_loss", "OR", 1),
+    ]
+    PLATFORM_BREAKOUT_EXAMPLE_RULE_BINDINGS = [
+        ("observe_break_key_price", "observe", False, "observe_risk", "OR", 20, False, {"data": {"timeframe": "daily", "lookback_bars": 5, "indicators": []}, "signal": {"target_param": "key_observe_price", "break_type": "intraday_below", "threshold_pct": 0}}),
+        ("observe_close_break_platform_support", "observe", False, "observe_invalid", "OR", 21, False, {"data": {"timeframe": "daily", "lookback_bars": 5, "indicators": []}, "signal": {"target_param": "platform_support_price", "break_type": "close_below", "threshold_pct": 0}}),
+        ("observe_break_ma5", "observe", False, "observe_ma", "OR", 22, False, {"data": {"timeframe": "daily", "lookback_bars": 30, "indicators": ["ma"]}, "signal": {"ma": 5, "break_type": "cross_down"}}),
+        ("observe_break_ma10", "observe", False, "observe_ma", "OR", 23, False, {"data": {"timeframe": "daily", "lookback_bars": 30, "indicators": ["ma"]}, "signal": {"ma": 10, "break_type": "cross_down"}}),
+        ("observe_break_ma20", "observe", False, "observe_ma", "OR", 24, False, {"data": {"timeframe": "daily", "lookback_bars": 30, "indicators": ["ma"]}, "signal": {"ma": 20, "break_type": "cross_down"}}),
+        ("observe_pullback_recent_high", "observe", False, "observe_pullback", "OR", 25, False, {"data": {"timeframe": "daily", "lookback_bars": 20, "indicators": []}, "signal": {"mode": "from_recent_high", "pullback_pct": 0.03}}),
     ]
 
     def __init__(self, db: Session):
@@ -313,6 +329,20 @@ class SeedService:
                     )
                 )
                 created += 1
+        for rule_code, rule_name, rule_type, timeframe, executor_key, description in self.GENERIC_OBSERVE_RULES:
+            if not self.db.query(TradingRuleDefinition).filter_by(rule_code=rule_code).first():
+                self.db.add(
+                    TradingRuleDefinition(
+                        rule_code=rule_code,
+                        rule_name=rule_name,
+                        rule_type=rule_type,
+                        timeframe=timeframe,
+                        executor_key=executor_key,
+                        description=description,
+                        enabled=True,
+                    )
+                )
+                created += 1
         for rule_code, stage, required, logic_group, logic_operator, sort_order in self.PLATFORM_BREAKOUT_RULE_BINDINGS:
             if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="platform_breakout", rule_code=rule_code, stage=stage).first():
                 self.db.add(
@@ -326,6 +356,22 @@ class SeedService:
                         sort_order=sort_order,
                         enabled=True,
                         config_json={},
+                    )
+                )
+                created += 1
+        for rule_code, stage, required, logic_group, logic_operator, sort_order, enabled, config_json in self.PLATFORM_BREAKOUT_EXAMPLE_RULE_BINDINGS:
+            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="platform_breakout", rule_code=rule_code, stage=stage).first():
+                self.db.add(
+                    TradingSystemRuleBinding(
+                        system_code="platform_breakout",
+                        rule_code=rule_code,
+                        stage=stage,
+                        required=required,
+                        logic_group=logic_group,
+                        logic_operator=logic_operator,
+                        sort_order=sort_order,
+                        enabled=enabled,
+                        config_json=config_json,
                     )
                 )
                 created += 1

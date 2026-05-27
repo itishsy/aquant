@@ -3,6 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from app.models import ConfigDictionary, MktDailyPlate, MktDailyPlateStock, MktHotStock, MktLimitUpStock, ReviewForm, TradingRuleDefinition, TradingSystemDefinition, TradingSystemParamDefinition, TradingSystemRuleBinding, WatchPool, WatchPoolStatusLog, WatchSignal, WatchTrade
+from app.rule_executors import get_executor
 from app.services.prd_v1 import PrdWatchPoolService, SeedService
 from app.services.tasks import TaskService
 
@@ -80,7 +81,7 @@ def test_trading_system_seed_data_is_idempotent(db_session):
     assert first["created"] > 0
     assert second["created"] == 0
     assert counts_after_first == counts_after_second
-    assert counts_after_first == {"systems": 4, "params": 5, "rules": 6, "bindings": 6}
+    assert counts_after_first == {"systems": 4, "params": 5, "rules": 12, "bindings": 12}
 
     systems = {row.system_code: row.system_name for row in db_session.query(TradingSystemDefinition).all()}
     assert systems == {
@@ -112,17 +113,34 @@ def test_trading_system_seed_data_is_idempotent(db_session):
     assert rules["m5_top_divergence"] == ("sell_signal", "5m", "macd_top_divergence")
     assert rules["m30_dead_cross"] == ("sell_signal", "30m", "macd_dead_cross")
     assert rules["break_platform_support"] == ("stop_loss", "daily", "break_price")
+    expected_generic_rules = {
+        "observe_break_key_price": ("observe_risk", "daily", "break_level"),
+        "observe_close_break_platform_support": ("invalid_signal", "daily", "break_level"),
+        "observe_break_ma5": ("observe_risk", "daily", "break_ma"),
+        "observe_break_ma10": ("observe_risk", "daily", "break_ma"),
+        "observe_break_ma20": ("invalid_signal", "daily", "break_ma"),
+        "observe_pullback_recent_high": ("observe_risk", "daily", "pullback_to_level"),
+    }
+    for rule_code, expected in expected_generic_rules.items():
+        assert rules[rule_code] == expected
+        assert get_executor(expected[2]) is not None
 
     bindings = {
-        (row.stage, row.rule_code): (row.required, row.logic_group, row.logic_operator)
+        (row.stage, row.rule_code): (row.required, row.logic_group, row.logic_operator, row.enabled, row.config_json)
         for row in db_session.query(TradingSystemRuleBinding).filter_by(system_code="platform_breakout").all()
     }
-    assert bindings[("observe", "not_break_platform_upper")] == (True, "platform_retest", "AND")
-    assert bindings[("observe", "b5_divergence")] == (False, "bottom_divergence", "OR")
-    assert bindings[("observe", "b15_divergence")] == (False, "bottom_divergence", "OR")
-    assert bindings[("trading", "m5_top_divergence")] == (False, "sell_signal", "OR")
-    assert bindings[("trading", "m30_dead_cross")] == (False, "sell_signal", "OR")
-    assert bindings[("stop_loss", "break_platform_support")] == (False, "stop_loss", "OR")
+    assert bindings[("observe", "not_break_platform_upper")][:4] == (True, "platform_retest", "AND", True)
+    assert bindings[("observe", "b5_divergence")][:4] == (False, "bottom_divergence", "OR", True)
+    assert bindings[("observe", "b15_divergence")][:4] == (False, "bottom_divergence", "OR", True)
+    assert bindings[("trading", "m5_top_divergence")][:4] == (False, "sell_signal", "OR", True)
+    assert bindings[("trading", "m30_dead_cross")][:4] == (False, "sell_signal", "OR", True)
+    assert bindings[("stop_loss", "break_platform_support")][:4] == (False, "stop_loss", "OR", True)
+    assert bindings[("observe", "observe_break_key_price")][3] is False
+    assert bindings[("observe", "observe_break_key_price")][4]["signal"]["target_param"] == "key_observe_price"
+    assert bindings[("observe", "observe_break_ma5")][3] is False
+    assert bindings[("observe", "observe_break_ma5")][4]["signal"] == {"ma": 5, "break_type": "cross_down"}
+    assert bindings[("observe", "observe_pullback_recent_high")][3] is False
+    assert bindings[("observe", "observe_pullback_recent_high")][4]["signal"]["mode"] == "from_recent_high"
 
 
 def test_admin_trading_system_readonly_endpoints(client):
@@ -156,8 +174,9 @@ def test_admin_trading_system_readonly_endpoints(client):
     bindings_response = client.get("/api/admin/trading-systems/platform_breakout/rules", headers=headers)
     assert bindings_response.status_code == 200
     bindings = bindings_response.json()["data"]
-    assert len(bindings) == 6
+    assert len(bindings) == 12
     assert bindings[0]["rule"] is not None
+    assert {row["rule_code"] for row in bindings} >= {"observe_break_key_price", "observe_break_ma5", "observe_pullback_recent_high"}
     assert {row["stage"] for row in bindings} == {"observe", "trading", "stop_loss"}
 
 

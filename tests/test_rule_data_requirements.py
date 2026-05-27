@@ -115,3 +115,22 @@ def test_watch_requirements_merge_duplicate_timeframe_requirements(db_session):
     assert five_minute["lookback_bars"] == 150
     assert five_minute["indicators"] == ["macd", "ma"]
     assert five_minute["reasons"] == ["b5_divergence", "custom_5m_confirm"]
+
+
+def test_seeded_example_ma_binding_can_drive_daily_ma_requirement(db_session):
+    SeedService(db_session).init_defaults()
+    binding = db_session.query(TradingSystemRuleBinding).filter_by(
+        system_code="platform_breakout",
+        rule_code="observe_break_ma5",
+        stage="observe",
+    ).first()
+    binding.enabled = True
+    db_session.add(_platform_watch())
+    db_session.commit()
+
+    requirements = RuleDataRequirementService(db_session).build_watch_requirements(date(2026, 5, 24))
+
+    daily = requirements["603019.SH"]["daily"]
+    assert daily["lookback_bars"] == 30
+    assert daily["indicators"] == ["ma"]
+    assert daily["reasons"] == ["not_break_platform_upper", "observe_break_ma5"]

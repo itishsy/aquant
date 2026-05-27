@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from app.services.kline_collection import KlineCollectionService, KlineFreshnessService
 from app.services.kline_repository import KlineRepository
@@ -98,6 +99,30 @@ def test_daily_expected_after_close(db_session):
 
     assert freshness.expected_latest_time("daily", datetime(2026, 5, 22, 14, 59)) is None
     assert freshness.expected_latest_time("daily", datetime(2026, 5, 22, 15, 1)) == datetime(2026, 5, 22)
+
+
+def test_expected_latest_time_uses_shanghai_timezone_for_intraday(db_session):
+    repo = KlineRepository(db_session)
+    freshness = KlineFreshnessService(repo)
+    shanghai = ZoneInfo("Asia/Shanghai")
+
+    assert freshness.expected_latest_time("5m", datetime(2026, 5, 27, 10, 17, tzinfo=shanghai)) == datetime(
+        2026, 5, 27, 10, 15
+    )
+    assert freshness.expected_latest_time("15m", datetime(2026, 5, 27, 14, 46, tzinfo=shanghai)) == datetime(
+        2026, 5, 27, 14, 45
+    )
+    assert freshness.expected_latest_time("5m", datetime(2026, 5, 27, 8, 0, tzinfo=shanghai)) is None
+
+
+def test_daily_expected_latest_time_uses_shanghai_timezone(db_session):
+    repo = KlineRepository(db_session)
+    freshness = KlineFreshnessService(repo)
+    shanghai = ZoneInfo("Asia/Shanghai")
+
+    assert freshness.expected_latest_time("daily", datetime(2026, 5, 27, 15, 10, tzinfo=shanghai)) == datetime(
+        2026, 5, 27
+    )
 
 
 def test_missing_daily_calls_provider(db_session):
