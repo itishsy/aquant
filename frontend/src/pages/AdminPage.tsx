@@ -676,9 +676,10 @@ function RuleStageCard({ title, items }: { title: string; items: TradingRuleBind
   );
 }
 
-function SmallTag({ children }: { children: string | number }) {
+function SmallTag({ children, tone = "primary" }: { children: string | number; tone?: "primary" | "muted" }) {
+  const muted = tone === "muted";
   return (
-    <span style={{ borderRadius: 999, padding: "2px 7px", background: "#eef2ff", color: "#4052d2", fontSize: 11, fontWeight: 700 }}>
+    <span style={{ borderRadius: 999, padding: "2px 7px", background: muted ? "#eef0f3" : "#eef2ff", color: muted ? "#98a2b3" : "#4052d2", fontSize: 11, fontWeight: 700 }}>
       {children}
     </span>
   );
@@ -822,30 +823,34 @@ function TradingSystemPanelEditor({
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(190px, 270px) 1fr", gap: 14 }}>
-      <div style={{ background: "#fff", borderRadius: 14, padding: 14, display: "grid", gap: 8, alignContent: "start" }}>
+    <section style={{ display: "grid", gap: 14 }}>
+      <div style={{ background: "#fff", borderRadius: 14, padding: 14, display: "grid", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <h3 style={{ margin: 0, color: "#1d2d50" }}>交易体系管理</h3>
           <Button size="mini" onClick={() => { setSystemForm(blankSystemForm()); onSelect(""); }}>新增</Button>
         </div>
-        {systems.length ? systems.map((system) => (
-          <button
-            key={system.system_code}
-            onClick={() => onSelect(system.system_code)}
-            style={{
-              border: 0,
-              borderRadius: 10,
-              padding: "10px 12px",
-              textAlign: "left",
-              background: selectedCode === system.system_code ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
-              color: selectedCode === system.system_code ? "#fff" : "#344054",
-              cursor: "pointer",
-            }}
-          >
-            <strong style={{ display: "block", fontSize: 14 }}>{system.system_name}</strong>
-            <span style={{ display: "block", marginTop: 4, fontSize: 12, opacity: 0.78 }}>{system.system_code}</span>
-          </button>
-        )) : <div style={{ color: "#98a2b3", fontSize: 13 }}>暂无交易体系</div>}
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
+          {systems.length ? systems.map((system) => (
+            <button
+              key={system.system_code}
+              onClick={() => onSelect(system.system_code)}
+              style={{
+                border: 0,
+                borderRadius: 999,
+                padding: "10px 16px",
+                textAlign: "left",
+                background: selectedCode === system.system_code ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#f4f6fb",
+                color: selectedCode === system.system_code ? "#fff" : "#344054",
+                cursor: "pointer",
+                minWidth: 150,
+                flex: "0 0 auto",
+              }}
+            >
+              <strong style={{ display: "block", fontSize: 14, lineHeight: 1.2, whiteSpace: "nowrap" }}>{system.system_name}</strong>
+              <span style={{ display: "block", marginTop: 4, fontSize: 12, opacity: 0.78, whiteSpace: "nowrap" }}>{system.system_code}</span>
+            </button>
+          )) : <div style={{ color: "#98a2b3", fontSize: 13 }}>暂无交易体系</div>}
+        </div>
       </div>
 
       <div style={{ display: "grid", gap: 14 }}>
@@ -863,23 +868,6 @@ function TradingSystemPanelEditor({
                 <CheckField label="启用" checked={!!systemForm?.enabled} onChange={(v) => setSystemForm({ ...systemForm, enabled: v })} />
               </div>
               <Button color="primary" size="small" loading={saving} onClick={saveSystem}>保存体系</Button>
-            </EditCard>
-
-            <EditCard title={ruleForm.rule_id ? "编辑规则定义" : "新增规则定义"}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
-                <TextField label="规则编码" value={ruleForm.rule_code} disabled={!!ruleForm.rule_id} onChange={(v) => setRuleForm({ ...ruleForm, rule_code: v })} />
-                <TextField label="规则名称" value={ruleForm.rule_name} onChange={(v) => setRuleForm({ ...ruleForm, rule_name: v })} />
-                <SelectField label="类型" value={ruleForm.rule_type} options={RULE_TYPES} onChange={(v) => setRuleForm({ ...ruleForm, rule_type: v })} />
-                <SelectField label="周期" value={ruleForm.timeframe} options={TIMEFRAMES} onChange={(v) => setRuleForm({ ...ruleForm, timeframe: v })} />
-                <TextField label="executor_key" value={ruleForm.executor_key} onChange={(v) => setRuleForm({ ...ruleForm, executor_key: v })} />
-                <CheckField label="启用" checked={!!ruleForm.enabled} onChange={(v) => setRuleForm({ ...ruleForm, enabled: v })} />
-                <TextField label="描述" value={ruleForm.description || ""} onChange={(v) => setRuleForm({ ...ruleForm, description: v })} />
-              </div>
-              {ruleExecutorMissing && <WarningText />}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button color="primary" size="small" loading={saving} onClick={saveRule}>保存规则</Button>
-                <Button size="small" onClick={() => setRuleForm(blankRuleForm())}>新增规则</Button>
-              </div>
             </EditCard>
 
             {selectedCode && selectedSystem && (
@@ -941,23 +929,10 @@ function TradingSystemPanelEditor({
               </>
             )}
 
-            <EditCard title="规则定义列表">
-              <SimpleRows
-                empty="暂无规则定义"
-                rows={rules.map((rule) => ({
-                  key: rule.rule_code,
-                  title: `${rule.rule_name} / ${rule.rule_code}`,
-                  desc: `${rule.rule_type} / ${rule.timeframe} / ${rule.executor_key}`,
-                  enabled: rule.enabled,
-                  warning: !!rule.executor_key && !registeredExecutors.has(rule.executor_key),
-                  onEdit: () => setRuleForm({ ...rule }),
-                }))}
-              />
-            </EditCard>
           </>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -1036,17 +1011,18 @@ function WarningText() {
 }
 
 function SimpleRows({ rows, empty }: { rows: { key: string; title: string; desc: string; enabled: boolean; warning?: boolean; onEdit: () => void }[]; empty: string }) {
+  const sortedRows = [...rows].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   return (
     <div style={{ display: "grid", gap: 8 }}>
-      {rows.length ? rows.map((row) => (
-        <div key={row.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, background: "#f8fafc" }}>
+      {sortedRows.length ? sortedRows.map((row) => (
+        <div key={row.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, background: row.enabled ? "#f8fafc" : "#f2f4f7", opacity: row.enabled ? 1 : 0.72 }}>
           <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
-            <strong style={{ color: "#1d2d50", fontSize: 13 }}>{row.title}</strong>
-            <span style={{ color: "#667085", fontSize: 12 }}>{row.desc}</span>
+            <strong style={{ color: row.enabled ? "#1d2d50" : "#667085", fontSize: 13 }}>{row.title}</strong>
+            <span style={{ color: row.enabled ? "#667085" : "#98a2b3", fontSize: 12 }}>{row.desc}</span>
             {row.warning && <span style={{ color: "#b54708", fontSize: 12 }}>该规则暂无执行器，不能参与自动监控</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <SmallTag>{row.enabled ? "启用" : "停用"}</SmallTag>
+            <SmallTag tone={row.enabled ? "primary" : "muted"}>{row.enabled ? "启用" : "停用"}</SmallTag>
             <Button size="mini" onClick={row.onEdit}>编辑</Button>
           </div>
         </div>

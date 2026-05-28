@@ -144,18 +144,18 @@ export function SettingsPage() {
               </Button>
             </div>
 
-            <div className="row-card" style={{ display: "grid", gap: 12 }}>
+            <div className="row-card" style={{ display: "grid", gap: 12, alignItems: "stretch", justifyContent: "stretch" }}>
               <div>
                 <strong>后台任务管理</strong>
                 <p>
                   总数：{taskData?.summary?.total ?? 0} / 启用：{taskData?.summary?.enabled ?? 0} / 运行中：{taskData?.summary?.running ?? 0} / 异常：{taskData?.summary?.failed ?? 0}
                 </p>
               </div>
-              <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gap: 12, width: "100%" }}>
                 {(taskData?.groups || []).map((group: any) => {
                   const hasRunning = (group.tasks || []).some((t: any) => t.running);
                   return (
-                  <div key={group.module} style={{ borderRadius: 14, background: "#f7f9ff", padding: 12, display: "grid", gap: 8 }}>
+                  <div key={group.module} style={{ borderRadius: 14, background: "#f7f9ff", padding: 12, display: "grid", gap: 8, width: "100%" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div>
                         <div style={{ color: "#22375c", fontSize: 14, fontWeight: 800 }}>{group.label}</div>
@@ -170,7 +170,7 @@ export function SettingsPage() {
                         执行
                       </Button>
                     </div>
-                    <div style={{ fontSize: 11, display: "grid", gridTemplateColumns: "minmax(92px, 1.4fr) minmax(72px, 0.9fr) minmax(92px, 1fr) minmax(58px, auto)", gap: 8, color: "#7b879c", fontWeight: 700, padding: "4px 0", borderBottom: "1px solid #e6eaf2" }}>
+                    <div style={{ width: "100%", fontSize: 11, display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.7fr)", gap: 8, color: "#7b879c", fontWeight: 700, padding: "4px 0", borderBottom: "1px solid #e6eaf2" }}>
                       <span>任务</span>
                       <span>执行计划</span>
                       <span>最近一次执行时间</span>
@@ -181,7 +181,7 @@ export function SettingsPage() {
                       const currentStatus = task.running ? "running" : log.run_status;
                       const lastRunTime = fmtTaskRunDate(log.finished_at || log.started_at);
                       return (
-                        <div key={task.task_id} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "minmax(92px, 1.4fr) minmax(72px, 0.9fr) minmax(92px, 1fr) minmax(58px, auto)", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #eee" }}>
+                        <div key={task.task_id} style={{ width: "100%", fontSize: 12, display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.7fr)", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #eee" }}>
                           <span style={{ color: "#334" }}>{task.task_label || task.task_name}</span>
                           <span style={{ color: "#667085", fontSize: 11 }}>{task.execution_plan || task.cron_expression || "手动执行"}</span>
                           <span style={{ color: "#667085", fontSize: 11 }}>{lastRunTime}</span>

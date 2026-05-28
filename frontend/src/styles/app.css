@@ -38,7 +38,8 @@ button {
 
 .app-frame {
   min-height: 100vh;
-  max-width: 480px;
+  width: 100%;
+  max-width: 1120px;
   margin: 0 auto;
   padding: 12px 14px 100px;
 }
@@ -253,6 +254,32 @@ button {
 .metric-hero {
   grid-column: span 2;
   background: linear-gradient(135deg, #f1f4ff 0%, #e8eeff 50%, #ffffff 100%);
+}
+
+@media (min-width: 720px) {
+  .app-frame {
+    padding: 18px 24px 110px;
+  }
+
+  .page-shell {
+    gap: 16px;
+  }
+
+  .page-content {
+    gap: 16px;
+  }
+
+  .feature-card {
+    padding: 22px;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .metric-hero {
+    grid-column: span 4;
+  }
 }
 
 /* ── Cards & lists ── */
