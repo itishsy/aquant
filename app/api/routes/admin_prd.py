@@ -524,7 +524,7 @@ def list_trading_rules(db: Session = Depends(get_db), admin=Depends(require_admi
 def create_trading_rule(payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
     rule_code = _required_payload_text(payload, "rule_code", "rule_code")
     rule_name = _required_payload_text(payload, "rule_name", "rule_name")
-    rule_type = _validate_choice(_required_payload_text(payload, "rule_type", "rule_type"), {"buy_signal", "sell_signal", "stop_loss", "filter", "confirm"}, "rule_type")
+    rule_type = _validate_choice(_required_payload_text(payload, "rule_type", "rule_type"), {"buy_signal", "sell_signal", "stop_loss", "filter", "confirm", "observe_risk", "invalid_signal", "remove_signal"}, "rule_type")
     timeframe = _validate_choice(_required_payload_text(payload, "timeframe", "timeframe"), {"5m", "15m", "30m", "daily"}, "timeframe")
     executor_key = _required_payload_text(payload, "executor_key", "executor_key")
     if db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == rule_code).first():
@@ -554,7 +554,7 @@ def update_trading_rule(rule_code: str, payload: dict, db: Session = Depends(get
     if "rule_name" in payload:
         row.rule_name = _required_payload_text(payload, "rule_name", "rule_name")
     if "rule_type" in payload:
-        row.rule_type = _validate_choice(str(payload["rule_type"]), {"buy_signal", "sell_signal", "stop_loss", "filter", "confirm"}, "rule_type")
+        row.rule_type = _validate_choice(str(payload["rule_type"]), {"buy_signal", "sell_signal", "stop_loss", "filter", "confirm", "observe_risk", "invalid_signal", "remove_signal"}, "rule_type")
     if "timeframe" in payload:
         row.timeframe = _validate_choice(str(payload["timeframe"]), {"5m", "15m", "30m", "daily"}, "timeframe")
     for key in ["executor_key", "description", "enabled"]:
@@ -644,7 +644,7 @@ def create_trading_system_rule_binding(system_code: str, payload: dict, db: Sess
     rule_code = _required_payload_text(payload, "rule_code", "rule_code")
     if not db.query(TradingRuleDefinition).filter(TradingRuleDefinition.rule_code == rule_code).first():
         raise HTTPException(status_code=404, detail="RULE_NOT_FOUND")
-    stage = _validate_choice(_required_payload_text(payload, "stage", "stage"), {"observe", "buy_confirm", "trading", "sell", "stop_loss"}, "stage")
+    stage = _validate_choice(_required_payload_text(payload, "stage", "stage"), {"observe", "buy_confirm", "trading", "sell", "stop_loss", "observe_risk", "invalid_signal", "remove_signal"}, "stage")
     if db.query(TradingSystemRuleBinding).filter_by(system_code=system_code, rule_code=rule_code, stage=stage).first():
         raise HTTPException(status_code=409, detail="binding already exists")
     row = TradingSystemRuleBinding(
@@ -677,7 +677,7 @@ def update_trading_system_rule_binding(binding_id: int, payload: dict, db: Sessi
             raise HTTPException(status_code=404, detail="RULE_NOT_FOUND")
         row.rule_code = rule_code
     if "stage" in payload:
-        row.stage = _validate_choice(str(payload["stage"]), {"observe", "buy_confirm", "trading", "sell", "stop_loss"}, "stage")
+        row.stage = _validate_choice(str(payload["stage"]), {"observe", "buy_confirm", "trading", "sell", "stop_loss", "observe_risk", "invalid_signal", "remove_signal"}, "stage")
     if "logic_operator" in payload:
         row.logic_operator = _validate_choice(str(payload["logic_operator"]), {"AND", "OR"}, "logic_operator")
     for key in ["required", "logic_group", "enabled", "sort_order", "config_json"]:
