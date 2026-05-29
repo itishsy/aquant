@@ -188,6 +188,9 @@ class SeedService:
         ("m30_dead_cross", "30分钟死叉", "sell_signal", "30m", "macd_dead_cross", "30分钟 MACD 死叉卖出信号。"),
         ("break_platform_support", "收破平台支撑位", "stop_loss", "daily", "break_price", "日线收破平台支撑位止损信号。"),
     ]
+    UPTREND_RULES = [
+        ("near_ma20_pullback", "回调到MA20附近", "filter", "daily", "near_ma", "上涨趋势观察阶段，股价回调到 MA20 附近的前置过滤条件。"),
+    ]
     GENERIC_OBSERVE_RULES = [
         ("observe_break_key_price", "观察跌破关键观察价", "observe_risk", "daily", "break_level", "观察阶段跌破关键观察价的风险提醒。"),
         ("observe_close_break_platform_support", "观察收破平台支撑位", "invalid_signal", "daily", "break_level", "观察阶段日线收破平台支撑位的失效提醒。"),
@@ -203,6 +206,38 @@ class SeedService:
         ("m5_top_divergence", "trading", False, "sell_signal", "OR", 1),
         ("m30_dead_cross", "trading", False, "sell_signal", "OR", 2),
         ("break_platform_support", "stop_loss", False, "stop_loss", "OR", 1),
+    ]
+    UPTREND_RULE_BINDINGS = [
+        (
+            "near_ma20_pullback",
+            "observe",
+            True,
+            "trend_pullback",
+            "AND",
+            1,
+            {
+                "data": {"timeframe": "daily", "lookback_bars": 60, "indicators": ["ma"]},
+                "signal": {"ma": 20, "near_pct": 0.02, "price_field": "close"},
+            },
+        ),
+        (
+            "b5_divergence",
+            "observe",
+            False,
+            "bottom_divergence",
+            "OR",
+            2,
+            {"data": {"timeframe": "5m", "lookback_bars": 120, "indicators": ["macd"]}},
+        ),
+        (
+            "b15_divergence",
+            "observe",
+            False,
+            "bottom_divergence",
+            "OR",
+            3,
+            {"data": {"timeframe": "15m", "lookback_bars": 120, "indicators": ["macd"]}},
+        ),
     ]
     PLATFORM_BREAKOUT_EXAMPLE_RULE_BINDINGS = [
         ("observe_break_key_price", "observe", False, "observe_risk", "OR", 20, False, {"data": {"timeframe": "daily", "lookback_bars": 5, "indicators": []}, "signal": {"target_param": "key_observe_price", "break_type": "intraday_below", "threshold_pct": 0}}),
@@ -329,6 +364,20 @@ class SeedService:
                     )
                 )
                 created += 1
+        for rule_code, rule_name, rule_type, timeframe, executor_key, description in self.UPTREND_RULES:
+            if not self.db.query(TradingRuleDefinition).filter_by(rule_code=rule_code).first():
+                self.db.add(
+                    TradingRuleDefinition(
+                        rule_code=rule_code,
+                        rule_name=rule_name,
+                        rule_type=rule_type,
+                        timeframe=timeframe,
+                        executor_key=executor_key,
+                        description=description,
+                        enabled=True,
+                    )
+                )
+                created += 1
         for rule_code, rule_name, rule_type, timeframe, executor_key, description in self.GENERIC_OBSERVE_RULES:
             if not self.db.query(TradingRuleDefinition).filter_by(rule_code=rule_code).first():
                 self.db.add(
@@ -356,6 +405,22 @@ class SeedService:
                         sort_order=sort_order,
                         enabled=True,
                         config_json={},
+                    )
+                )
+                created += 1
+        for rule_code, stage, required, logic_group, logic_operator, sort_order, config_json in self.UPTREND_RULE_BINDINGS:
+            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="uptrend", rule_code=rule_code, stage=stage).first():
+                self.db.add(
+                    TradingSystemRuleBinding(
+                        system_code="uptrend",
+                        rule_code=rule_code,
+                        stage=stage,
+                        required=required,
+                        logic_group=logic_group,
+                        logic_operator=logic_operator,
+                        sort_order=sort_order,
+                        enabled=True,
+                        config_json=config_json,
                     )
                 )
                 created += 1

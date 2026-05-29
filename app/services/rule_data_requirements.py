@@ -18,6 +18,7 @@ class RuleDataRequirementService:
         "macd_bottom_divergence": {"indicators": ["macd"], "lookback_bars": 120},
         "macd_top_divergence": {"indicators": ["macd"], "lookback_bars": 120},
         "macd_dead_cross": {"indicators": ["macd"], "lookback_bars": 120},
+        "near_ma": {"timeframe": "daily", "indicators": ["ma"], "lookback_bars": 60},
         "not_break_price": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
         "break_price": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
         "break_level": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},

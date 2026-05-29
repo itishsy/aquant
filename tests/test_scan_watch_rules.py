@@ -55,6 +55,69 @@ def _seed_divergence_bars(db_session, stock_code="603019.SH", timeframe="5m"):
     )
 
 
+def _seed_daily_ma_bars(db_session, stock_code="603019.SH", latest_close=100.0, base_close=100.0, count=60, end_date=None):
+    repo = KlineRepository(db_session)
+    end_date = end_date or date(2026, 5, 24)
+    start = end_date - timedelta(days=count - 1)
+    rows = []
+    for idx in range(count):
+        close = latest_close if idx == count - 1 else base_close
+        rows.append(
+            {
+                "trade_date": start + timedelta(days=idx),
+                "open": close - 0.2,
+                "high": close + 0.2,
+                "low": close - 0.5,
+                "close": close,
+                "volume": 100000 + idx,
+            }
+        )
+    repo.upsert_rows(stock_code, "daily", rows, "test")
+
+
+def _seed_intraday_bars(db_session, stock_code="603019.SH", timeframe="5m", divergent=True, count=120):
+    minutes = 15 if timeframe == "15m" else 5
+    end = datetime(2026, 5, 24, 10, 15 if timeframe == "15m" else 20)
+    start = end - timedelta(minutes=minutes * (count - 1))
+    if divergent:
+        tail = [25.8, 25.4, 25.0, 24.8, 24.6, 24.55, 24.62, 24.74, 24.88, 25.05]
+    else:
+        tail = [25.0 for _idx in range(10)]
+    prefix_count = count - len(tail)
+    closes = [tail[0] for _idx in range(prefix_count)] + tail
+    KlineRepository(db_session).upsert_rows(
+        stock_code,
+        timeframe,
+        [
+            {
+                "kline_time": start + timedelta(minutes=minutes * idx),
+                "open": close - 0.08,
+                "high": close + 0.12,
+                "low": close - 0.15,
+                "close": close,
+                "volume": 10000 - (idx % 20) * 100,
+            }
+            for idx, close in enumerate(closes)
+        ],
+        "test",
+    )
+
+
+def _add_uptrend_watch(db_session, stock_code="603019.SH"):
+    return _add_watch(
+        db_session,
+        stock_code=stock_code,
+        stock_name="Uptrend Stock",
+        trading_system_code="uptrend",
+        trading_system="uptrend",
+        system_params_json={},
+    )
+
+
+def _scan_uptrend(db_session, now=None):
+    return TaskService(db_session, now=now or datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
+
+
 def test_seed_includes_scan_watch_rules_task(db_session):
     SeedService(db_session).init_defaults()
 
@@ -343,6 +406,107 @@ def test_scan_watch_rules_does_not_generate_signal_when_kline_is_stale(db_sessio
     _seed_divergence_bars(db_session, timeframe="15m")
 
     log = TaskService(db_session, now=datetime(2026, 5, 24, 14, 46)).scan_watch_rules(date(2026, 5, 24))
+
+    assert log.run_status == "success"
+    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
+    assert "older than expected" in (log.error_message or "")
+
+
+def test_uptrend_near_ma20_without_bottom_divergence_does_not_generate_buy_signal(db_session):
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session)
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=False)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
+
+    log = _scan_uptrend(db_session)
+
+    assert log.run_status == "success"
+    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
+    db_session.refresh(watch)
+    assert watch.status == "watching"
+    assert watch.system_stage == "observe"
+
+
+def test_uptrend_bottom_divergence_without_near_ma20_does_not_generate_buy_signal(db_session):
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session)
+    _seed_daily_ma_bars(db_session, latest_close=110.0, base_close=100.0)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
+
+    log = _scan_uptrend(db_session)
+
+    assert log.run_status == "success"
+    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
+    db_session.refresh(watch)
+    assert watch.status == "watching"
+    assert watch.system_stage == "observe"
+
+
+def test_uptrend_near_ma20_with_5m_bottom_divergence_generates_buy_signal_when_email_disabled(db_session):
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session)
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
+
+    log = _scan_uptrend(db_session)
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) == 1
+    signal = signals[0]
+    assert signal.rule_code == "b5_divergence"
+    assert signal.signal_type == "buy"
+    assert signal.signal_status == "buy_pending_confirm"
+    assert signal.trading_system_code == "uptrend"
+    assert signal.notification_sent is False
+    assert "email notification is disabled" in signal.notification_error
+    assert "email notification is disabled" in (log.error_message or "")
+    db_session.refresh(watch)
+    assert watch.status == "buy_pending_confirm"
+    assert watch.system_stage == "buy_confirm"
+    assert watch.signal_enabled is False
+
+
+def test_uptrend_near_ma20_with_15m_bottom_divergence_generates_buy_signal(db_session):
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session)
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=False)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=True)
+
+    log = _scan_uptrend(db_session)
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) == 1
+    assert signals[0].rule_code == "b15_divergence"
+    assert signals[0].trading_system_code == "uptrend"
+
+
+def test_uptrend_does_not_generate_signal_when_required_ma_data_is_insufficient(db_session):
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session)
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0, count=20)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
+
+    log = _scan_uptrend(db_session)
+
+    assert log.run_status == "success"
+    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
+    assert "Need 60 bars" in (log.error_message or "")
+
+
+def test_uptrend_does_not_generate_signal_when_required_ma_data_is_stale(db_session):
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session)
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0, count=60, end_date=date(2026, 5, 23))
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=True)
+
+    log = _scan_uptrend(db_session, now=datetime(2026, 5, 24, 15, 10))
 
     assert log.run_status == "success"
     assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0

@@ -207,6 +207,77 @@ def test_break_ma_supports_ma10_and_ma20_config():
     assert ma20.snapshot["ma"] == 20
 
 
+def _near_ma_context(latest_close=100.0, ma_values=None):
+    bars = [
+        FakeBar(datetime(2026, 5, 28, 14, 55), low_price=99.0, close_price=100.0),
+        FakeBar(datetime(2026, 5, 28, 15, 0), low_price=latest_close - 0.2, close_price=latest_close),
+    ]
+    return RuleContext(
+        watch_id=1,
+        stock_code="000001.SZ",
+        stock_name="Ping An",
+        trading_system_code="uptrend",
+        stage="observe",
+        rule_config={
+            "rule_code": "near_ma20_pullback",
+            "rule_name": "Near MA20",
+            "rule_type": "filter",
+            "timeframe": "daily",
+            "config_json": {"signal": {"ma": 20, "near_pct": 0.02, "price_field": "close"}},
+        },
+        technical={
+            "timeframe": "daily",
+            "bars": bars,
+            "indicators": {"ma": {"ma20": [100.0, 100.0] if ma_values is None else ma_values}},
+        },
+        trade_date=date(2026, 5, 28),
+    )
+
+
+def test_near_ma_triggers_when_latest_close_is_within_two_percent_of_ma20():
+    executor = get_executor("near_ma")
+
+    result = executor.execute(_near_ma_context(latest_close=101.5))
+
+    assert result.triggered is True
+    assert result.trigger_price == 101.5
+    assert result.snapshot["latest_close"] == 101.5
+    assert result.snapshot["latest_ma"] == 100.0
+    assert result.snapshot["lower"] == 98.0
+    assert result.snapshot["upper"] == 102.0
+    assert result.snapshot["executor_key"] == "near_ma"
+
+
+def test_near_ma_does_not_trigger_when_latest_close_is_too_high():
+    executor = get_executor("near_ma")
+
+    result = executor.execute(_near_ma_context(latest_close=103.0))
+
+    assert result.triggered is False
+    assert result.trigger_price == 103.0
+    assert result.snapshot["latest_ma"] == 100.0
+
+
+def test_near_ma_does_not_trigger_when_latest_close_is_too_low():
+    executor = get_executor("near_ma")
+
+    result = executor.execute(_near_ma_context(latest_close=97.0))
+
+    assert result.triggered is False
+    assert result.trigger_price == 97.0
+    assert result.snapshot["latest_ma"] == 100.0
+
+
+def test_near_ma_does_not_trigger_when_ma_data_is_insufficient():
+    executor = get_executor("near_ma")
+
+    result = executor.execute(_near_ma_context(latest_close=100.0, ma_values=[100.0, None]))
+
+    assert result.triggered is False
+    assert "insufficient" in result.reason
+    assert result.snapshot["executor_key"] == "near_ma"
+
+
 def _pullback_context(latest_close=96.9, signal_config=None, system_params=None):
     bars = [
         FakeBar(datetime(2026, 5, 28, 14, 45), low_price=98.0, close_price=99.0, high_price=100.0),

@@ -91,6 +91,7 @@ class TaskService:
         "macd_bottom_divergence",
         "macd_top_divergence",
         "macd_dead_cross",
+        "near_ma",
         "break_price",
         "break_level",
         "break_ma",
