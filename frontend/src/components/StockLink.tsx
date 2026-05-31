@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { Button, Popup } from "antd-mobile";
 import { apiGet } from "../api/client";
 import { KlineChart } from "./StockDetailPopup";
@@ -10,6 +10,7 @@ type StockLinkProps = {
   className?: string;
   info?: Record<string, any>;
   onEdit?: (info: Record<string, any>) => void | Promise<void>;
+  onOpenDetail?: (info: Record<string, any>) => void;
 };
 
 function normalizeXueqiuCode(stockCode: string): string {
@@ -117,7 +118,7 @@ function DetailPanel({ ctx }: { ctx: Record<string, any> }) {
   );
 }
 
-export function StockLink({ stockCode, stockName, showCode = true, className, info, onEdit }: StockLinkProps) {
+export function StockLink({ stockCode, stockName, showCode = true, className, info, onEdit, onOpenDetail }: StockLinkProps) {
   const [visible, setVisible] = useState(false);
   const [tab, setTab] = useState<"detail" | "kline">("detail");
   const [klineData, setKlineData] = useState<any[]>([]);
@@ -135,8 +136,17 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
       .finally(() => setLoadingKline(false));
   }, [visible, tab, stockCode]);
 
+  function handleOpen(event: MouseEvent<HTMLSpanElement>) {
+    event.stopPropagation();
+    if (onOpenDetail) {
+      onOpenDetail(ctx);
+      return;
+    }
+    setVisible(true);
+  }
+
   if (!url) {
-    return <span className={className || "stock-link"}>{label || "-"}</span>;
+    return <span className={className || "stock-link"} onClick={onOpenDetail ? handleOpen : undefined} style={onOpenDetail ? { cursor: "pointer" } : undefined}>{label || "-"}</span>;
   }
 
   async function handleEdit() {
@@ -147,7 +157,7 @@ export function StockLink({ stockCode, stockName, showCode = true, className, in
 
   return (
     <>
-      <span className={className || "stock-link"} onClick={(event) => { event.stopPropagation(); setVisible(true); }} style={{ cursor: "pointer" }}>
+      <span className={className || "stock-link"} onClick={handleOpen} style={{ cursor: "pointer" }}>
         {label}
       </span>
 

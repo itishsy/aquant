@@ -3,6 +3,7 @@ import { Button, Dialog, ErrorBlock, Input, Popup, Selector, SpinLoading, TextAr
 import { apiDelete, apiGet, apiPost, apiPut } from "../api/client";
 import { PageShell } from "../components/PageShell";
 import { StockLink, toXueqiuUrl } from "../components/StockLink";
+import { KlineChart } from "../components/StockDetailPopup";
 
 
 const ASSISTANT_NOTE = "仅作为交易辅助，请结合个人交易规则确认。";
@@ -33,6 +34,12 @@ type TradingSystemParamDefinition = {
   description?: string;
   sort_order: number;
 };
+
+type DetailKind = "watch" | "signal" | "trade";
+type DetailTarget = {
+  kind: DetailKind;
+  item: any;
+} | null;
 
 const lifecycleOptions = [
   { label: "全部状态", value: "" },
@@ -112,29 +119,6 @@ function InfoLine({ label, value }: { label: string; value: any }) {
       <span style={{ color: "#98a2b3", fontSize: 11, fontWeight: 700 }}>{label}</span>
       <span style={{ color: "#32415f", fontSize: 13, lineHeight: 1.45 }}>{value}</span>
     </div>
-  );
-}
-
-function XueqiuButton({ item }: { item: any }) {
-  const url = toXueqiuUrl(item?.stock_code);
-  if (!url) return null;
-  return (
-    <Button
-      size="mini"
-      fill="none"
-      onClick={(event) => { event.stopPropagation(); window.open(url, "_blank"); }}
-      style={{
-        borderRadius: 999,
-        padding: "2px 4px",
-        fontSize: 10,
-        fontWeight: 800,
-        color: "#4052d2",
-        border: 0,
-        background: "transparent",
-      }}
-    >
-      雪球
-    </Button>
   );
 }
 
@@ -231,7 +215,11 @@ export function WatchPoolPage() {
   const [editSystemParams, setEditSystemParams] = useState<TradingSystemParamDefinition[]>([]);
   const [buyForm, setBuyForm] = useState<any | null>(null);
   const [sellForm, setSellForm] = useState<any | null>(null);
+  const [detailTarget, setDetailTarget] = useState<DetailTarget>(null);
   const [watchDetail, setWatchDetail] = useState<any>(null);
+  const [watchDetailTab, setWatchDetailTab] = useState<"detail" | "kline">("detail");
+  const [watchDetailKline, setWatchDetailKline] = useState<any[]>([]);
+  const [watchDetailKlineLoading, setWatchDetailKlineLoading] = useState(false);
   const [rulePreview, setRulePreview] = useState<any | null>(null);
   const [rulePreviewLoading, setRulePreviewLoading] = useState(false);
   const [error, setError] = useState("");
@@ -287,6 +275,16 @@ export function WatchPoolPage() {
       .catch(() => setEditSystemParams([]));
   }, [editing?.trading_system_code, editing?.trading_system]);
 
+  useEffect(() => {
+    const code = detailTarget?.item?.stock_code || watchDetail?.stock_code;
+    if (!(detailTarget || watchDetail) || watchDetailTab !== "kline" || !code) return;
+    setWatchDetailKlineLoading(true);
+    apiGet<any[]>(`/h5/market/stocks/${encodeURIComponent(code)}/kline-daily?limit=100`)
+      .then((rows) => setWatchDetailKline(rows || []))
+      .catch(() => setWatchDetailKline([]))
+      .finally(() => setWatchDetailKlineLoading(false));
+  }, [detailTarget?.item?.stock_code, watchDetail?.stock_code, watchDetailTab]);
+
   const buySignals = useMemo(() => signals.filter((item) => item.signal_type === "buy"), [signals]);
   const riskSignals = useMemo(() => signals.filter((item) => item.signal_type !== "buy"), [signals]);
   const pendingTradeSignals = useMemo(
@@ -297,16 +295,267 @@ export function WatchPoolPage() {
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayNew = useMemo(() => items.filter((item) => String(item.created_at || "").slice(0, 10) === todayStr).length, [items, todayStr]);
   const todaySignals = useMemo(() => signals.filter((s) => (s.trigger_date || "").slice(0, 10) === todayStr).length, [signals, todayStr]);
+  const detailItem = detailTarget?.item || watchDetail;
+  const activeDetailKind: DetailKind = detailTarget?.kind || "watch";
+
+  function closeDetail() {
+    setDetailTarget(null);
+    setWatchDetail(null);
+    setEditing(null);
+    setRulePreview(null);
+    setWatchDetailKline([]);
+    setWatchDetailTab("detail");
+  }
+
+  function detailPrice(item: any) {
+    return item?.latest_price ?? item?.last_price ?? item?.trigger_price ?? item?.average_buy_price ?? item?.first_buy_price ?? item?.entry_price;
+  }
+
+  function detailChangePct(item: any) {
+    return item?.change_pct ?? item?.pct_chg ?? item?.change_percent;
+  }
+
+  function detailStatus(item: any, kind: DetailKind) {
+    if (kind === "signal") return signalStatusText(item?.signal_status);
+    if (kind === "trade") return item?.trade_status || "-";
+    if (item?.monitor_enabled === false || item?.signal_enabled === false) return "监控暂停";
+    return labelOf(lifecycleOptions, item?.status);
+  }
+
+  function detailStage(item: any, kind: DetailKind) {
+    if (kind === "signal") return signalTypeLabels[item?.signal_type] || item?.signal_type || "-";
+    if (kind === "trade") return `阶段 ${item?.current_stage || "trading"}`;
+    return `阶段 ${item?.system_stage || "observe"}`;
+  }
+
+  function renderDetailTags(item: any, kind: DetailKind) {
+    return (
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <StatusPill label={tradingSystemText(item)} status={kind === "trade" ? "trading" : item?.status || item?.signal_status} />
+        <StatusPill label={detailStatus(item, kind)} status={item?.status || item?.signal_status || item?.trade_status} />
+        <StatusPill label={detailStage(item, kind)} status={kind === "signal" ? item?.signal_status : item?.system_stage || item?.current_stage} />
+      </div>
+    );
+  }
+
+
+  function signalKindText(item: any) {
+    if (item?.rule_type === "stop_loss" || item?.signal_status === "stop_loss_pending") return "止损";
+    if (item?.signal_type === "buy") return "买点";
+    if (item?.signal_type === "sell") return "卖点";
+    if (["invalid_signal", "remove_signal"].includes(item?.rule_type) || String(item?.signal_status || "").includes("invalid")) return "风险/失效";
+    if (item?.signal_type === "risk") return "风险";
+    return signalTypeLabels[item?.signal_type] || item?.signal_type || "-";
+  }
+
+  function signalSnapshot(item: any) {
+    const snapshot = item?.snapshot_json || item?.raw_snapshot || {};
+    if (typeof snapshot === "string") {
+      try { return JSON.parse(snapshot); } catch { return {}; }
+    }
+    return snapshot || {};
+  }
+
+  function boolText(value: any) {
+    if (value === true) return "是";
+    if (value === false) return "否";
+    return value;
+  }
+
+  function klineCountText(snapshot: any) {
+    const barCount = snapshot.bar_count ?? snapshot.freshness?.bar_count;
+    const requiredBars = snapshot.required_bars ?? snapshot.freshness?.required_bars;
+    if (barCount == null && requiredBars == null) return undefined;
+    return String(barCount ?? "-") + " / " + String(requiredBars ?? "-");
+  }
+
+
+  function latestPendingTradeSignal(trade: any) {
+    const candidates = signals
+      .filter((signal) => signal.related_trade_id === trade.trade_id && ["sell_signal_pending", "stop_loss_pending"].includes(signal.signal_status))
+      .sort((a, b) => String(b.trigger_time || b.trigger_date || "").localeCompare(String(a.trigger_time || a.trigger_date || "")));
+    return candidates[0];
+  }
+
+  function tradeNextAction(item: any, pendingSignal?: any) {
+    if (pendingSignal?.signal_status === "stop_loss_pending") return "出现止损提醒，请人工确认是否退出";
+    if (pendingSignal?.signal_status === "sell_signal_pending") return "出现卖点提醒，请人工确认是否卖出或继续持有";
+    if (["open", "holding"].includes(item?.trade_status)) return "继续按卖点/止损规则监控，等待人工确认";
+    if (item?.trade_status === "closed") return "交易已结束，等待复盘";
+    return item?.next_action || "查看交易状态并按计划处理";
+  }
+
+  function tradeSignalText(signal?: any) {
+    if (!signal) return "暂无待处理信号";
+    return [signalKindText(signal), signalRuleText(signal), signalStatusText(signal.signal_status), signal.trigger_price ?? "-"].join(" / ");
+  }
+
+  function emotionText(value?: string) {
+    return emotionOptions.find((item) => item.value === value)?.label || value;
+  }
+
+  function renderDetailBody(item: any, kind: DetailKind) {
+    if (kind === "signal") {
+      const snapshot = signalSnapshot(item);
+      const latestKlineTime = snapshot.latest_kline_time ?? snapshot.freshness?.latest_kline_time;
+      const expectedLatestTime = snapshot.expected_latest_time ?? snapshot.freshness?.expected_latest_time;
+      return (
+        <>
+          <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+            <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>信号判断</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+              <Field label="信号类型" value={signalKindText(item)} />
+              <Field label="信号状态" value={signalStatusText(item.signal_status)} />
+              <Field label="触发规则" value={signalRuleText(item)} />
+              <Field label="规则周期" value={item.rule_timeframe || item.timeframe || snapshot.timeframe} />
+              <Field label="触发价" value={item.trigger_price} />
+              <Field label="触发时间" value={item.trigger_time || item.trigger_date} />
+              <Field label="邮件提醒" value={notificationStatusText(item)} />
+            </div>
+          </div>
+
+          <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+            <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>触发依据</div>
+            <InfoLine label="触发原因" value={item.trigger_reason || snapshot.reason || ASSISTANT_NOTE} />
+            <InfoLine label="风险说明" value={item.risk_desc || snapshot.risk_desc} />
+            {item.stop_loss_price != null && <InfoLine label="止损价" value={item.stop_loss_price} />}
+            {item.target_price != null && <InfoLine label="目标价" value={item.target_price} />}
+          </div>
+
+          <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+            <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>数据新鲜度</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+              <Field label="data_status" value={snapshot.data_status || "未记录"} />
+              <Field label="latest_kline_time" value={latestKlineTime || "未记录"} />
+              <Field label="expected_latest_time" value={expectedLatestTime || "未记录"} />
+              <Field label="bar_count / required_bars" value={klineCountText(snapshot) || "未记录"} />
+              <Field label="quote_update_time" value={snapshot.quote_update_time || "未记录"} />
+              <Field label="quote_is_fresh" value={boolText(snapshot.quote_is_fresh) ?? "未记录"} />
+            </div>
+          </div>
+
+          <p style={{ margin: 0, color: "#8a94a8", fontSize: 12, lineHeight: 1.55 }}>{ASSISTANT_NOTE}</p>
+        </>
+      );
+    }
+
+    if (kind === "trade") {
+      const pendingSignal = latestPendingTradeSignal(item);
+      const params = item.system_params_json || {};
+      const paramText = [
+        params.platform_upper_price != null ? "箱体上沿 " + params.platform_upper_price : "",
+        params.platform_support_price != null ? "平台支撑位 " + params.platform_support_price : "",
+        params.key_observe_price != null ? "关键观察价 " + params.key_observe_price : "",
+        params.auto_remove_price != null ? "自动剔除价 " + params.auto_remove_price : "",
+      ].filter(Boolean).join(" / ");
+      return (
+        <>
+          <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+            <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>当前交易</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+              <Field label="交易状态" value={item.trade_status} />
+              <Field label="当前阶段" value={item.current_stage || "trading"} />
+              <Field label="买入均价" value={item.average_buy_price ?? item.first_buy_price} />
+              <Field label="剩余数量" value={item.remaining_amount} />
+              <Field label="仓位" value={item.position_ratio != null ? formatMoney(Number(item.position_ratio) * 100) + "%" : undefined} />
+              <Field label="浮动盈亏金额" value={formatMoney(item.pnl_amount)} />
+              <Field label="浮动盈亏比例" value={item.pnl_ratio != null ? formatMoney(Number(item.pnl_ratio) * 100) + "%" : undefined} />
+              <Field label="止损价" value={item.stop_loss_price} />
+              <Field label="目标价" value={item.target_price} />
+              <Field label="下一步动作" value={tradeNextAction(item, pendingSignal)} />
+            </div>
+          </div>
+
+          <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+            <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>规则监控</div>
+            <InfoLine label="进入交易的规则" value={item.entry_rule_display_name || item.entry_rule_name || item.entry_rule_code} />
+            <InfoLine label="当前监控卖点规则" value={ruleListText(item.active_sell_rules || item.active_sell_rule_codes_json)} />
+            <InfoLine label="当前监控止损规则" value={ruleListText(item.active_stop_rules || item.active_stop_rule_codes_json)} />
+            <InfoLine label="最新待处理卖点/止损信号" value={tradeSignalText(pendingSignal)} />
+          </div>
+
+          <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+            <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>交易计划</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 8 }}>
+              <Field label="首次买入时间" value={String(item.first_buy_time || item.created_at || "").slice(0, 16)} />
+              <Field label="情绪状态" value={emotionText(item.emotion_state)} />
+            </div>
+            <InfoLine label="买入理由" value={item.buy_reason} />
+            <InfoLine label="交易计划" value={item.trade_plan} />
+            <InfoLine label="关联观察参数" value={paramText} />
+          </div>
+        </>
+      );
+    }
+
+    const params = item.system_params_json || {};
+    const riskText = (item.risk_tags || []).map((tag: string) => riskTagLabels[tag] || tag).join(" / ");
+    return (
+      <>
+        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+          <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>当前观察</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+            <Field label="当前状态" value={detailStatus(item, "watch")} />
+            <Field label="当前阶段" value={item.system_stage || "observe"} />
+            <Field label="下一步动作" value={nextAction(item)} />
+          </div>
+        </div>
+
+        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+          <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>核心观察参数</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+            <Field label="箱体上沿" value={params.platform_upper_price} />
+            <Field label="平台支撑位" value={params.platform_support_price} />
+            <Field label="关键观察价" value={params.key_observe_price ?? item.key_observe_price} />
+            <Field label="自动剔除价" value={params.auto_remove_price ?? item.auto_remove_price} />
+          </div>
+        </div>
+
+        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+          <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>观察依据</div>
+          <InfoLine label="失效条件" value={params.invalid_condition || item.invalid_condition} />
+          <InfoLine label="入选理由" value={item.entry_reason} />
+          <InfoLine label="风险标签" value={riskText} />
+          <InfoLine label="用户备注" value={item.user_remark || item.remark} />
+        </div>
+
+        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
+          <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>补充信息</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 8 }}>
+            <Field label="入选时间" value={String(item.created_at || "").slice(0, 10)} />
+            <Field label="入选来源" value={item.entry_source || "手动"} />
+            <Field label="板块" value={item.sector_name} />
+          </div>
+        </div>
+
+        <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>{ASSISTANT_NOTE}</p>
+      </>
+    );
+
+  }
 
   function Field({ label, value }: { label: string; value?: any }) {
   if (value == null || value === "" || value === "-") return null;
   return (
-    <div style={{ fontSize: 13 }}>
-      <span style={{ color: "#888" }}>{label}</span>
-      <span style={{ color: "#334", marginLeft: 4 }}>{value}</span>
+    <div style={{ minWidth: 0, borderRadius: 12, background: "#f7f9ff", padding: "8px 10px", fontSize: 13 }}>
+      <div style={{ color: "#8a94a8", fontSize: 11, fontWeight: 800, marginBottom: 3 }}>{label}</div>
+      <div style={{ color: "#263653", fontWeight: 700, wordBreak: "break-word", lineHeight: 1.45 }}>{value}</div>
     </div>
   );
 }
+
+  function openDetail(kind: DetailKind, item: any) {
+    setDetailTarget({ kind, item });
+    setWatchDetail(item);
+    setEditing(null);
+    setRulePreview(null);
+    setWatchDetailTab("detail");
+    setWatchDetailKline([]);
+  }
+
+  function openWatchDetail(item: any) {
+    openDetail("watch", item);
+  }
 
   const availableTradingSystemOptions = useMemo(() => {
     if (!tradingSystems.length) return tradingSystemOptions.filter((item) => item.value);
@@ -455,6 +704,7 @@ export function WatchPoolPage() {
       Toast.show({ content: "观察参数已调整" });
       setEditing(null);
       setWatchDetail(updated);
+      setDetailTarget({ kind: "watch", item: updated });
       setItems((prev) => prev.map((item) => item.watch_id === updated.watch_id ? updated : item));
     } catch (err: any) {
       Toast.show({ content: err?.message || "保存失败，请重试" });
@@ -529,6 +779,7 @@ export function WatchPoolPage() {
     Toast.show({ content: "已剔除" });
     setItems((prev) => prev.filter((row) => row.watch_id !== item.watch_id));
     setWatchDetail(null);
+    setDetailTarget(null);
     setEditing(null);
     load();
   }
@@ -558,6 +809,7 @@ export function WatchPoolPage() {
         ? item
         : await apiGet<any>(`/h5/watch-pool/${item.watch_id}`);
       setWatchDetail(watch);
+      setDetailTarget({ kind: "watch", item: watch });
       setRulePreview(null);
       openEdit(watch);
     } catch {
@@ -568,13 +820,12 @@ export function WatchPoolPage() {
   function renderSignalCard(item: any) {
     const canConfirmBuy = item.signal_status === "buy_pending_confirm";
     return (
-      <div key={item.signal_id} className="row-card" style={{ display: "grid", gap: 10 }}>
+      <div key={item.signal_id} className="row-card" style={{ display: "grid", gap: 10, cursor: "pointer" }} onClick={() => openDetail("signal", item)}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <div>
-            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
+            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={() => openDetail("signal", item)} /></strong>
             <p style={{ marginTop: 4 }}>{tradingSystemText(item)} / {signalTypeLabels[item.signal_type] || item.signal_type}</p>
           </div>
-          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gap: 4, color: "#64748b", fontSize: 13, lineHeight: 1.55 }}>
           <p>买点类型：{buyPointLabels[item.buy_point_type] || item.buy_point_type || "-"}</p>
@@ -587,8 +838,8 @@ export function WatchPoolPage() {
           <p style={{ color: "#8a94a8" }}>{ASSISTANT_NOTE}</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {canConfirmBuy && <Button size="mini" color="primary" onClick={() => openBuyForm(item)}>确认买入</Button>}
-          <Button size="mini" fill="outline" onClick={() => abandonSignal(item)}>放弃本次机会</Button>
+          {canConfirmBuy && <Button size="mini" color="primary" onClick={(event) => { event.stopPropagation(); openBuyForm(item); }}>确认买入</Button>}
+          <Button size="mini" fill="outline" onClick={(event) => { event.stopPropagation(); abandonSignal(item); }}>放弃本次机会</Button>
         </div>
       </div>
     );
@@ -597,13 +848,12 @@ export function WatchPoolPage() {
   function renderTradeCard(item: any) {
     const isOpen = ["open", "holding"].includes(item.trade_status);
     return (
-      <div key={item.trade_id} className="row-card" style={{ display: "grid", gap: 10 }}>
+      <div key={item.trade_id} className="row-card" style={{ display: "grid", gap: 10, cursor: "pointer" }} onClick={() => openDetail("trade", item)}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <div>
-            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
+            <strong><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={() => openDetail("trade", item)} /></strong>
             <p style={{ marginTop: 4 }}>{labelOf(tradingSystemOptions, item.trading_system)} / {item.trade_status || "-"}</p>
           </div>
-          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gap: 4, color: "#64748b", fontSize: 13, lineHeight: 1.55 }}>
           <p>买入价：{item.average_buy_price ?? item.first_buy_price ?? "-"}</p>
@@ -614,8 +864,8 @@ export function WatchPoolPage() {
           <p>状态：{item.trade_status || "-"}</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Button size="mini" fill="outline" onClick={() => showExecutions(item)}>查看执行流水</Button>
-          {isOpen && <Button size="mini" color="danger" fill="outline" onClick={() => openSellForm(item)}>确认全部卖出</Button>}
+          <Button size="mini" fill="outline" onClick={(event) => { event.stopPropagation(); showExecutions(item); }}>查看执行流水</Button>
+          {isOpen && <Button size="mini" color="danger" fill="outline" onClick={(event) => { event.stopPropagation(); openSellForm(item); }}>确认全部卖出</Button>}
         </div>
       </div>
     );
@@ -625,18 +875,17 @@ export function WatchPoolPage() {
     const canConfirmBuy = item.signal_status === "buy_pending_confirm";
     const isRisk = item.signal_type !== "buy";
     return (
-      <div key={item.signal_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
+      <div key={item.signal_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12, cursor: "pointer" }} onClick={() => openDetail("signal", item)}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div style={{ minWidth: 0 }}>
             <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={() => openDetail("signal", item)} />
             </strong>
             <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
               <StatusPill label={signalTypeLabels[item.signal_type] || item.signal_type} status={isRisk ? "sell_signal_pending" : item.signal_status} />
               <StatusPill label={tradingSystemText(item)} status="signal_generated" />
             </div>
           </div>
-          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
           <MiniStat label="触发价" value={item.trigger_price ?? "-"} />
@@ -652,8 +901,8 @@ export function WatchPoolPage() {
           <p style={{ margin: 0, color: "#8a94a8", fontSize: 12, lineHeight: 1.55 }}>{ASSISTANT_NOTE}</p>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: canConfirmBuy ? "1.1fr 1fr" : "1fr", gap: 8 }}>
-          {canConfirmBuy && <Button block color="primary" onClick={() => openBuyForm(item)} style={{ borderRadius: 14, fontWeight: 800 }}>确认买入</Button>}
-          <Button block fill="outline" onClick={() => abandonSignal(item)} style={{ borderRadius: 14 }}>放弃本次机会</Button>
+          {canConfirmBuy && <Button block color="primary" onClick={(event) => { event.stopPropagation(); openBuyForm(item); }} style={{ borderRadius: 14, fontWeight: 800 }}>确认买入</Button>}
+          <Button block fill="outline" onClick={(event) => { event.stopPropagation(); abandonSignal(item); }} style={{ borderRadius: 14 }}>放弃本次机会</Button>
         </div>
       </div>
     );
@@ -663,11 +912,11 @@ export function WatchPoolPage() {
     const isOpen = ["open", "holding"].includes(item.trade_status);
     const pnl = Number(item.pnl_amount) || 0;
     return (
-      <div key={item.trade_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
+      <div key={item.trade_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12, cursor: "pointer" }} onClick={() => openDetail("trade", item)}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div style={{ minWidth: 0 }}>
             <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
+              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={() => openDetail("trade", item)} />
             </strong>
             <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
               <StatusPill label={tradingSystemText(item)} status="trading" />
@@ -675,7 +924,6 @@ export function WatchPoolPage() {
               <StatusPill label={`阶段 ${item.current_stage || "trading"}`} status="trading" />
             </div>
           </div>
-          <XueqiuButton item={item} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
           <MiniStat label="买入均价" value={item.average_buy_price ?? item.first_buy_price ?? "-"} />
@@ -695,8 +943,8 @@ export function WatchPoolPage() {
           <InfoLine label="卖点规则" value={ruleListText(item.active_sell_rules || item.active_sell_rule_codes_json)} />
           <InfoLine label="止损规则" value={ruleListText(item.active_stop_rules || item.active_stop_rule_codes_json)} />
         <div style={{ display: "grid", gridTemplateColumns: isOpen ? "1fr 1fr" : "1fr", gap: 8 }}>
-          <Button block fill="outline" onClick={() => showExecutions(item)} style={{ borderRadius: 14 }}>执行流水</Button>
-          {isOpen && <Button block color="danger" fill="outline" onClick={() => openSellForm(item)} style={{ borderRadius: 14 }}>确认全部卖出</Button>}
+          <Button block fill="outline" onClick={(event) => { event.stopPropagation(); showExecutions(item); }} style={{ borderRadius: 14 }}>执行流水</Button>
+          {isOpen && <Button block color="danger" fill="outline" onClick={(event) => { event.stopPropagation(); openSellForm(item); }} style={{ borderRadius: 14 }}>确认全部卖出</Button>}
         </div>
       </div>
     );
@@ -716,78 +964,45 @@ export function WatchPoolPage() {
   }
 
   function renderSignalCardV3(item: any) {
-    const canConfirmBuy = item.signal_status === "buy_pending_confirm";
-    const isRisk = item.signal_type !== "buy";
     return (
-      <div key={item.signal_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-          <div style={{ minWidth: 0 }}>
-            <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
-            </strong>
-            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <StatusPill label={signalTypeLabels[item.signal_type] || item.signal_type} status={isRisk ? "sell_signal_pending" : item.signal_status} />
-              <StatusPill label={tradingSystemText(item)} status="signal_generated" />
-              {item.rule_timeframe && <StatusPill label={item.rule_timeframe} status="signal_generated" />}
-            </div>
+      <div key={item.signal_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 10, cursor: "pointer" }} onClick={() => openDetail("signal", item)}>
+        <div style={{ minWidth: 0 }}>
+          <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+            <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={() => openDetail("signal", item)} />
+          </strong>
+          <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <StatusPill label={signalKindText(item)} status={item.signal_status} />
+            <StatusPill label={signalStatusText(item.signal_status)} status={item.signal_status} />
           </div>
-          <XueqiuButton item={item} />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-          <MiniStat label="触发价" value={item.trigger_price ?? "-"} />
-          <MiniStat label="止损位" value={item.stop_loss_price ?? "-"} tone="#e34d59" />
-          <MiniStat label="目标价" value={item.target_price ?? "-"} tone="#4b63ee" />
-        </div>
-        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 9 }}>
+        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 8 }}>
           <InfoLine label="触发规则" value={signalRuleText(item)} />
-          <InfoLine label="确认状态" value={`${item.buy_point_confirmed ? "已确认" : "待确认"} / ${signalStatusText(item.signal_status)}`} />
-          <InfoLine label="邮件提醒" value={notificationStatusText(item)} />
-          <InfoLine label="触发原因" value={item.trigger_reason || ASSISTANT_NOTE} />
-          <InfoLine label="风险说明" value={item.risk_desc || "-"} />
-          <p style={{ margin: 0, color: "#8a94a8", fontSize: 12, lineHeight: 1.55 }}>{ASSISTANT_NOTE}</p>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: canConfirmBuy ? "1.1fr 1fr" : "1fr", gap: 8 }}>
-          {canConfirmBuy && <Button block color="primary" onClick={() => openBuyForm(item)} style={{ borderRadius: 14, fontWeight: 800 }}>确认买入</Button>}
-          <Button block fill="outline" onClick={() => abandonSignal(item)} style={{ borderRadius: 14 }}>放弃本次机会</Button>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+            <Field label="触发价" value={item.trigger_price} />
+            <Field label="触发时间" value={String(item.trigger_time || item.trigger_date || "").slice(0, 16)} />
+          </div>
         </div>
       </div>
     );
   }
 
   function renderTradeCardV3(item: any) {
-    const isOpen = ["open", "holding"].includes(item.trade_status);
-    const pnl = Number(item.pnl_amount) || 0;
+    const pnlRatio = item.pnl_ratio != null ? formatMoney(Number(item.pnl_ratio) * 100) + "%" : undefined;
     return (
-      <div key={item.trade_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-          <div style={{ minWidth: 0 }}>
-            <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
-            </strong>
-            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <StatusPill label={tradingSystemText(item)} status="trading" />
-              <StatusPill label={item.trade_status || "-"} status={item.trade_status} />
-              <StatusPill label={`阶段 ${item.current_stage || "trading"}`} status="trading" />
-            </div>
+      <div key={item.trade_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 10, cursor: "pointer" }} onClick={() => openDetail("trade", item)}>
+        <div style={{ minWidth: 0 }}>
+          <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+            <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={() => openDetail("trade", item)} />
+          </strong>
+          <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <StatusPill label={item.trade_status || "-"} status={item.trade_status} />
+            <StatusPill label={pnlRatio ? "盈亏 " + pnlRatio : "盈亏 -"} status={Number(item.pnl_ratio || 0) >= 0 ? "sell_signal_pending" : "watching"} />
           </div>
-          <XueqiuButton item={item} />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
           <MiniStat label="买入均价" value={item.average_buy_price ?? item.first_buy_price ?? "-"} />
-          <MiniStat label="剩余数量" value={item.remaining_amount ?? "-"} />
-          <MiniStat label="盈亏率" value={`${formatMoney((Number(item.pnl_ratio) || 0) * 100)}%`} tone={pnl >= 0 ? "#e34d59" : "#00a870"} />
-        </div>
-        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <InfoLine label="止损价" value={item.stop_loss_price ?? "-"} />
-          <InfoLine label="目标价" value={item.target_price ?? "-"} />
-          <InfoLine label="进入规则" value={item.entry_rule_display_name || item.entry_rule_name || item.entry_rule_code || item.buy_point_type || "-"} />
-          <InfoLine label="交易体系" value={tradingSystemText(item)} />
-          <InfoLine label="卖点规则" value={ruleListText(item.active_sell_rules || item.active_sell_rule_codes_json)} />
-          <InfoLine label="止损规则" value={ruleListText(item.active_stop_rules || item.active_stop_rule_codes_json)} />
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: isOpen ? "1fr 1fr" : "1fr", gap: 8 }}>
-          <Button block fill="outline" onClick={() => showExecutions(item)} style={{ borderRadius: 14 }}>执行流水</Button>
-          {isOpen && <Button block color="danger" fill="outline" onClick={() => openSellForm(item)} style={{ borderRadius: 14 }}>确认全部卖出</Button>}
+          <MiniStat label="止损价" value={item.stop_loss_price ?? "-"} tone="#e34d59" />
+          <MiniStat label="目标价" value={item.target_price ?? "-"} tone="#4b63ee" />
         </div>
       </div>
     );
@@ -795,44 +1010,21 @@ export function WatchPoolPage() {
 
   function renderWatchCard(item: any) {
     const status = item.status;
-    const monitorOff = item.monitor_enabled === false || item.signal_enabled === false;
-    const source = `${item.entry_source || item || item || "manual"}${item ? ` #${item}` : ""}`;
-    const riskText = (item.risk_tags || []).map((tag: string) => riskTagLabels[tag] || tag).join(" / ") || "暂无";
     return (
-      <div key={item.watch_id} style={{ borderRadius: 24, background: "#fff", padding: 15, boxShadow: "0 12px 30px rgba(31,43,77,0.07)", display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            <strong style={{ display: "block", fontSize: 18, color: "#17213b" }}>
-              <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} />
-            </strong>
-            <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <StatusPill label={item.trading_system_name || labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} status="signal_generated" />
-              <StatusPill label={labelOf(lifecycleOptions, status)} status={status} />
-              <StatusPill label={`阶段：${item.system_stage || "observe"}`} status={status} />
-            </div>
+      <div key={item.watch_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 10, cursor: "pointer" }} onClick={() => openDetail("watch", item)}>
+        <div style={{ minWidth: 0 }}>
+          <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+            <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={openWatchDetail} />
+          </strong>
+          <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <StatusPill label={tradingSystemText(item)} status="signal_generated" />
+            <StatusPill label={labelOf(lifecycleOptions, status)} status={status} />
+            <StatusPill label={"阶段 " + (item.system_stage || "observe")} status={status} />
           </div>
-          <StatusPill label={monitorOff ? "监控关闭" : "监控中"} status={monitorOff ? "invalid" : "watching"} />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <MiniStat label="观察价" value={item.key_observe_price ?? "-"} tone="#4b63ee" />
-          <MiniStat label="来源" value={source} />
-        </div>
-        <div style={{ borderRadius: 18, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
-          <InfoLine label="入选理由" value={item.entry_reason || item.reason || item || "用户手动关注"} />
-          <InfoLine label="失效条件" value={item.invalid_condition || "-"} />
-          <InfoLine label="核心参数" value={coreParamText(item)} />
-          <InfoLine label="风险标签" value={riskText} />
-          <InfoLine label="下一步" value={nextAction(item)} />
-          {item.user_remark ? <InfoLine label="备注" value={item.user_remark} /> : null}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-          <Button block fill="outline" onClick={() => { setWatchDetail(item); openEdit(item); }} style={{ borderRadius: 14 }}>调整</Button>
-          <Button block fill="outline" onClick={() => toggleMonitor(item)} style={{ borderRadius: 14 }}>{monitorOff ? "开启监控" : "关闭监控"}</Button>
-          <Button block fill="outline" onClick={() => markInvalid(item)} style={{ borderRadius: 14 }}>失效</Button>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <Button block fill="outline" onClick={() => removeWatch(item)} style={{ borderRadius: 14 }}>剔除</Button>
-          <Button block color="danger" fill="outline" onClick={() => blacklistWatch(item)} style={{ borderRadius: 14 }}>黑名单</Button>
+        {coreParamText(item) && <div style={{ color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>{coreParamText(item)}</div>}
+        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: "10px 12px", color: "#4052d2", fontSize: 12, lineHeight: 1.5, fontWeight: 700 }}>
+          {nextAction(item)}
         </div>
       </div>
     );
@@ -860,25 +1052,7 @@ export function WatchPoolPage() {
           </div>
           {watchingItems.length ? (
             <div className="stack-list">
-              {watchingItems.map((item) => (
-                <div key={item.watch_id} className="row-card" style={{ padding: "10px 12px", cursor: "pointer" }}
-                  onClick={() => setWatchDetail(item)}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong style={{ fontSize: 15 }}><StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} /></strong>
-                    <p style={{ margin: "3px 0 0", fontSize: 12, color: "#888" }}>
-                      {item.sector_name || "未分类"} · {String(item.created_at || "").slice(0, 10) || "-"}
-                    </p>
-                    <p style={{ margin: "5px 0 0", fontSize: 12, color: "#52607a" }}>
-                      {item.trading_system_name || labelOf(tradingSystemOptions, item.trading_system_code || item.trading_system)} · 阶段 {item.system_stage || "observe"}
-                    </p>
-                    {coreParamText(item) && (
-                      <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{coreParamText(item)}</p>
-                    )}
-                    <p style={{ margin: "3px 0 0", fontSize: 12, color: "#4052d2" }}>{nextAction(item)}</p>
-                  </div>
-                  <XueqiuButton item={item} />
-                </div>
-              ))}
+              {watchingItems.map(renderWatchCard)}
             </div>
           ) : <div className="empty-panel">暂无观察中的自选股</div>}
         </article>
@@ -933,73 +1107,128 @@ export function WatchPoolPage() {
         )}
       </Popup>
 
-      <Popup visible={Boolean(watchDetail)} onMaskClick={() => { setWatchDetail(null); setEditing(null); }} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: "86vh", overflowY: "auto" }}>
-        {watchDetail && !(editing && editing.watch_id === watchDetail.watch_id) && (
+      <Popup visible={Boolean(detailItem)} onMaskClick={closeDetail} bodyStyle={{ borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "12px max(14px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left))", maxHeight: "88vh", overflowY: "auto" }}>
+        {detailItem && !(activeDetailKind === "watch" && editing && editing.watch_id === detailItem.watch_id) && (
           <div style={{ display: "grid", gap: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 18 }}>{watchDetail.stock_name}</h3>
-                <p style={{ margin: "2px 0 0", color: "#888", fontSize: 13 }}>{watchDetail.stock_code}</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <h3 style={{ margin: 0, fontSize: 18, color: "#17213b" }}>{detailItem.stock_name}</h3>
+                <div style={{ marginTop: 4, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", color: "#667085", fontSize: 12 }}>
+                  <span>{detailItem.stock_code}</span>
+                  {detailPrice(detailItem) != null && <strong style={{ color: "#17213b" }}>{detailPrice(detailItem)}</strong>}
+                  {detailChangePct(detailItem) != null && (
+                    <span style={{ color: Number(detailChangePct(detailItem)) >= 0 ? "#e34d59" : "#00a870", fontWeight: 800 }}>
+                      {Number(detailChangePct(detailItem)).toFixed(2)}%
+                    </span>
+                  )}
+                </div>
               </div>
-              <span style={{
-                borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 700,
-                background: watchDetail.monitor_enabled !== false ? "#eefaf4" : "#fef3f2",
-                color: watchDetail.monitor_enabled !== false ? "#00a870" : "#e34d59",
-              }}>{watchDetail.monitor_enabled !== false ? "监控中" : "已暂停"}</span>
+              {toXueqiuUrl(detailItem.stock_code) && (
+                <Button
+                  size="mini"
+                  fill="outline"
+                  onClick={() => window.open(toXueqiuUrl(detailItem.stock_code), "_blank")}
+                  style={{ borderRadius: 999, minWidth: 36, height: 32, padding: "0 9px", fontWeight: 900 }}
+                  title="雪球"
+                >
+                  ↗
+                </Button>
+              )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
-              <Field label="板块" value={watchDetail.sector_name} />
-              <Field label="标签" value={(watchDetail.labels || []).join(" / ")} />
-              <Field label="交易体系" value={watchDetail.trading_system_name || watchDetail.trading_system_code || watchDetail.trading_system} />
-              <Field label="当前阶段" value={watchDetail.system_stage || "observe"} />
-              <Field label="入选来源" value={watchDetail.entry_source || "手动"} />
-              <Field label="入选时间" value={String(watchDetail.created_at || "").slice(0, 10)} />
-              <Field label="操作策略" value={(watchDetail.operation_strategies || []).join(",")} />
-              <Field label="买点类型" value={(watchDetail.buy_point_types || []).join(",")} />
-              {watchDetail.entry_price != null && <Field label="入选价" value={watchDetail.entry_price} />}
-              {watchDetail.key_observe_price != null && <Field label="关键观察价" value={`${watchDetail.key_observe_price}`} />}
-              {watchDetail.auto_remove_price != null && <Field label="自动剔除价" value={`${watchDetail.auto_remove_price}`} />}
-              <Field label="核心参数" value={coreParamText(watchDetail)} />
-              <Field label="下一步" value={nextAction(watchDetail)} />
+            {renderDetailTags(detailItem, activeDetailKind)}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {[
+                { key: "detail" as const, label: "详情" },
+                { key: "kline" as const, label: "日K线" },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setWatchDetailTab(item.key)}
+                  style={{
+                    border: 0,
+                    borderRadius: 14,
+                    padding: "9px 0",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    background: watchDetailTab === item.key ? "linear-gradient(135deg, #5570ff, #4052d2)" : "#eef2f8",
+                    color: watchDetailTab === item.key ? "#fff" : "#64748b",
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
 
-            {(watchDetail.entry_reason || watchDetail.invalid_condition || watchDetail.user_remark || watchDetail.remark) && (
-              <div style={{ borderRadius: 12, background: "#f7f9ff", padding: 12, display: "grid", gap: 6 }}>
-                {watchDetail.entry_reason && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>入选理由：</span><span style={{ color: "#334" }}>{watchDetail.entry_reason}</span></div>}
-                {watchDetail.invalid_condition && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>失效条件：</span><span style={{ color: "#334" }}>{watchDetail.invalid_condition}</span></div>}
-                {watchDetail.user_remark && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>用户备注：</span><span style={{ color: "#334" }}>{watchDetail.user_remark}</span></div>}
-                {watchDetail.remark && <div style={{ fontSize: 13 }}><span style={{ color: "#888" }}>备注：</span><span style={{ color: "#334" }}>{watchDetail.remark}</span></div>}
-              </div>
-            )}
-
-            <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>仅作为交易辅助，请结合个人交易规则确认。</p>
-            {rulePreview && (
-              <div style={{ borderRadius: 12, background: rulePreview.would_generate_signal ? "#fff1f1" : "#f7f9ff", padding: 12, display: "grid", gap: 8 }}>
-                <strong style={{ color: rulePreview.would_generate_signal ? "#e34d59" : "#22375c", fontSize: 14 }}>规则试算：{rulePreviewConclusionText(rulePreview)}</strong>
-                {(rulePreview.rules || []).map((rule: any) => (
-                  <div key={rule.rule_code} style={{ borderRadius: 10, background: "#fff", padding: 10, display: "grid", gap: 4 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                      <strong style={{ color: "#17213b", fontSize: 13 }}>{rule.rule_display_name || rule.rule_name || rule.rule_code}</strong>
-                      <span style={{ color: rule.triggered ? "#00a870" : "#e34d59", fontSize: 12, fontWeight: 800 }}>{rule.triggered ? "满足" : "未满足"}</span>
-                    </div>
-                    <div style={{ color: "#667085", fontSize: 12 }}>{rule.rule_type} / {rule.timeframe} / {rule.required ? "必需" : "可选"} / {rule.logic_group || "-"}</div>
-                    <div style={{ color: "#475467", fontSize: 12 }}>{rule.reason || "暂无原因"}</div>
+            {watchDetailTab === "detail" ? (
+              <>
+                {renderDetailBody(detailItem, activeDetailKind)}
+                {activeDetailKind === "watch" && rulePreview && (
+                  <div style={{ borderRadius: 12, background: rulePreview.would_generate_signal ? "#fff1f1" : "#f7f9ff", padding: 12, display: "grid", gap: 8 }}>
+                    <strong style={{ color: rulePreview.would_generate_signal ? "#e34d59" : "#22375c", fontSize: 14 }}>规则试算：{rulePreviewConclusionText(rulePreview)}</strong>
+                    {(rulePreview.rules || []).map((rule: any) => (
+                      <div key={rule.rule_code} style={{ borderRadius: 10, background: "#fff", padding: 10, display: "grid", gap: 4 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <strong style={{ color: "#17213b", fontSize: 13 }}>{rule.rule_display_name || rule.rule_name || rule.rule_code}</strong>
+                          <span style={{ color: rule.triggered ? "#00a870" : "#e34d59", fontSize: 12, fontWeight: 800 }}>{rule.triggered ? "满足" : "未满足"}</span>
+                        </div>
+                        <div style={{ color: "#667085", fontSize: 12 }}>{rule.rule_type} / {rule.timeframe} / {rule.required ? "必需" : "可选"} / {rule.logic_group || "-"}</div>
+                        <div style={{ color: "#475467", fontSize: 12 }}>{rule.reason || "暂无原因"}</div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+              </>
+            ) : (
+              <div style={{ borderRadius: 18, background: "#fff", boxShadow: "0 12px 36px rgba(31,43,77,0.08)", overflow: "hidden" }}>
+                <div style={{ padding: "12px 14px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong style={{ color: "#18223d", fontSize: 16 }}>日K线</strong>
+                  <span style={{ color: "#8a94a8", fontSize: 12 }}>{detailItem.stock_code}</span>
+                </div>
+                <KlineChart data={watchDetailKline} loading={watchDetailKlineLoading} />
               </div>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
-              <Button block fill="outline" size="small" onClick={() => openEdit(watchDetail)}>编辑</Button>
-              <Button block fill="outline" size="small" loading={rulePreviewLoading} onClick={() => previewWatchRules(watchDetail)}>试算</Button>
-              <Button block fill="none" size="small" style={{ fontSize: 12 }} onClick={() => {
-                const code = (watchDetail.stock_code || "").trim().toUpperCase();
-                const marketPrefix = code.match(/^(SH|SZ|BJ)\d{6}$/);
-                const marketSuffix = code.match(/^(\d{6})\.(SH|SZ|BJ)$/);
-                const xq = marketPrefix ? code : (marketSuffix ? `${marketSuffix[2]}${marketSuffix[1]}` : code);
-                window.open(`https://xueqiu.com/S/${xq}`, "_blank");
-              }}>雪球</Button>
-              <Button block fill="outline" size="small" onClick={() => { setWatchDetail(null); setEditing(null); }}>关闭</Button>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 1fr))", gap: 8 }}>
+              {activeDetailKind === "watch" && (
+                <>
+                  <Button block fill="outline" size="small" onClick={() => openEdit(detailItem)}>编辑参数</Button>
+                  <Button block fill="outline" size="small" loading={rulePreviewLoading} onClick={() => previewWatchRules(detailItem)}>试算</Button>
+                  <Button block fill="outline" size="small" onClick={() => toggleMonitor(detailItem)}>{detailItem.monitor_enabled !== false && detailItem.signal_enabled !== false ? "关闭监控" : "开启监控"}</Button>
+                  <Button block fill="outline" size="small" onClick={() => markInvalid(detailItem)}>标记失效</Button>
+                  <Button block fill="outline" size="small" onClick={() => removeWatch(detailItem)}>剔除</Button>
+                  <Button block color="danger" fill="outline" size="small" onClick={() => blacklistWatch(detailItem)}>加入黑名单</Button>
+                </>
+              )}
+              {activeDetailKind === "signal" && (
+                <>
+                  {detailItem.signal_type === "buy" && (
+                    <>
+                      {detailItem.signal_status === "buy_pending_confirm" && <Button block color="primary" size="small" onClick={() => openBuyForm(detailItem)}>确认买入</Button>}
+                      <Button block fill="outline" size="small" onClick={() => abandonSignal(detailItem)}>放弃本次机会</Button>
+                    </>
+                  )}
+                  {detailItem.signal_type === "risk" && (
+                    <div style={{ gridColumn: "1 / -1", borderRadius: 14, background: "#fff8e8", color: "#8a5a00", padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>
+                      风险/失效信号仅提示人工处理，当前不会自动剔除或自动交易。
+                    </div>
+                  )}
+                  {detailItem.signal_type === "sell" && (
+                    <div style={{ gridColumn: "1 / -1", borderRadius: 14, background: "#fff1f1", color: "#b42318", padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>
+                      卖点/止损信号待人工处理，卖出动作继续通过交易确认流程完成。
+                    </div>
+                  )}
+                </>
+              )}
+              {activeDetailKind === "trade" && (
+                <>
+                  <Button block fill="outline" size="small" onClick={() => showExecutions(detailItem)}>执行流水</Button>
+                  {["open", "holding"].includes(detailItem.trade_status) && <Button block color="danger" fill="outline" size="small" onClick={() => openSellForm(detailItem)}>确认卖出</Button>}
+                </>
+              )}
+              <Button block fill="outline" size="small" onClick={closeDetail}>关闭</Button>
             </div>
           </div>
         )}

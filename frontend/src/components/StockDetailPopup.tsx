@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, CenterPopup, SpinLoading } from "antd-mobile";
 import * as echarts from "echarts";
 import { apiGet } from "../api/client";
@@ -109,7 +109,10 @@ function calculateMacd(closes: number[]) {
 }
 
 export function KlineChart({ data, loading }: { data: any[]; loading: boolean }) {
-  const containerRef = (el: HTMLDivElement | null) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
     if (!el || !data.length) return;
     const chart = echarts.init(el);
     const dates = data.map((d) => d.trade_date);
@@ -159,7 +162,7 @@ export function KlineChart({ data, loading }: { data: any[]; loading: boolean })
     const handleResize = () => chart.resize();
     window.addEventListener("resize", handleResize);
     return () => { window.removeEventListener("resize", handleResize); chart.dispose(); };
-  };
+  }, [data]);
 
   if (loading) return <div style={{ height: 350, display: "grid", placeItems: "center" }}><SpinLoading /></div>;
   if (!data.length) return <div style={{ height: 120, display: "grid", placeItems: "center", color: "#888" }}>暂无K线数据</div>;
