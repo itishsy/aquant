@@ -315,6 +315,26 @@ export function WatchPoolPage() {
     return item?.change_pct ?? item?.pct_chg ?? item?.change_percent;
   }
 
+
+  function detailTitle(item: any) {
+    const parts = [item?.stock_code];
+    const price = detailPrice(item);
+    const pct = detailChangePct(item);
+    if (price != null) parts.push(String(price));
+    if (pct != null) parts.push(Number(pct).toFixed(2) + "%");
+    return String(item?.stock_name || "-") + "（" + parts.filter(Boolean).join("，") + "）";
+  }
+
+
+  function detailSubtitle(item: any, kind: DetailKind) {
+    if (kind !== "watch") return "";
+    return [
+      item?.sector_name,
+      String(item?.created_at || "").slice(0, 10),
+      item?.entry_source || "手动",
+    ].filter(Boolean).join(" | ");
+  }
+
   function detailStatus(item: any, kind: DetailKind) {
     if (kind === "signal") return signalStatusText(item?.signal_status);
     if (kind === "trade") return item?.trade_status || "-";
@@ -493,15 +513,6 @@ export function WatchPoolPage() {
     return (
       <>
         <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
-          <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>当前观察</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
-            <Field label="当前状态" value={detailStatus(item, "watch")} />
-            <Field label="当前阶段" value={item.system_stage || "observe"} />
-            <Field label="下一步动作" value={nextAction(item)} />
-          </div>
-        </div>
-
-        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
           <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>核心观察参数</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
             <Field label="箱体上沿" value={params.platform_upper_price} />
@@ -517,15 +528,6 @@ export function WatchPoolPage() {
           <InfoLine label="入选理由" value={item.entry_reason} />
           <InfoLine label="风险标签" value={riskText} />
           <InfoLine label="用户备注" value={item.user_remark || item.remark} />
-        </div>
-
-        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: 12, display: "grid", gap: 10 }}>
-          <div style={{ color: "#22375c", fontSize: 14, fontWeight: 900 }}>补充信息</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 8 }}>
-            <Field label="入选时间" value={String(item.created_at || "").slice(0, 10)} />
-            <Field label="入选来源" value={item.entry_source || "手动"} />
-            <Field label="板块" value={item.sector_name} />
-          </div>
         </div>
 
         <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>{ASSISTANT_NOTE}</p>
@@ -1009,18 +1011,15 @@ export function WatchPoolPage() {
   }
 
   function renderWatchCard(item: any) {
-    const status = item.status;
     return (
       <div key={item.watch_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 10, cursor: "pointer" }} onClick={() => openDetail("watch", item)}>
-        <div style={{ minWidth: 0 }}>
-          <strong style={{ display: "block", fontSize: 17, color: "#17213b" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, minWidth: 0 }}>
+          <strong style={{ display: "block", flex: "1 1 auto", minWidth: 0, fontSize: 17, color: "#17213b" }}>
             <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={openWatchDetail} />
           </strong>
-          <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <StatusPill label={tradingSystemText(item)} status="signal_generated" />
-            <StatusPill label={labelOf(lifecycleOptions, status)} status={status} />
-            <StatusPill label={"阶段 " + (item.system_stage || "observe")} status={status} />
-          </div>
+          <span style={{ flex: "0 0 auto", maxWidth: "42%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderRadius: 999, background: "#eef2ff", color: "#4052d2", padding: "5px 9px", fontSize: 12, fontWeight: 800 }}>
+            {tradingSystemText(item)}
+          </span>
         </div>
         {coreParamText(item) && <div style={{ color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>{coreParamText(item)}</div>}
         <div style={{ borderRadius: 16, background: "#f7f9ff", padding: "10px 12px", color: "#4052d2", fontSize: 12, lineHeight: 1.5, fontWeight: 700 }}>
@@ -1112,23 +1111,17 @@ export function WatchPoolPage() {
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
               <div style={{ minWidth: 0 }}>
-                <h3 style={{ margin: 0, fontSize: 18, color: "#17213b" }}>{detailItem.stock_name}</h3>
-                <div style={{ marginTop: 4, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", color: "#667085", fontSize: 12 }}>
-                  <span>{detailItem.stock_code}</span>
-                  {detailPrice(detailItem) != null && <strong style={{ color: "#17213b" }}>{detailPrice(detailItem)}</strong>}
-                  {detailChangePct(detailItem) != null && (
-                    <span style={{ color: Number(detailChangePct(detailItem)) >= 0 ? "#e34d59" : "#00a870", fontWeight: 800 }}>
-                      {Number(detailChangePct(detailItem)).toFixed(2)}%
-                    </span>
-                  )}
-                </div>
+                <h3 style={{ margin: 0, fontSize: 18, color: "#17213b", lineHeight: 1.35, wordBreak: "break-word" }}>{detailTitle(detailItem)}</h3>
+                {detailSubtitle(detailItem, activeDetailKind) && (
+                  <div style={{ marginTop: 5, color: "#8a94a8", fontSize: 12, lineHeight: 1.45, wordBreak: "break-word" }}>{detailSubtitle(detailItem, activeDetailKind)}</div>
+                )}
               </div>
               {toXueqiuUrl(detailItem.stock_code) && (
                 <Button
                   size="mini"
-                  fill="outline"
+                  fill="none"
                   onClick={() => window.open(toXueqiuUrl(detailItem.stock_code), "_blank")}
-                  style={{ borderRadius: 999, minWidth: 36, height: 32, padding: "0 9px", fontWeight: 900 }}
+                  style={{ border: 0, background: "transparent", boxShadow: "none", borderRadius: 999, minWidth: 36, height: 32, padding: "0 9px", fontWeight: 900, color: "#17213b" }}
                   title="雪球"
                 >
                   ↗
