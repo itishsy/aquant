@@ -49,20 +49,20 @@ class SignalRule:
 # Rules with ``enabled=False`` are skipped at scan time.
 
 SIGNAL_RULES: list[SignalRule] = [
-    # ── 平台突破 ──
+    # ── 突破 ──
     SignalRule(
-        trading_system="platform_breakout",
+        trading_system="breakout",
         strategy_name="macd_15m_bullish_divergence",
         buy_point_type="b15_divergence",
         signal_type="buy",
     ),
     SignalRule(
-        trading_system="platform_breakout",
+        trading_system="breakout",
         strategy_name="platform_breakout_confirm",
         buy_point_type="platform_breakout_confirm",
         signal_type="buy",
     ),
-    # ── 上涨趋势 ──
+    # ── 趋势 ──
     SignalRule(
         trading_system="uptrend",
         strategy_name="macd_15m_bullish_divergence",
@@ -76,7 +76,7 @@ SIGNAL_RULES: list[SignalRule] = [
         signal_type="buy",
         enabled=False,  # strategy not yet implemented
     ),
-    # ── 追涨接力 (暂无策略实现) ──
+    # ── 接力 (暂无策略实现) ──
     # SignalRule(trading_system="relay", strategy_name="...", ...),
     # ── 风控 (独立于交易体系, 对所有体系生效) ──
     SignalRule(

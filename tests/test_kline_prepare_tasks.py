@@ -32,8 +32,8 @@ def test_admin_can_run_prepare_watch_kline_data(client, db_session):
             system_stage="observe",
             monitor_enabled=True,
             signal_enabled=True,
-            trading_system_code="platform_breakout",
-            trading_system="platform_breakout",
+            trading_system_code="breakout",
+            trading_system="breakout",
         )
     )
     db_session.commit()

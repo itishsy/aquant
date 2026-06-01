@@ -101,8 +101,12 @@ class NotificationService:
         message["To"] = settings.smtp_to
         message.set_content(body)
 
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
-            if settings.smtp_use_tls:
+        if settings.smtp_port == 465:
+            server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10)
+        else:
+            server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
+        with server:
+            if settings.smtp_port != 465 and settings.smtp_use_tls:
                 server.starttls()
             if settings.smtp_username:
                 server.login(settings.smtp_username, settings.smtp_password)

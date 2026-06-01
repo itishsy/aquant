@@ -41,16 +41,16 @@ ASSISTANT_NOTE = "仅作为交易辅助，请结合个人交易规则确认。"
 class SeedService:
     DICTS = {
         "watch_tag": [("popularity", "人气"), ("relay", "接力"), ("trend", "趋势")],
-        "operation_strategy": [("trend_trade", "趋势交易"), ("accelerated_relay", "加速接力"), ("platform_breakout", "平台突破")],
+        "operation_strategy": [("trend_trade", "趋势交易"), ("accelerated_relay", "加速接力"), ("breakout", "突破")],
         "buy_point_type": [
             ("b15_divergence", "B15 底背离买点"),
             ("support_buy", "支撑买点"),
-            ("platform_breakout_confirm", "平台突破确认买点"),
+            ("platform_breakout_confirm", "突破确认买点"),
         ],
         "trading_system": [
-            ("platform_breakout", "平台突破"),
-            ("uptrend", "上涨趋势"),
-            ("relay", "追涨接力"),
+            ("breakout", "突破"),
+            ("uptrend", "趋势"),
+            ("relay", "接力"),
         ],
         "watch_lifecycle_status": [
             ("watching", "观察中"),
@@ -152,10 +152,10 @@ class SeedService:
     TEMPLATES = ["买入观察信号", "卖出提醒", "风险提醒", "复盘提醒", "任务异常提醒"]
 
     TRADING_SYSTEMS = [
-        ("platform_breakout", "平台突破", "以平台整理后的突破、回踩和失效条件为核心的交易体系样板。", "观察 -> 买点确认 -> 交易中 -> 卖出/止损 -> 复盘", 1),
-        ("uptrend", "上涨趋势", "用于承载趋势跟随类交易规则的体系定义。", "观察 -> 趋势确认 -> 交易中 -> 卖出/止损 -> 复盘", 2),
-        ("limit_relay", "涨停接力", "用于承载涨停接力类交易规则的体系定义。", "观察 -> 接力确认 -> 交易中 -> 卖出/止损 -> 复盘", 3),
-        ("oversold_rebound", "超跌反弹", "用于承载超跌修复类交易规则的体系定义。", "观察 -> 反弹确认 -> 交易中 -> 卖出/止损 -> 复盘", 4),
+        ("breakout", "突破", "以平台整理后的突破、回踩和失效条件为核心的交易体系样板。", "观察 -> 买点确认 -> 交易中 -> 卖出/止损 -> 复盘", 1),
+        ("uptrend", "趋势", "用于承载趋势跟随类交易规则的体系定义。", "观察 -> 趋势确认 -> 交易中 -> 卖出/止损 -> 复盘", 2),
+        ("relay", "接力", "用于承载接力类交易规则的体系定义。", "观察 -> 接力确认 -> 交易中 -> 卖出/止损 -> 复盘", 3),
+        ("rebound", "反弹", "用于承载超跌修复类交易规则的体系定义。", "观察 -> 反弹确认 -> 交易中 -> 卖出/止损 -> 复盘", 4),
     ]
     TASK_CONFIG_DEFAULTS = {
         "prepare_watch_kline_data": {
@@ -178,7 +178,7 @@ class SeedService:
         ("platform_support_price", "平台支撑位", "number", True, None, "平台结构的关键支撑价格。", 2),
         ("key_observe_price", "关键观察价", "number", True, None, "进入观察后的关键跟踪价格。", 3),
         ("auto_remove_price", "自动剔除价", "number", False, None, "跌破后可用于自动剔除观察的价格。", 4),
-        ("invalid_condition", "失效条件", "text", True, None, "平台突破体系失效的文字化条件。", 5),
+        ("invalid_condition", "失效条件", "text", True, None, "突破体系失效的文字化条件。", 5),
     ]
     PLATFORM_BREAKOUT_RULES = [
         ("not_break_platform_upper", "不跌破箱体上沿", "filter", "daily", "not_break_price", "平台回踩阶段不跌破箱体上沿。"),
@@ -189,7 +189,7 @@ class SeedService:
         ("break_platform_support", "收破平台支撑位", "stop_loss", "daily", "break_price", "日线收破平台支撑位止损信号。"),
     ]
     UPTREND_RULES = [
-        ("near_ma20_pullback", "回调到MA20附近", "filter", "daily", "near_ma", "上涨趋势观察阶段，股价回调到 MA20 附近的前置过滤条件。"),
+        ("near_ma20_pullback", "回调到MA20附近", "filter", "daily", "near_ma", "趋势观察阶段，股价回调到 MA20 附近的前置过滤条件。"),
     ]
     GENERIC_OBSERVE_RULES = [
         ("observe_break_key_price", "观察跌破关键观察价", "observe_risk", "daily", "break_level", "观察阶段跌破关键观察价的风险提醒。"),
@@ -335,10 +335,10 @@ class SeedService:
                 )
                 created += 1
         for param_key, param_name, param_type, required, default_value, description, sort_order in self.PLATFORM_BREAKOUT_PARAMS:
-            if not self.db.query(TradingSystemParamDefinition).filter_by(system_code="platform_breakout", param_key=param_key).first():
+            if not self.db.query(TradingSystemParamDefinition).filter_by(system_code="breakout", param_key=param_key).first():
                 self.db.add(
                     TradingSystemParamDefinition(
-                        system_code="platform_breakout",
+                        system_code="breakout",
                         param_key=param_key,
                         param_name=param_name,
                         param_type=param_type,
@@ -393,10 +393,10 @@ class SeedService:
                 )
                 created += 1
         for rule_code, stage, required, logic_group, logic_operator, sort_order in self.PLATFORM_BREAKOUT_RULE_BINDINGS:
-            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="platform_breakout", rule_code=rule_code, stage=stage).first():
+            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="breakout", rule_code=rule_code, stage=stage).first():
                 self.db.add(
                     TradingSystemRuleBinding(
-                        system_code="platform_breakout",
+                        system_code="breakout",
                         rule_code=rule_code,
                         stage=stage,
                         required=required,
@@ -425,10 +425,10 @@ class SeedService:
                 )
                 created += 1
         for rule_code, stage, required, logic_group, logic_operator, sort_order, enabled, config_json in self.PLATFORM_BREAKOUT_EXAMPLE_RULE_BINDINGS:
-            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="platform_breakout", rule_code=rule_code, stage=stage).first():
+            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="breakout", rule_code=rule_code, stage=stage).first():
                 self.db.add(
                     TradingSystemRuleBinding(
-                        system_code="platform_breakout",
+                        system_code="breakout",
                         rule_code=rule_code,
                         stage=stage,
                         required=required,
@@ -866,7 +866,7 @@ class PrdWatchPoolService:
         "sell_delayed",
     ]
     TERMINAL_STATUSES = {"sold", "pending_review", "archived", "invalid", "blacklist", "removed"}
-    TRADING_SYSTEMS = {"platform_breakout", "uptrend", "relay"}
+    TRADING_SYSTEMS = {"breakout", "uptrend", "relay"}
     VALID_TRANSITIONS = {
         None: {"watching", "blacklist"},
         "watching": {"signal_generated", "waiting_buy_point", "buy_pending_confirm", "trading", "invalid", "blacklist", "removed", "archived"},
@@ -1141,7 +1141,7 @@ class PrdWatchPoolService:
         if entry_source == "limit_up" or "relay" in text.lower():
             return "relay"
         if "breakout" in text.lower() or "\u7a81\u7834" in text:
-            return "platform_breakout"
+            return "breakout"
         return "uptrend"
 
     def _validate_required_add_payload(self, payload: dict) -> None:

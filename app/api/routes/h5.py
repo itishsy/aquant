@@ -180,18 +180,21 @@ def _evaluate_observe_rules(db: Session, watch: WatchPool, trade_date: date) -> 
     def _provider_5m_bars(stock_code: str) -> list[SimpleNamespace]:
         if not hasattr(provider, "get_intraday_kline"):
             return []
-        start_time = datetime.combine(trade_date, time(9, 30))
-        end_time = datetime.combine(trade_date, time(15, 0))
-        bars = []
-        for item in provider.get_intraday_kline(stock_code, "5m", start_time, end_time) or []:
-            bars.append(
-                SimpleNamespace(
-                    close_price=item.get("close"),
-                    volume=item.get("volume", 0.0),
-                    kline_time=item.get("kline_time") or item.get("trade_time"),
+        try:
+            start_time = datetime.combine(trade_date, time(9, 30))
+            end_time = datetime.combine(trade_date, time(15, 0))
+            bars = []
+            for item in provider.get_intraday_kline(stock_code, "5m", start_time, end_time) or []:
+                bars.append(
+                    SimpleNamespace(
+                        close_price=item.get("close"),
+                        volume=item.get("volume", 0.0),
+                        kline_time=item.get("kline_time") or item.get("trade_time"),
+                    )
                 )
-            )
-        return bars
+            return bars
+        except Exception:
+            return []
 
     def _rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition) -> dict:
         config = {
@@ -207,11 +210,14 @@ def _evaluate_observe_rules(db: Session, watch: WatchPool, trade_date: date) -> 
             "config_json": binding.config_json or {},
         }
         if rule.executor_key == "macd_bottom_divergence":
-            config["kline_bars"] = (
-                kline_service.get_15m_kline(watch.stock_code, 80)
-                if rule.timeframe == "15m"
-                else _provider_5m_bars(watch.stock_code)
-            )
+            try:
+                config["kline_bars"] = (
+                    kline_service.get_15m_kline(watch.stock_code, 80)
+                    if rule.timeframe == "15m"
+                    else _provider_5m_bars(watch.stock_code)
+                )
+            except Exception:
+                config["kline_bars"] = []
         elif rule.executor_key == "not_break_price":
             daily = kline_service.get_daily_kline(watch.stock_code, 5)
             if daily:

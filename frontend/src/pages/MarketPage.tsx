@@ -74,10 +74,10 @@ type StockViewerState = {
 };
 
 const tradingSystemOptions = [
-  { label: "平台突破", value: "platform_breakout" },
-  { label: "上涨趋势", value: "uptrend" },
-  { label: "涨停接力", value: "limit_relay" },
-  { label: "超跌反弹", value: "oversold_rebound" },
+  { label: "突破", value: "breakout" },
+  { label: "趋势", value: "uptrend" },
+  { label: "接力", value: "relay" },
+  { label: "反弹", value: "rebound" },
 ];
 
 const riskTagOptions = [
@@ -320,8 +320,8 @@ function limitHeight(row: any) {
 
 function recommendTradingSystem(item: any, sourceType: "hot_stock" | "limit_up"): WatchDraft["trading_system"] {
   const reason = `${item.raw_reason || ""} ${item.limit_reason || ""} ${item.reason || ""}`;
-  if (reason.includes("突破") || reason.toLowerCase().includes("breakout")) return "platform_breakout";
-  if (sourceType === "limit_up") return "limit_relay";
+  if (reason.includes("突破") || reason.toLowerCase().includes("breakout")) return "breakout";
+  if (sourceType === "limit_up") return "relay";
   return "uptrend";
 }
 

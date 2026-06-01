@@ -51,7 +51,7 @@ def _watch(**overrides) -> WatchPool:
         stock_code="000001.SZ",
         stock_name="Ping An",
         status="watching",
-        trading_system="platform_breakout",
+        trading_system="breakout",
         signal_enabled=True,
         monitor_enabled=True,
         
@@ -95,7 +95,7 @@ def test_signal_engine_does_not_regenerate_abandoned_duplicate(db_session):
             stock_name=watch.stock_name,
             signal_type="buy",
             buy_point_type="platform_breakout_confirm",
-            trading_system="platform_breakout",
+            trading_system="breakout",
             strategy_name="platform_breakout_confirm",
             signal_level="A",
             signal_status="abandoned",
@@ -125,7 +125,7 @@ def test_signal_engine_updates_watch_status_after_signal_generated(db_session):
 
     assert len(rows) == 1
     signal = rows[0]
-    assert signal.trading_system == "platform_breakout"
+    assert signal.trading_system == "breakout"
     assert signal.buy_point_confirmed is True
     assert signal.trigger_signature == "sig-platform-breakout"
 

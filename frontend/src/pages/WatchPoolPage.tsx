@@ -10,11 +10,10 @@ const ASSISTANT_NOTE = "仅作为交易辅助，请结合个人交易规则确�
 
 const tradingSystemOptions = [
   { label: "全部体系", value: "" },
-  { label: "平台突破", value: "platform_breakout" },
-  { label: "上涨趋势", value: "uptrend" },
-  { label: "涨停接力", value: "limit_relay" },
-  { label: "追涨接力", value: "relay" },
-  { label: "超跌反弹", value: "oversold_rebound" },
+  { label: "突破", value: "breakout" },
+  { label: "趋势", value: "uptrend" },
+  { label: "接力", value: "relay" },
+  { label: "反弹", value: "rebound" },
 ];
 
 type TradingSystemDefinition = {
@@ -60,7 +59,7 @@ const signalTypeLabels: Record<string, string> = { buy: "买入观察信号", se
 const buyPointLabels: Record<string, string> = {
   b15_divergence: "B15 底背离买点",
   support_buy: "支撑买点",
-  platform_breakout_confirm: "平台突破确认买点",
+  platform_breakout_confirm: "突破确认买点",
 };
 const riskTagLabels: Record<string, string> = {
   high_position: "高位",
@@ -629,7 +628,7 @@ export function WatchPoolPage() {
   }
 
   function openEdit(item: any) {
-    const systemCode = item.trading_system_code || item.trading_system || "platform_breakout";
+    const systemCode = item.trading_system_code || item.trading_system || "breakout";
     const params = normalizeEditParams(item);
     setEditing({
       watch_id: item.watch_id,
@@ -1010,21 +1009,25 @@ export function WatchPoolPage() {
     );
   }
 
+  function systemColor(code: string) {
+    const map: Record<string, string> = { breakout: "#e34d59", uptrend: "#4b63ee", relay: "#f59e0b", rebound: "#00b578" };
+    return map[code] || "#888";
+  }
+
   function renderWatchCard(item: any) {
+    const code = item.trading_system_code || item.trading_system || "";
     return (
-      <div key={item.watch_id} style={{ borderRadius: 22, background: "#fff", padding: 14, boxShadow: "0 10px 28px rgba(31,43,77,0.07)", display: "grid", gap: 10, cursor: "pointer" }} onClick={() => openDetail("watch", item)}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, minWidth: 0 }}>
-          <strong style={{ display: "block", flex: "1 1 auto", minWidth: 0, fontSize: 17, color: "#17213b" }}>
+      <div key={item.watch_id} className="row-card" style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => openDetail("watch", item)}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <strong>
             <StockLink stockName={item.stock_name} stockCode={item.stock_code} info={item} onEdit={editWatchFromStock} onOpenDetail={openWatchDetail} />
           </strong>
-          <span style={{ flex: "0 0 auto", maxWidth: "42%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderRadius: 999, background: "#eef2ff", color: "#4052d2", padding: "5px 9px", fontSize: 12, fontWeight: 800 }}>
-            {tradingSystemText(item)}
-          </span>
+          <p style={{ margin: "2px 0", fontSize: 12, color: "#888" }}>
+            {coreParamText(item) || ""}
+          </p>
+          <p style={{ margin: 0, fontSize: 11, color: "#aaa" }}>{nextAction(item)}</p>
         </div>
-        {coreParamText(item) && <div style={{ color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>{coreParamText(item)}</div>}
-        <div style={{ borderRadius: 16, background: "#f7f9ff", padding: "10px 12px", color: "#4052d2", fontSize: 12, lineHeight: 1.5, fontWeight: 700 }}>
-          {nextAction(item)}
-        </div>
+        <span style={{ fontSize: 11, color: systemColor(code), fontWeight: 700, whiteSpace: "nowrap" }}>{tradingSystemText(item)}</span>
       </div>
     );
   }
@@ -1189,10 +1192,6 @@ export function WatchPoolPage() {
                 <>
                   <Button block fill="outline" size="small" onClick={() => openEdit(detailItem)}>编辑参数</Button>
                   <Button block fill="outline" size="small" loading={rulePreviewLoading} onClick={() => previewWatchRules(detailItem)}>试算</Button>
-                  <Button block fill="outline" size="small" onClick={() => toggleMonitor(detailItem)}>{detailItem.monitor_enabled !== false && detailItem.signal_enabled !== false ? "关闭监控" : "开启监控"}</Button>
-                  <Button block fill="outline" size="small" onClick={() => markInvalid(detailItem)}>标记失效</Button>
-                  <Button block fill="outline" size="small" onClick={() => removeWatch(detailItem)}>剔除</Button>
-                  <Button block color="danger" fill="outline" size="small" onClick={() => blacklistWatch(detailItem)}>加入黑名单</Button>
                 </>
               )}
               {activeDetailKind === "signal" && (

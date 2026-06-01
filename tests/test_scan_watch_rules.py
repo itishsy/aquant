@@ -194,8 +194,8 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
         monitor_enabled=True,
         signal_enabled=True,
         system_stage="observe",
-        trading_system_code="platform_breakout",
-        trading_system="platform_breakout",
+        trading_system_code="breakout",
+        trading_system="breakout",
         system_params_json={
             "platform_upper_price": 24.0,
             "platform_support_price": 23.0,
@@ -206,7 +206,7 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
     db_session.add(watch)
     for rule_code in ["b5_divergence", "b15_divergence"]:
         binding = db_session.query(TradingSystemRuleBinding).filter_by(
-            system_code="platform_breakout",
+            system_code="breakout",
             rule_code=rule_code,
             stage="observe",
         ).first()
@@ -224,7 +224,7 @@ def test_scan_watch_rules_generates_platform_breakout_buy_signal(db_session):
     assert {signal.signal_type for signal in signals} == {"buy"}
     assert {signal.signal_status for signal in signals} == {"buy_pending_confirm"}
     assert all(signal.rule_code in {"b5_divergence", "b15_divergence"} for signal in signals)
-    assert all(signal.trading_system_code == "platform_breakout" for signal in signals)
+    assert all(signal.trading_system_code == "breakout" for signal in signals)
     for signal in signals:
         snapshot = signal.snapshot_json
         assert snapshot["data_status"] == "ok"
@@ -260,8 +260,8 @@ def test_scan_watch_rules_does_not_call_provider_and_reports_missing_data(db_ses
             monitor_enabled=True,
             signal_enabled=True,
             system_stage="observe",
-            trading_system_code="platform_breakout",
-            trading_system="platform_breakout",
+            trading_system_code="breakout",
+            trading_system="breakout",
             system_params_json={"platform_upper_price": 24.0},
         )
     )
@@ -377,8 +377,8 @@ def test_scan_watch_rules_does_not_generate_signal_when_kline_is_stale(db_sessio
         monitor_enabled=True,
         signal_enabled=True,
         system_stage="observe",
-        trading_system_code="platform_breakout",
-        trading_system="platform_breakout",
+        trading_system_code="breakout",
+        trading_system="breakout",
         system_params_json={
             "platform_upper_price": 24.0,
             "platform_support_price": 23.0,
@@ -389,7 +389,7 @@ def test_scan_watch_rules_does_not_generate_signal_when_kline_is_stale(db_sessio
     db_session.add(watch)
     for rule_code in ["b5_divergence", "b15_divergence"]:
         binding = db_session.query(TradingSystemRuleBinding).filter_by(
-            system_code="platform_breakout",
+            system_code="breakout",
             rule_code=rule_code,
             stage="observe",
         ).first()

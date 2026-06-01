@@ -14,8 +14,8 @@ def _platform_watch(**overrides):
         "system_stage": "observe",
         "monitor_enabled": True,
         "signal_enabled": True,
-        "trading_system_code": "platform_breakout",
-        "trading_system": "platform_breakout",
+        "trading_system_code": "breakout",
+        "trading_system": "breakout",
     }
     data.update(overrides)
     return WatchPool(**data)
@@ -69,8 +69,8 @@ def test_platform_breakout_trade_requirements_include_daily_5m_30m(db_session):
             stock_name="Test Stock",
             trade_status="open",
             current_stage="trading",
-            trading_system_code="platform_breakout",
-            trading_system="platform_breakout",
+            trading_system_code="breakout",
+            trading_system="breakout",
             active_sell_rule_codes_json=["m5_top_divergence", "m30_dead_cross"],
             active_stop_rule_codes_json=["break_platform_support"],
         )
@@ -115,7 +115,7 @@ def test_watch_requirements_merge_duplicate_timeframe_requirements(db_session):
     )
     db_session.add(
         TradingSystemRuleBinding(
-            system_code="platform_breakout",
+            system_code="breakout",
             rule_code="custom_5m_confirm",
             stage="observe",
             required=False,
@@ -140,7 +140,7 @@ def test_watch_requirements_merge_duplicate_timeframe_requirements(db_session):
 def test_seeded_example_ma_binding_can_drive_daily_ma_requirement(db_session):
     SeedService(db_session).init_defaults()
     binding = db_session.query(TradingSystemRuleBinding).filter_by(
-        system_code="platform_breakout",
+        system_code="breakout",
         rule_code="observe_break_ma5",
         stage="observe",
     ).first()

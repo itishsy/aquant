@@ -11,8 +11,8 @@ def test_buy_signal_notification_records_disabled_error():
         stock_name="中科曙光",
         signal_type="buy",
         buy_point_type="b15_divergence",
-        trading_system="platform_breakout",
-        trading_system_code="platform_breakout",
+        trading_system="breakout",
+        trading_system_code="breakout",
         rule_code="b15_divergence",
         rule_type="buy_signal",
         strategy_name="rule_executor:macd_bottom_divergence",
@@ -25,7 +25,7 @@ def test_buy_signal_notification_records_disabled_error():
 
     result = NotificationService().notify_buy_signal(
         signal,
-        trading_system_name="平台突破",
+        trading_system_name="突破",
         rule_name="15分钟底背离",
     )
 

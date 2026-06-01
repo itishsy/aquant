@@ -329,8 +329,32 @@ export function AdminPage() {
                   <Button block color="primary" size="small" loading={watchSubmitting} onClick={addWatch}>添加观察股</Button>
                 </div>
                 {watches.length ? watches.map((w: any) => (
-                  <div key={w.watch_id} style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}>
-                    [{w.watch_id}] {w.stock_name}({w.stock_code}) {w.status} {w.trading_system}
+                  <div key={w.watch_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f0f0", fontSize: 12 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <strong>[{w.watch_id}] {w.stock_name}</strong>
+                      <span style={{ color: "#888", marginLeft: 4 }}>{w.stock_code}</span>
+                      <span style={{ color: "#4b63ee", marginLeft: 4 }}>{w.status}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <Button size="mini" fill="outline" onClick={async () => {
+                        const ok = window.confirm(`确认将 ${w.stock_name} 标记为失效？`);
+                        if (!ok) return;
+                        await apiPost(`/admin/watch-pool/${w.watch_id}/invalid`, { invalid_reason: "后台标记失效" });
+                        Toast.show({ content: "已标记失效" }); loadAll();
+                      }}>失效</Button>
+                      <Button size="mini" fill="outline" onClick={async () => {
+                        const ok = window.confirm(`确认剔除 ${w.stock_name}？`);
+                        if (!ok) return;
+                        await apiPost(`/admin/watch-pool/${w.watch_id}/remove`, {});
+                        Toast.show({ content: "已剔除" }); loadAll();
+                      }}>剔除</Button>
+                      <Button size="mini" color="danger" fill="outline" onClick={async () => {
+                        const ok = window.confirm(`确认将 ${w.stock_name} 加入黑名单？`);
+                        if (!ok) return;
+                        await apiPost(`/admin/watch-pool/${w.watch_id}/blacklist`, { reason: "后台加入黑名单" });
+                        Toast.show({ content: "已加入黑名单" }); loadAll();
+                      }}>黑名单</Button>
+                    </div>
                   </div>
                 )) : <div style={{ color: "#888", fontSize: 12 }}>暂无</div>}
               </div>

@@ -871,6 +871,41 @@ def admin_add_watch(payload: dict, db: Session = Depends(get_db), admin=Depends(
     return ok(_watch_row(row))
 
 
+@router.post("/watch-pool/{watch_id}/invalid")
+def admin_mark_watch_invalid(watch_id: int, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    from app.services.prd_v1 import PrdWatchPoolService
+    svc = PrdWatchPoolService(db)
+    try:
+        row = svc.remove_watch(watch_id, payload.get("invalid_reason", "后台标记失效"))
+        row.status = "invalid"
+        db.commit()
+        return ok(_watch_row(row))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/watch-pool/{watch_id}/remove")
+def admin_remove_watch(watch_id: int, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    from app.services.prd_v1 import PrdWatchPoolService
+    svc = PrdWatchPoolService(db)
+    try:
+        row = svc.remove_watch(watch_id, "后台剔除")
+        return ok(_watch_row(row))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/watch-pool/{watch_id}/blacklist")
+def admin_blacklist_watch(watch_id: int, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    from app.services.prd_v1 import PrdWatchPoolService
+    svc = PrdWatchPoolService(db)
+    try:
+        row = svc.blacklist_watch(watch_id, payload.get("reason", "后台加入黑名单"))
+        return ok(_watch_row(row))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 # ── Signals ──
 
 @router.get("/watch-signals")

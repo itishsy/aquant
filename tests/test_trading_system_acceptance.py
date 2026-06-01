@@ -17,13 +17,13 @@ def test_trading_system_seed_data_is_ready_for_platform_breakout(db_session):
         row.system_code
         for row in db_session.query(TradingSystemDefinition).filter(TradingSystemDefinition.enabled.is_(True)).all()
     }
-    assert {"platform_breakout", "uptrend", "limit_relay", "oversold_rebound"} <= system_codes
+    assert {"breakout", "uptrend", "relay", "rebound"} <= system_codes
 
     required_params = {
         row.param_key
         for row in db_session.query(TradingSystemParamDefinition)
         .filter(
-            TradingSystemParamDefinition.system_code == "platform_breakout",
+            TradingSystemParamDefinition.system_code == "breakout",
             TradingSystemParamDefinition.required.is_(True),
         )
         .all()
@@ -39,7 +39,7 @@ def test_trading_system_seed_data_is_ready_for_platform_breakout(db_session):
         (row.stage, row.rule_code)
         for row in db_session.query(TradingSystemRuleBinding)
         .filter(
-            TradingSystemRuleBinding.system_code == "platform_breakout",
+            TradingSystemRuleBinding.system_code == "breakout",
             TradingSystemRuleBinding.enabled.is_(True),
         )
         .all()
@@ -107,7 +107,7 @@ def test_add_watch_with_trading_system_validates_required_params(client, db_sess
             "stock_code": "000001.SZ",
             "stock_name": "Ping An Bank",
             "entry_reason": "acceptance test",
-            "trading_system_code": "platform_breakout",
+            "trading_system_code": "breakout",
             "system_params_json": {
                 "platform_upper_price": 12.5,
                 "platform_support_price": 11.8,

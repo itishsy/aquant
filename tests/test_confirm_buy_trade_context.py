@@ -13,8 +13,8 @@ def test_confirm_buy_trade_inherits_system_context(client, db_session):
         active=True,
         monitor_enabled=True,
         signal_enabled=True,
-        trading_system="platform_breakout",
-        trading_system_code="platform_breakout",
+        trading_system="breakout",
+        trading_system_code="breakout",
         system_stage="observe",
         system_params_json={
             "platform_upper_price": 24.0,
@@ -31,8 +31,8 @@ def test_confirm_buy_trade_inherits_system_context(client, db_session):
         stock_name=watch.stock_name,
         signal_type="buy",
         buy_point_type="b15_divergence",
-        trading_system="platform_breakout",
-        trading_system_code="platform_breakout",
+        trading_system="breakout",
+        trading_system_code="breakout",
         rule_code="b15_divergence",
         rule_type="buy_signal",
         strategy_name="rule_executor:macd_bottom_divergence",
@@ -59,7 +59,7 @@ def test_confirm_buy_trade_inherits_system_context(client, db_session):
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["trading_system_code"] == "platform_breakout"
+    assert data["trading_system_code"] == "breakout"
     assert data["entry_rule_code"] == "b15_divergence"
     assert data["current_stage"] == "trading"
     assert "m5_top_divergence" in data["active_sell_rule_codes_json"]

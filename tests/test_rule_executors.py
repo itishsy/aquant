@@ -22,7 +22,7 @@ def test_registry_finds_always_false_executor():
             watch_id=1,
             stock_code="000001.SZ",
             stock_name="平安银行",
-            trading_system_code="platform_breakout",
+            trading_system_code="breakout",
             stage="observe",
             system_params={"platform_upper_price": 12.5},
             rule_config={

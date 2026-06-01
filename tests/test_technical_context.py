@@ -104,7 +104,7 @@ def test_rule_context_accepts_technical_context():
         watch_id=1,
         stock_code="000001.SZ",
         stock_name="Ping An",
-        trading_system_code="platform_breakout",
+        trading_system_code="breakout",
         stage="observe",
         technical={"status": "ok", "bars": [], "indicators": {}},
     )
