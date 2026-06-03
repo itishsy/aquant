@@ -174,11 +174,9 @@ class SeedService:
         "scan_trade_rules": {"interval_minutes": 10, "quote_max_age_minutes": 10},
     }
     PLATFORM_BREAKOUT_PARAMS = [
-        ("platform_upper_price", "箱体上沿", "number", True, None, "平台箱体上沿价格。", 1),
-        ("platform_support_price", "平台支撑位", "number", True, None, "平台结构的关键支撑价格。", 2),
-        ("key_observe_price", "关键观察价", "number", True, None, "进入观察后的关键跟踪价格。", 3),
+        ("platform_support_price", "支撑位", "number", True, None, "平台结构的关键支撑价格。", 2),
+        ("key_observe_price", "目标价", "number", True, None, "突破后的目标价格。", 3),
         ("auto_remove_price", "自动剔除价", "number", False, None, "跌破后可用于自动剔除观察的价格。", 4),
-        ("invalid_condition", "失效条件", "text", True, None, "突破体系失效的文字化条件。", 5),
     ]
     PLATFORM_BREAKOUT_RULES = [
         ("not_break_platform_upper", "不跌破箱体上沿", "filter", "daily", "not_break_price", "平台回踩阶段不跌破箱体上沿。"),
@@ -186,14 +184,14 @@ class SeedService:
         ("b15_divergence", "15分钟底背离", "buy_signal", "15m", "macd_bottom_divergence", "15分钟 MACD 底背离买点信号。"),
         ("m5_top_divergence", "5分钟顶背离", "sell_signal", "5m", "macd_top_divergence", "5分钟 MACD 顶背离卖出信号。"),
         ("m30_dead_cross", "30分钟死叉", "sell_signal", "30m", "macd_dead_cross", "30分钟 MACD 死叉卖出信号。"),
-        ("break_platform_support", "收破平台支撑位", "stop_loss", "daily", "break_price", "日线收破平台支撑位止损信号。"),
+        ("break_platform_support", "收破支撑位", "stop_loss", "daily", "break_price", "日线收破支撑位止损信号。"),
     ]
     UPTREND_RULES = [
         ("near_ma20_pullback", "回调到MA20附近", "filter", "daily", "near_ma", "趋势观察阶段，股价回调到 MA20 附近的前置过滤条件。"),
     ]
     GENERIC_OBSERVE_RULES = [
-        ("observe_break_key_price", "观察跌破关键观察价", "observe_risk", "daily", "break_level", "观察阶段跌破关键观察价的风险提醒。"),
-        ("observe_close_break_platform_support", "观察收破平台支撑位", "invalid_signal", "daily", "break_level", "观察阶段日线收破平台支撑位的失效提醒。"),
+        ("observe_break_key_price", "观察跌破目标价", "observe_risk", "daily", "break_level", "观察阶段跌破目标价的风险提醒。"),
+        ("observe_close_break_platform_support", "观察收破支撑位", "invalid_signal", "daily", "break_level", "观察阶段日线收破支撑位的失效提醒。"),
         ("observe_break_ma5", "观察跌破 MA5", "observe_risk", "daily", "break_ma", "观察阶段跌破 MA5 的短线风险提醒。"),
         ("observe_break_ma10", "观察跌破 MA10", "observe_risk", "daily", "break_ma", "观察阶段跌破 MA10 的趋势风险提醒。"),
         ("observe_break_ma20", "观察跌破 MA20", "invalid_signal", "daily", "break_ma", "观察阶段跌破 MA20 的失效提醒。"),

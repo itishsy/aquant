@@ -1267,17 +1267,21 @@ class TaskService:
 
                 trigger_price = None
                 trigger_time = None
-                intraday = kline_service.get_15m_kline(watch.stock_code, 32)
-                if intraday:
-                    latest_15m = intraday[-1]
-                    trigger_price = latest_15m.close_price
-                    trigger_time = latest_15m.kline_time
-                else:
-                    daily = kline_service.get_daily_kline(watch.stock_code, 20)
-                    if daily:
-                        latest_daily = daily[-1]
-                        trigger_price = latest_daily.close_price
-                        trigger_time = datetime.combine(latest_daily.trade_date, datetime.min.time())
+                try:
+                    intraday = kline_service.get_15m_kline(watch.stock_code, 32)
+                    if intraday:
+                        latest_15m = intraday[-1]
+                        trigger_price = latest_15m.close_price
+                        trigger_time = latest_15m.kline_time
+                    else:
+                        daily = kline_service.get_daily_kline(watch.stock_code, 20)
+                        if daily:
+                            latest_daily = daily[-1]
+                            trigger_price = latest_daily.close_price
+                            trigger_time = datetime.combine(latest_daily.trade_date, datetime.min.time())
+                except Exception:
+                    # External K-line API unavailable, skip this watch
+                    continue
 
                 if trigger_price is None or trigger_time is None:
                     continue

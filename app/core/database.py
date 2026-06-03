@@ -10,10 +10,14 @@ settings = get_settings()
 system_engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+    pool_pre_ping=True,
+    pool_recycle=1800,
 )
 candle_engine = create_engine(
     settings.candle_database_url,
     connect_args={"check_same_thread": False} if settings.candle_database_url.startswith("sqlite") else {},
+    pool_pre_ping=True,
+    pool_recycle=1800,
 )
 SystemSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=system_engine)
 CandleSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=candle_engine)

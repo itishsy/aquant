@@ -417,6 +417,7 @@ export function AdminPage() {
               rules={tradingRules}
               executors={registeredExecutors}
               onSaved={loadAll}
+              onSystemUpdated={setSelectedSystem}
             />
           )}
 
@@ -726,6 +727,7 @@ function TradingSystemPanelEditor({
   rules,
   executors,
   onSaved,
+  onSystemUpdated,
 }: {
   systems: TradingSystem[];
   selectedCode: string;
@@ -737,6 +739,7 @@ function TradingSystemPanelEditor({
   rules: TradingRule[];
   executors: string[];
   onSaved: () => void;
+  onSystemUpdated?: (system: TradingSystem) => void;
 }) {
   const registeredExecutors = new Set(executors);
   const [saving, setSaving] = useState(false);
@@ -779,15 +782,24 @@ function TradingSystemPanelEditor({
       Toast.show({ content: "请填写体系编码和名称" });
       return;
     }
-    await saveWithToast(async () => {
+    setSaving(true);
+    try {
       const payload = normalizeSystemForm(systemForm);
+      let data: TradingSystem;
       if (systemForm.system_id) {
-        await apiPut(`/admin/trading-systems/${systemForm.system_code}`, payload);
+        data = await apiPut<TradingSystem>(`/admin/trading-systems/${systemForm.system_code}`, payload);
       } else {
-        await apiPost(`/admin/trading-systems`, payload);
+        data = await apiPost<TradingSystem>(`/admin/trading-systems`, payload);
         onSelect(systemForm.system_code);
       }
-    });
+      Toast.show({ content: "已保存" });
+      setSystemForm({ ...data });
+      if (onSystemUpdated) onSystemUpdated(data);
+    } catch (err: any) {
+      Toast.show({ content: err?.message || "保存失败" });
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveRule() {
