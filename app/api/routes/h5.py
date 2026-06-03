@@ -143,7 +143,15 @@ SAFE_RULE_EXECUTORS = {
     "macd_bottom_divergence",
     "macd_top_divergence",
     "macd_dead_cross",
-    "break_price",
+    "break_level",
+    "break_ma",
+    "pullback_to_level",
+    "near_ma",
+    "breakout_level",
+    "near_level",
+    "volume_spike",
+    "ma_trend",
+    "profit_loss_threshold",
 }
 
 

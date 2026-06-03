@@ -184,7 +184,7 @@ class SeedService:
         ("b15_divergence", "15分钟底背离", "buy_signal", "15m", "macd_bottom_divergence", "15分钟 MACD 底背离买点信号。"),
         ("m5_top_divergence", "5分钟顶背离", "sell_signal", "5m", "macd_top_divergence", "5分钟 MACD 顶背离卖出信号。"),
         ("m30_dead_cross", "30分钟死叉", "sell_signal", "30m", "macd_dead_cross", "30分钟 MACD 死叉卖出信号。"),
-        ("break_platform_support", "收破支撑位", "stop_loss", "daily", "break_price", "日线收破支撑位止损信号。"),
+        ("break_platform_support", "收破支撑位", "stop_loss", "daily", "break_level", "日线收破支撑位止损信号。"),
     ]
     UPTREND_RULES = [
         ("near_ma20_pullback", "回调到MA20附近", "filter", "daily", "near_ma", "趋势观察阶段，股价回调到 MA20 附近的前置过滤条件。"),
@@ -197,13 +197,20 @@ class SeedService:
         ("observe_break_ma20", "观察跌破 MA20", "invalid_signal", "daily", "break_ma", "观察阶段跌破 MA20 的失效提醒。"),
         ("observe_pullback_recent_high", "观察从近期高点回撤", "observe_risk", "daily", "pullback_to_level", "观察阶段从近期高点回撤到指定幅度的提醒。"),
     ]
+    GENERIC_EXECUTOR_RULES = [
+        ("breakout_key_level", "突破关键价位", "buy_signal", "daily", "breakout_level", "通用突破指定价位的买点或确认规则。"),
+        ("near_key_level", "接近关键价位", "filter", "daily", "near_level", "通用接近指定价位的观察或过滤规则。"),
+        ("volume_spike_confirm", "放量确认", "confirm", "daily", "volume_spike", "成交量相对均量明显放大的确认规则。"),
+        ("ma_bullish_trend", "均线趋势向上", "filter", "daily", "ma_trend", "MA5/MA10/MA20 多头排列或 MA20 向上的趋势过滤规则。"),
+        ("profit_loss_threshold", "盈亏阈值提醒", "sell_signal", "daily", "profit_loss_threshold", "交易阶段按浮盈浮亏比例或金额触发提醒。"),
+    ]
     PLATFORM_BREAKOUT_RULE_BINDINGS = [
         ("not_break_platform_upper", "observe", True, "platform_retest", "AND", 1),
         ("b5_divergence", "observe", False, "bottom_divergence", "OR", 2),
         ("b15_divergence", "observe", False, "bottom_divergence", "OR", 3),
         ("m5_top_divergence", "trading", False, "sell_signal", "OR", 1),
         ("m30_dead_cross", "trading", False, "sell_signal", "OR", 2),
-        ("break_platform_support", "stop_loss", False, "stop_loss", "OR", 1),
+        ("break_platform_support", "stop_loss", False, "stop_loss", "OR", 1, {"data": {"timeframe": "daily", "lookback_bars": 5, "indicators": []}, "signal": {"target_param": "platform_support_price", "break_type": "close_below", "threshold_pct": 0}}),
     ]
     UPTREND_RULE_BINDINGS = [
         (
@@ -390,8 +397,29 @@ class SeedService:
                     )
                 )
                 created += 1
-        for rule_code, stage, required, logic_group, logic_operator, sort_order in self.PLATFORM_BREAKOUT_RULE_BINDINGS:
-            if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="breakout", rule_code=rule_code, stage=stage).first():
+        for rule_code, rule_name, rule_type, timeframe, executor_key, description in self.GENERIC_EXECUTOR_RULES:
+            if not self.db.query(TradingRuleDefinition).filter_by(rule_code=rule_code).first():
+                self.db.add(
+                    TradingRuleDefinition(
+                        rule_code=rule_code,
+                        rule_name=rule_name,
+                        rule_type=rule_type,
+                        timeframe=timeframe,
+                        executor_key=executor_key,
+                        description=description,
+                        enabled=True,
+                    )
+                )
+                created += 1
+        support_rule = self.db.query(TradingRuleDefinition).filter_by(rule_code="break_platform_support").first()
+        if support_rule and support_rule.executor_key == "break_price":
+            support_rule.executor_key = "break_level"
+            created += 1
+        for binding_item in self.PLATFORM_BREAKOUT_RULE_BINDINGS:
+            rule_code, stage, required, logic_group, logic_operator, sort_order = binding_item[:6]
+            config_json = binding_item[6] if len(binding_item) > 6 else {}
+            binding = self.db.query(TradingSystemRuleBinding).filter_by(system_code="breakout", rule_code=rule_code, stage=stage).first()
+            if not binding:
                 self.db.add(
                     TradingSystemRuleBinding(
                         system_code="breakout",
@@ -402,9 +430,12 @@ class SeedService:
                         logic_operator=logic_operator,
                         sort_order=sort_order,
                         enabled=True,
-                        config_json={},
+                        config_json=config_json,
                     )
                 )
+                created += 1
+            elif rule_code == "break_platform_support" and not binding.config_json:
+                binding.config_json = config_json
                 created += 1
         for rule_code, stage, required, logic_group, logic_operator, sort_order, config_json in self.UPTREND_RULE_BINDINGS:
             if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="uptrend", rule_code=rule_code, stage=stage).first():

@@ -112,7 +112,7 @@ def test_trading_system_seed_data_is_idempotent(db_session):
     assert rules["b15_divergence"] == ("buy_signal", "15m", "macd_bottom_divergence")
     assert rules["m5_top_divergence"] == ("sell_signal", "5m", "macd_top_divergence")
     assert rules["m30_dead_cross"] == ("sell_signal", "30m", "macd_dead_cross")
-    assert rules["break_platform_support"] == ("stop_loss", "daily", "break_price")
+    assert rules["break_platform_support"] == ("stop_loss", "daily", "break_level")
     expected_generic_rules = {
         "observe_break_key_price": ("observe_risk", "daily", "break_level"),
         "observe_close_break_platform_support": ("invalid_signal", "daily", "break_level"),
@@ -556,7 +556,7 @@ def test_h5_signal_and_trade_return_rule_display_fields(client, db_session):
     assert trade_payload["entry_rule_display_name"] == "5分钟底背离"
     assert trade_payload["trading_system_name"] == "突破"
     assert [item["display_name"] for item in trade_payload["active_sell_rules"]] == ["5分钟顶背离", "30分钟死叉"]
-    assert [item["display_name"] for item in trade_payload["active_stop_rules"]] == ["收破平台支撑位"]
+    assert [item["display_name"] for item in trade_payload["active_stop_rules"]] == ["收破支撑位"]
 
 
 def test_watch_pool_add_with_system_code_requires_defined_params(client, db_session):

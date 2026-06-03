@@ -82,7 +82,7 @@ def test_scan_trade_rules_generates_platform_break_support_signal(db_session):
     assert signal.snapshot_json["expected_latest_time"] == datetime(2026, 5, 24).isoformat()
     assert signal.snapshot_json["bar_count"] == 5
     assert signal.snapshot_json["required_bars"] == 5
-    assert signal.snapshot_json["executor_key"] == "break_price"
+    assert signal.snapshot_json["executor_key"] == "break_level"
     assert signal.notification_sent is False
     assert signal.notification_error
     assert "email notification is disabled" in (log.error_message or "")

@@ -20,10 +20,14 @@ class RuleDataRequirementService:
         "macd_dead_cross": {"indicators": ["macd"], "lookback_bars": 120},
         "near_ma": {"timeframe": "daily", "indicators": ["ma"], "lookback_bars": 60},
         "not_break_price": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
-        "break_price": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
         "break_level": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
         "break_ma": {"indicators": ["ma"], "lookback_bars": 30},
         "pullback_to_level": {"indicators": [], "lookback_bars": 20},
+        "breakout_level": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
+        "near_level": {"timeframe": "daily", "indicators": [], "lookback_bars": 5},
+        "volume_spike": {"timeframe": "daily", "indicators": [], "lookback_bars": 21},
+        "ma_trend": {"timeframe": "daily", "indicators": ["ma"], "lookback_bars": 60},
+        "profit_loss_threshold": {"timeframe": "daily", "indicators": [], "lookback_bars": 1},
     }
 
     def __init__(self, db: Session):

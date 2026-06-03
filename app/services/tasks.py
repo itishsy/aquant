@@ -84,7 +84,7 @@ class QuoteFreshnessService:
 
 
 class TaskService:
-    PRICE_REQUIRED_EXECUTORS = {"not_break_price"}
+    PRICE_REQUIRED_EXECUTORS = {"not_break_price", "profit_loss_threshold"}
     SAFE_RULE_EXECUTORS = {
         "always_false",
         "not_break_price",
@@ -92,10 +92,14 @@ class TaskService:
         "macd_top_divergence",
         "macd_dead_cross",
         "near_ma",
-        "break_price",
         "break_level",
         "break_ma",
         "pullback_to_level",
+        "breakout_level",
+        "near_level",
+        "volume_spike",
+        "ma_trend",
+        "profit_loss_threshold",
     }
 
     def __init__(self, db: Session, now: datetime | None = None):
@@ -750,6 +754,7 @@ class TaskService:
                     config["latest_time"] = latest.kline_time
                 return config
 
+
             def _insufficient_result(rule: TradingRuleDefinition, technical: dict) -> RuleResult:
                 reason = f"Kline data not ready for {rule.rule_code}: {technical.get('reason') or 'not ready'}"
                 return RuleResult(
@@ -1066,6 +1071,20 @@ class TaskService:
                     config["latest_time"] = latest.kline_time
                 return config
 
+            def _trade_rule_config(binding: TradingSystemRuleBinding, rule: TradingRuleDefinition, technical: dict, trade: WatchTrade, quote_status: dict) -> dict:
+                config = _rule_config(binding, rule, technical)
+                config.update(
+                    {
+                        "first_buy_price": trade.first_buy_price,
+                        "average_buy_price": trade.average_buy_price,
+                        "remaining_amount": trade.remaining_amount,
+                        "total_buy_amount": trade.total_buy_amount,
+                        "latest_price": quote_status.get("latest_price"),
+                        "latest_time": quote_status.get("source_update_time") or config.get("latest_time"),
+                    }
+                )
+                return config
+
             def _insufficient_result(rule: TradingRuleDefinition, technical: dict) -> RuleResult:
                 reason = f"Kline data not ready for {rule.rule_code}: {technical.get('reason') or 'not ready'}"
                 return RuleResult(
@@ -1220,7 +1239,7 @@ class TaskService:
                         trading_system_code=trade.trading_system_code,
                         stage=trade.current_stage or "trading",
                         system_params=trade.system_params_json or {},
-                        rule_config=_rule_config(binding, rule, technical),
+                        rule_config=_trade_rule_config(binding, rule, technical, trade, quote_status),
                         technical=technical,
                         trade_date=trade_date,
                         latest_price=quote_status.get("latest_price"),

@@ -154,3 +154,20 @@ def test_seeded_example_ma_binding_can_drive_daily_ma_requirement(db_session):
     assert daily["lookback_bars"] == 30
     assert daily["indicators"] == ["ma"]
     assert daily["reasons"] == ["not_break_platform_upper", "observe_break_ma5"]
+
+
+def test_extended_executor_default_data_requirements(db_session):
+    service = RuleDataRequirementService(db_session)
+    binding = TradingSystemRuleBinding(system_code="test", rule_code="rule", stage="observe", config_json={})
+
+    cases = {
+        "breakout_level": ("daily", 5, []),
+        "near_level": ("daily", 5, []),
+        "volume_spike": ("daily", 21, []),
+        "ma_trend": ("daily", 60, ["ma"]),
+        "profit_loss_threshold": ("daily", 1, []),
+    }
+    for executor_key, expected in cases.items():
+        rule = TradingRuleDefinition(rule_code=f"{executor_key}_rule", timeframe="daily", executor_key=executor_key)
+        requirement = service.rule_requirement(binding, rule)
+        assert (requirement["timeframe"], requirement["lookback_bars"], requirement["indicators"]) == expected
