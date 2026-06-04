@@ -9,9 +9,6 @@ from app.rule_executors.ma_trend import MaTrendExecutor
 from app.rule_executors.macd_bottom_divergence import MacdBottomDivergenceExecutor
 from app.rule_executors.macd_dead_cross import MacdDeadCrossExecutor
 from app.rule_executors.macd_top_divergence import MacdTopDivergenceExecutor
-from app.rule_executors.near_ma import NearMaExecutor
-from app.rule_executors.near_level import NearLevelExecutor
-from app.rule_executors.not_break_price import NotBreakPriceExecutor
 from app.rule_executors.profit_loss_threshold import ProfitLossThresholdExecutor
 from app.rule_executors.pullback_to_level import PullbackToLevelExecutor
 from app.rule_executors.volume_spike import VolumeSpikeExecutor
@@ -26,9 +23,6 @@ __all__ = [
     "MacdBottomDivergenceExecutor",
     "MacdDeadCrossExecutor",
     "MacdTopDivergenceExecutor",
-    "NearMaExecutor",
-    "NearLevelExecutor",
-    "NotBreakPriceExecutor",
     "ProfitLossThresholdExecutor",
     "PullbackToLevelExecutor",
     "VolumeSpikeExecutor",

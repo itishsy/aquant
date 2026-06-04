@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+﻿from datetime import date, datetime, timedelta
 
 from app.models import (
     ConfigTask,
@@ -53,26 +53,6 @@ def _seed_divergence_bars(db_session, stock_code="603019.SH", timeframe="5m"):
         ],
         "test",
     )
-
-
-def _seed_daily_ma_bars(db_session, stock_code="603019.SH", latest_close=100.0, base_close=100.0, count=60, end_date=None):
-    repo = KlineRepository(db_session)
-    end_date = end_date or date(2026, 5, 24)
-    start = end_date - timedelta(days=count - 1)
-    rows = []
-    for idx in range(count):
-        close = latest_close if idx == count - 1 else base_close
-        rows.append(
-            {
-                "trade_date": start + timedelta(days=idx),
-                "open": close - 0.2,
-                "high": close + 0.2,
-                "low": close - 0.5,
-                "close": close,
-                "volume": 100000 + idx,
-            }
-        )
-    repo.upsert_rows(stock_code, "daily", rows, "test")
 
 
 def _seed_intraday_bars(db_session, stock_code="603019.SH", timeframe="5m", divergent=True, count=120):
@@ -278,86 +258,6 @@ def test_scan_watch_rules_does_not_call_provider_and_reports_missing_data(db_ses
     assert "No kline data" in (log.error_message or "")
 
 
-def _add_not_break_filter_system(db_session, system_code="quote_system"):
-    db_session.add(
-        TradingRuleDefinition(
-            rule_code=f"{system_code}_not_break",
-            rule_name="Not break price",
-            rule_type="filter",
-            timeframe="daily",
-            executor_key="not_break_price",
-            enabled=True,
-        )
-    )
-    db_session.add(
-        TradingSystemRuleBinding(
-            system_code=system_code,
-            rule_code=f"{system_code}_not_break",
-            stage="observe",
-            required=True,
-            logic_group="quote",
-            logic_operator="AND",
-            enabled=True,
-            sort_order=1,
-            config_json={"data": {"timeframe": "daily", "lookback_bars": 5, "indicators": []}},
-        )
-    )
-
-
-def test_scan_watch_rules_skips_not_break_price_when_quote_is_stale(db_session):
-    _add_not_break_filter_system(db_session)
-    db_session.add(
-        MktStockQuote(
-            stock_code="000003.SZ",
-            stock_name="娴嬭瘯鑲＄エ",
-            latest_price=25.0,
-            source_update_time=datetime(2026, 5, 24, 10, 0),
-        )
-    )
-    _add_watch(
-        db_session,
-        stock_code="000003.SZ",
-        trading_system_code="quote_system",
-        trading_system="quote_system",
-        system_params_json={"platform_upper_price": 24.0},
-    )
-    _seed_daily_bars(db_session, stock_code="000003.SZ", close_price=25.0)
-
-    log = TaskService(db_session, now=datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
-
-    assert log.run_status == "success"
-    assert log.affected_rows == 1
-    assert db_session.query(WatchSignal).count() == 0
-    assert "Quote stale" in (log.error_message or "")
-
-
-def test_scan_watch_rules_executes_not_break_price_when_quote_is_fresh(db_session):
-    _add_not_break_filter_system(db_session, system_code="fresh_quote_system")
-    db_session.add(
-        MktStockQuote(
-            stock_code="000004.SZ",
-            stock_name="娴嬭瘯鑲＄エ",
-            latest_price=25.0,
-            source_update_time=datetime(2026, 5, 24, 10, 15),
-        )
-    )
-    _add_watch(
-        db_session,
-        stock_code="000004.SZ",
-        trading_system_code="fresh_quote_system",
-        trading_system="fresh_quote_system",
-        system_params_json={"platform_upper_price": 24.0},
-    )
-    _seed_daily_bars(db_session, stock_code="000004.SZ", close_price=25.0)
-
-    log = TaskService(db_session, now=datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
-
-    assert log.run_status == "success"
-    assert log.affected_rows == 1
-    assert db_session.query(WatchSignal).count() == 0
-    assert "Quote stale" not in (log.error_message or "")
-
-
 def test_scan_watch_rules_does_not_generate_signal_when_kline_is_stale(db_session):
     SeedService(db_session).init_defaults()
     db_session.add(
@@ -412,10 +312,9 @@ def test_scan_watch_rules_does_not_generate_signal_when_kline_is_stale(db_sessio
     assert "older than expected" in (log.error_message or "")
 
 
-def test_uptrend_near_ma20_without_bottom_divergence_does_not_generate_buy_signal(db_session):
+def test_uptrend_without_bottom_divergence_does_not_generate_buy_signal(db_session):
     SeedService(db_session).init_defaults()
     watch = _add_uptrend_watch(db_session)
-    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
     _seed_intraday_bars(db_session, timeframe="5m", divergent=False)
     _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
 
@@ -428,26 +327,9 @@ def test_uptrend_near_ma20_without_bottom_divergence_does_not_generate_buy_signa
     assert watch.system_stage == "observe"
 
 
-def test_uptrend_bottom_divergence_without_near_ma20_does_not_generate_buy_signal(db_session):
+def test_uptrend_5m_bottom_divergence_generates_buy_signal_when_email_disabled(db_session):
     SeedService(db_session).init_defaults()
     watch = _add_uptrend_watch(db_session)
-    _seed_daily_ma_bars(db_session, latest_close=110.0, base_close=100.0)
-    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
-    _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
-
-    log = _scan_uptrend(db_session)
-
-    assert log.run_status == "success"
-    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
-    db_session.refresh(watch)
-    assert watch.status == "watching"
-    assert watch.system_stage == "observe"
-
-
-def test_uptrend_near_ma20_with_5m_bottom_divergence_generates_buy_signal_when_email_disabled(db_session):
-    SeedService(db_session).init_defaults()
-    watch = _add_uptrend_watch(db_session)
-    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
     _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
     _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
 
@@ -470,10 +352,9 @@ def test_uptrend_near_ma20_with_5m_bottom_divergence_generates_buy_signal_when_e
     assert watch.signal_enabled is False
 
 
-def test_uptrend_near_ma20_with_15m_bottom_divergence_generates_buy_signal(db_session):
+def test_uptrend_15m_bottom_divergence_generates_buy_signal(db_session):
     SeedService(db_session).init_defaults()
     watch = _add_uptrend_watch(db_session)
-    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
     _seed_intraday_bars(db_session, timeframe="5m", divergent=False)
     _seed_intraday_bars(db_session, timeframe="15m", divergent=True)
 
@@ -484,33 +365,6 @@ def test_uptrend_near_ma20_with_15m_bottom_divergence_generates_buy_signal(db_se
     assert len(signals) == 1
     assert signals[0].rule_code == "b15_divergence"
     assert signals[0].trading_system_code == "uptrend"
-
-
-def test_uptrend_does_not_generate_signal_when_required_ma_data_is_insufficient(db_session):
-    SeedService(db_session).init_defaults()
-    watch = _add_uptrend_watch(db_session)
-    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0, count=20)
-    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
-
-    log = _scan_uptrend(db_session)
-
-    assert log.run_status == "success"
-    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
-    assert "Need 60 bars" in (log.error_message or "")
-
-
-def test_uptrend_does_not_generate_signal_when_required_ma_data_is_stale(db_session):
-    SeedService(db_session).init_defaults()
-    watch = _add_uptrend_watch(db_session)
-    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0, count=60, end_date=date(2026, 5, 23))
-    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
-    _seed_intraday_bars(db_session, timeframe="15m", divergent=True)
-
-    log = _scan_uptrend(db_session, now=datetime(2026, 5, 24, 15, 10))
-
-    assert log.run_status == "success"
-    assert db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).count() == 0
-    assert "older than expected" in (log.error_message or "")
 
 
 def _add_break_level_observe_rule(db_session, system_code: str, rule_type: str, rule_code: str):
@@ -698,3 +552,4 @@ def test_watch_rule_preview_is_dry_run(client, db_session):
     db_session.refresh(watch)
     assert watch.status == before_status
     assert watch.system_stage == before_stage
+

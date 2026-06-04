@@ -29,10 +29,7 @@ def test_platform_breakout_watch_requirements_include_daily_5m_15m(db_session):
     requirements = RuleDataRequirementService(db_session).build_watch_requirements(date(2026, 5, 24))
 
     stock = requirements["603019.SH"]
-    assert set(stock) == {"daily", "5m", "15m"}
-    assert stock["daily"]["lookback_bars"] == 5
-    assert stock["daily"]["indicators"] == []
-    assert stock["daily"]["reasons"] == ["not_break_platform_upper"]
+    assert set(stock) == {"5m", "15m"}
     assert stock["5m"]["lookback_bars"] == 120
     assert stock["5m"]["indicators"] == ["macd"]
     assert stock["5m"]["reasons"] == ["b5_divergence"]
@@ -41,7 +38,7 @@ def test_platform_breakout_watch_requirements_include_daily_5m_15m(db_session):
     assert stock["15m"]["reasons"] == ["b15_divergence"]
 
 
-def test_uptrend_watch_requirements_include_daily_ma_5m_15m(db_session):
+def test_uptrend_watch_requirements_include_5m_15m(db_session):
     SeedService(db_session).init_defaults()
     db_session.add(_platform_watch(trading_system_code="uptrend", trading_system="uptrend"))
     db_session.commit()
@@ -49,10 +46,7 @@ def test_uptrend_watch_requirements_include_daily_ma_5m_15m(db_session):
     requirements = RuleDataRequirementService(db_session).build_watch_requirements(date(2026, 5, 24))
 
     stock = requirements["603019.SH"]
-    assert set(stock) == {"daily", "5m", "15m"}
-    assert stock["daily"]["lookback_bars"] == 60
-    assert stock["daily"]["indicators"] == ["ma"]
-    assert stock["daily"]["reasons"] == ["near_ma20_pullback"]
+    assert set(stock) == {"5m", "15m"}
     assert stock["5m"]["lookback_bars"] == 120
     assert stock["5m"]["indicators"] == ["macd"]
     assert stock["5m"]["reasons"] == ["b5_divergence"]
@@ -153,7 +147,7 @@ def test_seeded_example_ma_binding_can_drive_daily_ma_requirement(db_session):
     daily = requirements["603019.SH"]["daily"]
     assert daily["lookback_bars"] == 30
     assert daily["indicators"] == ["ma"]
-    assert daily["reasons"] == ["not_break_platform_upper", "observe_break_ma5"]
+    assert daily["reasons"] == ["observe_break_ma5"]
 
 
 def test_extended_executor_default_data_requirements(db_session):
@@ -162,7 +156,6 @@ def test_extended_executor_default_data_requirements(db_session):
 
     cases = {
         "breakout_level": ("daily", 5, []),
-        "near_level": ("daily", 5, []),
         "volume_spike": ("daily", 21, []),
         "ma_trend": ("daily", 60, ["ma"]),
         "profit_loss_threshold": ("daily", 1, []),

@@ -107,7 +107,6 @@ def test_trading_system_seed_data_is_idempotent(db_session):
         row.rule_code: (row.rule_type, row.timeframe, row.executor_key)
         for row in db_session.query(TradingRuleDefinition).all()
     }
-    assert rules["not_break_platform_upper"] == ("filter", "daily", "not_break_price")
     assert rules["b5_divergence"] == ("buy_signal", "5m", "macd_bottom_divergence")
     assert rules["b15_divergence"] == ("buy_signal", "15m", "macd_bottom_divergence")
     assert rules["m5_top_divergence"] == ("sell_signal", "5m", "macd_top_divergence")
@@ -129,7 +128,6 @@ def test_trading_system_seed_data_is_idempotent(db_session):
         (row.stage, row.rule_code): (row.required, row.logic_group, row.logic_operator, row.enabled, row.config_json)
         for row in db_session.query(TradingSystemRuleBinding).filter_by(system_code="breakout").all()
     }
-    assert bindings[("observe", "not_break_platform_upper")][:4] == (True, "platform_retest", "AND", True)
     assert bindings[("observe", "b5_divergence")][:4] == (False, "bottom_divergence", "OR", True)
     assert bindings[("observe", "b15_divergence")][:4] == (False, "bottom_divergence", "OR", True)
     assert bindings[("trading", "m5_top_divergence")][:4] == (False, "sell_signal", "OR", True)
@@ -449,7 +447,6 @@ def test_watch_pool_add_with_trading_system_instance_params(client, db_session):
     assert data["system_params_json"]["platform_upper_price"] == 20.5
     assert data["key_observe_price"] == 20.8
     assert data["invalid_condition"] == "close below platform support"
-    assert "not_break_platform_upper" in data["active_rule_codes_json"]
 
 
 def test_watch_pool_update_accepts_trading_system_instance_params(client, db_session):

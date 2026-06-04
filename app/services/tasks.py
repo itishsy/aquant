@@ -84,19 +84,16 @@ class QuoteFreshnessService:
 
 
 class TaskService:
-    PRICE_REQUIRED_EXECUTORS = {"not_break_price", "profit_loss_threshold"}
+    PRICE_REQUIRED_EXECUTORS = {"profit_loss_threshold"}
     SAFE_RULE_EXECUTORS = {
         "always_false",
-        "not_break_price",
         "macd_bottom_divergence",
         "macd_top_divergence",
         "macd_dead_cross",
-        "near_ma",
         "break_level",
         "break_ma",
         "pullback_to_level",
         "breakout_level",
-        "near_level",
         "volume_spike",
         "ma_trend",
         "profit_loss_threshold",

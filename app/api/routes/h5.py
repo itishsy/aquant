@@ -139,16 +139,13 @@ def _rule_payloads(rule_codes: list[str] | None, rule_map: dict[str, TradingRule
 
 SAFE_RULE_EXECUTORS = {
     "always_false",
-    "not_break_price",
     "macd_bottom_divergence",
     "macd_top_divergence",
     "macd_dead_cross",
     "break_level",
     "break_ma",
     "pullback_to_level",
-    "near_ma",
     "breakout_level",
-    "near_level",
     "volume_spike",
     "ma_trend",
     "profit_loss_threshold",
@@ -226,12 +223,6 @@ def _evaluate_observe_rules(db: Session, watch: WatchPool, trade_date: date) -> 
                 )
             except Exception:
                 config["kline_bars"] = []
-        elif rule.executor_key == "not_break_price":
-            daily = kline_service.get_daily_kline(watch.stock_code, 5)
-            if daily:
-                latest = daily[-1]
-                config["latest_close"] = latest.close_price
-                config["latest_time"] = datetime.combine(latest.trade_date, datetime.min.time())
         return config
 
     bindings = (

@@ -52,7 +52,7 @@ def test_registry_uses_break_level_instead_of_legacy_break_price():
 
 
 def test_registry_contains_extended_generic_executors():
-    for executor_key in ["breakout_level", "near_level", "volume_spike", "ma_trend", "profit_loss_threshold"]:
+    for executor_key in ["breakout_level", "volume_spike", "ma_trend", "profit_loss_threshold"]:
         assert executor_key in list_executors()
         assert get_executor(executor_key) is not None
 
@@ -221,77 +221,6 @@ def test_break_ma_supports_ma10_and_ma20_config():
     assert ma20.snapshot["ma"] == 20
 
 
-def _near_ma_context(latest_close=100.0, ma_values=None):
-    bars = [
-        FakeBar(datetime(2026, 5, 28, 14, 55), low_price=99.0, close_price=100.0),
-        FakeBar(datetime(2026, 5, 28, 15, 0), low_price=latest_close - 0.2, close_price=latest_close),
-    ]
-    return RuleContext(
-        watch_id=1,
-        stock_code="000001.SZ",
-        stock_name="Ping An",
-        trading_system_code="uptrend",
-        stage="observe",
-        rule_config={
-            "rule_code": "near_ma20_pullback",
-            "rule_name": "Near MA20",
-            "rule_type": "filter",
-            "timeframe": "daily",
-            "config_json": {"signal": {"ma": 20, "near_pct": 0.02, "price_field": "close"}},
-        },
-        technical={
-            "timeframe": "daily",
-            "bars": bars,
-            "indicators": {"ma": {"ma20": [100.0, 100.0] if ma_values is None else ma_values}},
-        },
-        trade_date=date(2026, 5, 28),
-    )
-
-
-def test_near_ma_triggers_when_latest_close_is_within_two_percent_of_ma20():
-    executor = get_executor("near_ma")
-
-    result = executor.execute(_near_ma_context(latest_close=101.5))
-
-    assert result.triggered is True
-    assert result.trigger_price == 101.5
-    assert result.snapshot["latest_close"] == 101.5
-    assert result.snapshot["latest_ma"] == 100.0
-    assert result.snapshot["lower"] == 98.0
-    assert result.snapshot["upper"] == 102.0
-    assert result.snapshot["executor_key"] == "near_ma"
-
-
-def test_near_ma_does_not_trigger_when_latest_close_is_too_high():
-    executor = get_executor("near_ma")
-
-    result = executor.execute(_near_ma_context(latest_close=103.0))
-
-    assert result.triggered is False
-    assert result.trigger_price == 103.0
-    assert result.snapshot["latest_ma"] == 100.0
-
-
-def test_near_ma_does_not_trigger_when_latest_close_is_too_low():
-    executor = get_executor("near_ma")
-
-    result = executor.execute(_near_ma_context(latest_close=97.0))
-
-    assert result.triggered is False
-    assert result.trigger_price == 97.0
-    assert result.snapshot["latest_ma"] == 100.0
-
-
-def test_near_ma_does_not_trigger_when_ma_data_is_insufficient():
-    executor = get_executor("near_ma")
-
-    result = executor.execute(_near_ma_context(latest_close=100.0, ma_values=[100.0, None]))
-
-    assert result.triggered is False
-    assert "insufficient" in result.reason
-    assert result.snapshot["executor_key"] == "near_ma"
-
-
 def _pullback_context(latest_close=96.9, signal_config=None, system_params=None):
     bars = [
         FakeBar(datetime(2026, 5, 28, 14, 45), low_price=98.0, close_price=99.0, high_price=100.0),
@@ -412,25 +341,6 @@ def test_breakout_level_intraday_uses_latest_price():
     assert result.triggered is True
     assert result.trigger_price == 10.5
     assert result.snapshot["price_source"] == "latest_price"
-
-
-def test_near_level_triggers_when_price_is_near_target():
-    result = get_executor("near_level").execute(
-        _level_context("near_level", latest_close=10.1, signal_config={"target_param": "key_price", "near_pct": 0.02})
-    )
-
-    assert result.triggered is True
-    assert result.snapshot["lower"] == 9.8
-    assert result.snapshot["upper"] == 10.2
-
-
-def test_near_level_missing_target_does_not_trigger():
-    result = get_executor("near_level").execute(
-        _level_context("near_level", latest_close=10.1, signal_config={"target_param": "missing"}, system_params={})
-    )
-
-    assert result.triggered is False
-    assert "Missing near target" in result.reason
 
 
 def _volume_context(latest_volume=220.0, history_volume=100.0):

@@ -45,7 +45,6 @@ def test_trading_system_seed_data_is_ready_for_platform_breakout(db_session):
         .all()
     }
     assert {
-        ("observe", "not_break_platform_upper"),
         ("observe", "b5_divergence"),
         ("observe", "b15_divergence"),
         ("trading", "m5_top_divergence"),
