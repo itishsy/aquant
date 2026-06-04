@@ -22,6 +22,7 @@ from app.models import (
     TradingRuleDefinition,
     TradingSystemRuleBinding,
     WatchPool,
+    WatchPoolStatusLog,
     WatchSignal,
     WatchTrade,
 )
@@ -909,6 +910,108 @@ class TaskService:
                 watch.next_action = "出现观察风险，请人工确认是否继续观察"
                 return 1
 
+            def _save_remove_signal(watch: WatchPool, rule: TradingRuleDefinition, result, technical: dict, quote_status: dict) -> int:
+                trigger_time = result.trigger_time or datetime.utcnow()
+                trigger_date = trigger_time.date() if hasattr(trigger_time, "date") else trade_date
+                if _duplicate_exists(watch, rule.rule_code, trigger_date):
+                    return 0
+                snapshot = _signal_snapshot(rule, result, technical, quote_status)
+                signal = WatchSignal(
+                    watch_id=watch.id,
+                    stock_code=watch.stock_code,
+                    stock_name=watch.stock_name,
+                    signal_type="risk",
+                    buy_point_type=rule.rule_code,
+                    trading_system=watch.trading_system_code or watch.trading_system,
+                    trading_system_code=watch.trading_system_code,
+                    rule_code=rule.rule_code,
+                    rule_type=rule.rule_type,
+                    strategy_name=f"rule_executor:{rule.executor_key}",
+                    signal_level=result.signal_level or "S",
+                    kline_period=rule.timeframe,
+                    trigger_time=trigger_time,
+                    trigger_date=trigger_date,
+                    trigger_price=result.trigger_price,
+                    trigger_reason=result.reason,
+                    risk_desc=result.risk_desc,
+                    signal_status=_observe_signal_status(rule.rule_type),
+                    user_action="pending",
+                    trigger_signature=f"observe-rule:{watch.id}:{rule.rule_code}:{trigger_date.isoformat()}",
+                    raw_snapshot=snapshot,
+                    snapshot_json=snapshot,
+                )
+                self.db.add(signal)
+                self.db.flush()
+                now = datetime.utcnow()
+                watch.latest_signal_id = signal.signal_id
+                watch.status = "removed"
+                watch.active = False
+                watch.monitor_enabled = False
+                watch.signal_enabled = False
+                watch.removed_at = now
+                watch.archive_reason = result.reason
+                watch.next_action = "已自动剔除观察"
+                self.db.add(WatchPoolStatusLog(
+                    watch_id=watch.id,
+                    stock_code=watch.stock_code,
+                    from_status="watching",
+                    to_status="removed",
+                    change_reason=result.reason,
+                    operation_type="auto_remove",
+                    snapshot=snapshot,
+                    operator_type="system",
+                    operated_at=now,
+                ))
+                return 1
+
+            def _after_watch_added_gate(binding: TradingSystemRuleBinding, watch: WatchPool, result: RuleResult) -> RuleResult:
+                from dataclasses import replace
+                from datetime import datetime as dt
+
+                signal = (binding.config_json or {}).get("signal") if isinstance(binding.config_json, dict) else None
+                if signal is None or signal.get("after_watch_added") is not True:
+                    return result
+
+                observe_start = watch.created_at
+                if observe_start is None and watch.added_trade_date is not None:
+                    observe_start = dt.combine(watch.added_trade_date, dt.min.time())
+
+                original_trigger_time = result.trigger_time
+                passed = True
+
+                if not result.triggered:
+                    passed = False
+                elif observe_start is None:
+                    passed = False
+                    result = replace(
+                        result,
+                        triggered=False,
+                        reason=f"after_watch_added gate: observe_start is missing, signal suppressed. (was: {result.reason})",
+                    )
+                elif result.trigger_time is None:
+                    passed = False
+                    result = replace(
+                        result,
+                        triggered=False,
+                        reason=f"after_watch_added gate: trigger_time is missing, signal suppressed. (was: {result.reason})",
+                    )
+                elif result.trigger_time <= observe_start:
+                    passed = False
+                    result = replace(
+                        result,
+                        triggered=False,
+                        reason=f"after_watch_added gate: trigger_time {result.trigger_time} <= observe_start {observe_start}, signal suppressed. (was: {result.reason})",
+                    )
+
+                snapshot = dict(result.snapshot or {})
+                snapshot.update({
+                    "after_watch_added": True,
+                    "observe_start_time": observe_start.isoformat() if observe_start else None,
+                    "original_trigger_time": original_trigger_time.isoformat() if original_trigger_time else None,
+                    "after_watch_added_passed": passed,
+                })
+                return replace(result, snapshot=snapshot)
+
             affected = 0
             for watch in rows:
                 bindings = (
@@ -971,15 +1074,26 @@ class TaskService:
                         result = _quote_not_ready_result(rule, quote_status)
                     else:
                         result = executor.execute(context)
+                    result = _after_watch_added_gate(binding, watch, result)
                     results.append((binding, rule, result, technical, quote_status))
                     affected += 1
                 required_ok = all(result.triggered for binding, _rule, result, _technical, _quote_status in results if binding.required)
                 if not required_ok:
                     continue
+                # remove_signal takes priority: auto-remove watch and skip buy signals
+                remove_results = [
+                    (binding, rule, result, technical, quote_status)
+                    for binding, rule, result, technical, quote_status in results
+                    if rule.rule_type == "remove_signal" and result.triggered
+                ]
+                if remove_results:
+                    for _binding, rule, result, technical, quote_status in remove_results:
+                        affected += _save_remove_signal(watch, rule, result, technical, quote_status)
+                    continue
                 risk_results = [
                     (binding, rule, result, technical, quote_status)
                     for binding, rule, result, technical, quote_status in results
-                    if rule.rule_type in {"observe_risk", "invalid_signal", "remove_signal"} and result.triggered
+                    if rule.rule_type in {"observe_risk", "invalid_signal"} and result.triggered
                 ]
                 for _binding, rule, result, technical, quote_status in risk_results:
                     affected += _save_observe_risk_signal(watch, rule, result, technical, quote_status)

@@ -449,3 +449,168 @@ def test_profit_loss_threshold_loss_ratio_triggers():
 
     assert result.triggered is True
     assert result.signal_level == "S"
+
+
+def _break_ma_multi_context(closes, ma_values, signal_config=None):
+    bars = [
+        FakeBar(datetime(2026, 5, 28, 14, 50 + i), low_price=c - 0.1, close_price=c)
+        for i, c in enumerate(closes)
+    ]
+    ma_window = (signal_config or {}).get("ma", 5)
+    return RuleContext(
+        watch_id=1,
+        stock_code="000001.SZ",
+        stock_name="Ping An",
+        trading_system_code="test_system",
+        stage="trading",
+        rule_config={
+            "rule_code": "break_ma_rule",
+            "rule_name": "Break MA rule",
+            "rule_type": "stop_loss",
+            "config_json": {"signal": signal_config or {"ma": 5, "break_type": "consecutive_below"}},
+        },
+        technical={
+            "bars": bars,
+            "indicators": {"ma": {f"ma{ma_window}": ma_values}},
+        },
+        trade_date=date(2026, 5, 28),
+    )
+
+
+def test_break_ma_consecutive_below_triggers_when_all_three_closes_below_ma5():
+    executor = get_executor("break_ma")
+    result = executor.execute(_break_ma_multi_context(
+        closes=[9.7, 9.6, 9.5], ma_values=[10.0, 10.0, 10.0],
+        signal_config={"ma": 5, "break_type": "consecutive_below"},
+    ))
+    assert result.triggered is True
+    assert result.snapshot["break_type"] == "consecutive_below"
+    assert result.snapshot["ma"] == 5
+    assert result.snapshot["consecutive_bars"] == 3
+    assert result.snapshot["latest_close"] == 9.5
+    assert result.snapshot["latest_ma"] == 10.0
+    assert result.snapshot["recent_closes"] == [9.7, 9.6, 9.5]
+    assert result.snapshot["recent_ma_values"] == [10.0, 10.0, 10.0]
+    assert result.snapshot["executor_key"] == "break_ma"
+
+
+def test_break_ma_consecutive_below_not_triggered_when_one_bar_above_ma():
+    executor = get_executor("break_ma")
+    result = executor.execute(_break_ma_multi_context(
+        closes=[10.2, 9.6, 9.5], ma_values=[10.0, 10.0, 10.0],
+        signal_config={"ma": 5, "break_type": "consecutive_below"},
+    ))
+    assert result.triggered is False
+    assert "Not all" in result.reason
+
+
+def test_break_ma_consecutive_below_custom_5_bars():
+    executor = get_executor("break_ma")
+    closes = [9.9, 9.8, 9.7, 9.6, 9.5]
+    ma_vals = [10.0, 10.0, 10.0, 10.0, 10.0]
+    result = executor.execute(_break_ma_multi_context(
+        closes=closes, ma_values=ma_vals,
+        signal_config={"ma": 10, "break_type": "consecutive_below", "consecutive_bars": 5},
+    ))
+    assert result.triggered is True
+    assert result.snapshot["ma"] == 10
+    assert result.snapshot["consecutive_bars"] == 5
+
+
+def test_break_ma_consecutive_below_not_enough_bars():
+    executor = get_executor("break_ma")
+    result = executor.execute(_break_ma_multi_context(
+        closes=[9.7, 9.5], ma_values=[10.0, 10.0],
+        signal_config={"ma": 5, "break_type": "consecutive_below"},
+    ))
+    assert result.triggered is False
+    assert "need 3 bars" in result.reason
+
+
+def test_break_ma_consecutive_below_not_enough_ma_values():
+    executor = get_executor("break_ma")
+    result = executor.execute(_break_ma_multi_context(
+        closes=[9.7, 9.6, 9.5], ma_values=[10.0, 10.0],
+        signal_config={"ma": 5, "break_type": "consecutive_below"},
+    ))
+    assert result.triggered is False
+    assert "need 3 MA values" in result.reason
+
+
+def test_break_ma_consecutive_below_default_consecutive_bars_is_3():
+    executor = get_executor("break_ma")
+    closes = [9.8, 9.7, 9.6]
+    ma_vals = [10.0, 10.0, 10.0]
+    result = executor.execute(_break_ma_multi_context(
+        closes=closes, ma_values=ma_vals, signal_config={"ma": 5, "break_type": "consecutive_below"},
+    ))
+    assert result.triggered is True
+    assert result.snapshot["consecutive_bars"] == 3
+
+
+def test_ma_trend_price_not_below_ma_triggers_when_close_above_ma20():
+    result = get_executor("ma_trend").execute(_ma_trend_context(
+        latest_close=12.5, ma20_values=[9.5, 10.0],
+        signal_config={"mode": "price_not_below_ma"},
+    ))
+    assert result.triggered is True
+    assert result.snapshot["mode"] == "price_not_below_ma"
+    assert result.snapshot["ma"] == 20
+    assert result.snapshot["latest_close"] == 12.5
+    assert result.snapshot["latest_ma"] == 10.0
+    assert result.snapshot["executor_key"] == "ma_trend"
+    assert "not below" in result.reason
+
+
+def test_ma_trend_price_not_below_ma_not_triggered_when_close_below_ma20():
+    result = get_executor("ma_trend").execute(_ma_trend_context(
+        latest_close=9.0, ma20_values=[9.5, 10.0],
+        signal_config={"mode": "price_not_below_ma"},
+    ))
+    assert result.triggered is False
+    assert "below MA20" in result.reason
+
+
+def test_ma_trend_price_not_below_ma_with_custom_ma5():
+    result = get_executor("ma_trend").execute(_ma_trend_context(
+        ma5=12.0, latest_close=12.5,
+        signal_config={"mode": "price_not_below_ma", "ma": 5},
+    ))
+    assert result.triggered is True
+    assert result.snapshot["ma"] == 5
+    assert result.snapshot["latest_ma"] == 12.0
+
+
+def test_ma_trend_price_not_below_ma_missing_close_triggers_false():
+    context = RuleContext(
+        watch_id=1, stock_code="000001.SZ", stock_name="Ping An",
+        trading_system_code="uptrend", stage="observe",
+        rule_config={
+            "rule_code": "ma_trend_rule", "rule_name": "MA trend", "rule_type": "filter",
+            "config_json": {"signal": {"mode": "price_not_below_ma"}},
+        },
+        technical={"bars": [], "indicators": {"ma": {"ma20": [9.5, 10.0]}}},
+        trade_date=date(2026, 5, 28),
+    )
+    result = get_executor("ma_trend").execute(context)
+    assert result.triggered is False
+    assert "close is missing" in result.reason.lower()
+
+
+def test_ma_trend_price_not_below_ma_missing_ma_triggers_false():
+    context = RuleContext(
+        watch_id=1, stock_code="000001.SZ", stock_name="Ping An",
+        trading_system_code="uptrend", stage="observe",
+        rule_config={
+            "rule_code": "ma_trend_rule", "rule_name": "MA trend", "rule_type": "filter",
+            "config_json": {"signal": {"mode": "price_not_below_ma", "ma": 5}},
+        },
+        technical={
+            "bars": [FakeBar(datetime(2026, 5, 28, 15, 0), low_price=12.0, close_price=12.5, high_price=13.0)],
+            "indicators": {"ma": {}},
+        },
+        trade_date=date(2026, 5, 28),
+    )
+    result = get_executor("ma_trend").execute(context)
+    assert result.triggered is False
+    assert "insufficient" in result.reason.lower()

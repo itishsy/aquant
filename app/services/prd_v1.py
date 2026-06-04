@@ -159,7 +159,7 @@ class SeedService:
     ]
     TASK_CONFIG_DEFAULTS = {
         "prepare_watch_kline_data": {
-            "interval_minutes": 5,
+            "interval_minutes": 15,
             "timeframes": ["daily", "5m", "15m", "30m"],
             "max_requests_per_run": 100,
             "source_priority": ["mock"],
@@ -170,7 +170,7 @@ class SeedService:
             "max_requests_per_run": 100,
             "source_priority": ["mock"],
         },
-        "scan_watch_rules": {"interval_minutes": 10, "quote_max_age_minutes": 10},
+        "scan_watch_rules": {"interval_minutes": 15, "quote_max_age_minutes": 10},
         "scan_trade_rules": {"interval_minutes": 10, "quote_max_age_minutes": 10},
     }
     PLATFORM_BREAKOUT_PARAMS = [
@@ -185,7 +185,10 @@ class SeedService:
         ("m30_dead_cross", "30分钟死叉", "sell_signal", "30m", "macd_dead_cross", "30分钟 MACD 死叉卖出信号。"),
         ("break_platform_support", "收破支撑位", "stop_loss", "daily", "break_level", "日线收破支撑位止损信号。"),
     ]
-    UPTREND_RULES = []
+    UPTREND_RULES = [
+        ("uptrend_not_break_ma20", "趋势不跌破MA20", "filter", "daily", "ma_trend", "趋势观察阶段，股价不低于MA20的前置过滤条件。"),
+        ("uptrend_break_ma20_consecutive_remove", "连续3日跌破MA20剔除", "remove_signal", "daily", "break_ma", "连续3个交易日收盘价全部低于MA20，自动剔除观察。"),
+    ]
     GENERIC_OBSERVE_RULES = [
         ("observe_break_key_price", "观察跌破目标价", "observe_risk", "daily", "break_level", "观察阶段跌破目标价的风险提醒。"),
         ("observe_close_break_platform_support", "观察收破支撑位", "invalid_signal", "daily", "break_level", "观察阶段日线收破支撑位的失效提醒。"),
@@ -209,13 +212,28 @@ class SeedService:
     ]
     UPTREND_RULE_BINDINGS = [
         (
+            "uptrend_not_break_ma20",
+            "observe",
+            True,
+            "trend_filter",
+            "AND",
+            1,
+            {
+                "data": {"timeframe": "daily", "lookback_bars": 60, "indicators": ["ma"]},
+                "signal": {"mode": "price_not_below_ma", "ma": 20},
+            },
+        ),
+        (
             "b5_divergence",
             "observe",
             False,
             "bottom_divergence",
             "OR",
             2,
-            {"data": {"timeframe": "5m", "lookback_bars": 120, "indicators": ["macd"]}},
+            {
+                "data": {"timeframe": "5m", "lookback_bars": 120, "indicators": ["macd"]},
+                "signal": {"after_watch_added": True},
+            },
         ),
         (
             "b15_divergence",
@@ -224,7 +242,22 @@ class SeedService:
             "bottom_divergence",
             "OR",
             3,
-            {"data": {"timeframe": "15m", "lookback_bars": 120, "indicators": ["macd"]}},
+            {
+                "data": {"timeframe": "15m", "lookback_bars": 120, "indicators": ["macd"]},
+                "signal": {"after_watch_added": True},
+            },
+        ),
+        (
+            "uptrend_break_ma20_consecutive_remove",
+            "observe",
+            False,
+            "remove",
+            "OR",
+            10,
+            {
+                "data": {"timeframe": "daily", "lookback_bars": 60, "indicators": ["ma"]},
+                "signal": {"break_type": "consecutive_below", "ma": 20, "consecutive_bars": 3},
+            },
         ),
     ]
     PLATFORM_BREAKOUT_EXAMPLE_RULE_BINDINGS = [
@@ -436,6 +469,17 @@ class SeedService:
                     )
                 )
                 created += 1
+        # Targeted update: add after_watch_added to existing b5/b15_divergence bindings
+        for rule_code in ("b5_divergence", "b15_divergence"):
+            binding = self.db.query(TradingSystemRuleBinding).filter_by(
+                system_code="uptrend", rule_code=rule_code, stage="observe"
+            ).first()
+            if binding and isinstance(binding.config_json, dict):
+                signal = binding.config_json.get("signal")
+                if isinstance(signal, dict) and signal.get("after_watch_added") is not True:
+                    signal["after_watch_added"] = True
+                    binding.config_json = dict(binding.config_json, signal=signal)
+                    created += 1
         for rule_code, stage, required, logic_group, logic_operator, sort_order, enabled, config_json in self.PLATFORM_BREAKOUT_EXAMPLE_RULE_BINDINGS:
             if not self.db.query(TradingSystemRuleBinding).filter_by(system_code="breakout", rule_code=rule_code, stage=stage).first():
                 self.db.add(

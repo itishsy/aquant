@@ -56,5 +56,5 @@ def test_scheduler_registers_kline_prepare_jobs():
 
     assert watch_job is not None
     assert trade_job is not None
-    assert watch_job.trigger.interval.total_seconds() == 300
+    assert watch_job.trigger.interval.total_seconds() == 900
     assert trade_job.trigger.interval.total_seconds() == 300

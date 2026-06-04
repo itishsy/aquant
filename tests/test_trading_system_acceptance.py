@@ -1,5 +1,6 @@
 from app.models import (
     ConfigTask,
+    TradingRuleDefinition,
     TradingSystemDefinition,
     TradingSystemParamDefinition,
     TradingSystemRuleBinding,
@@ -66,10 +67,12 @@ def test_scheduler_registers_trading_system_rule_jobs():
         "update_watch_prices",
         "scan_watch_signals",
         "auto_remove_watch_pool",
+        "prepare_watch_kline_data",
         "scan_watch_rules",
         "scan_trade_rules",
     } <= job_ids
-    assert scheduler.get_job("scan_watch_rules").trigger.interval.total_seconds() == 600
+    assert scheduler.get_job("prepare_watch_kline_data").trigger.interval.total_seconds() == 900
+    assert scheduler.get_job("scan_watch_rules").trigger.interval.total_seconds() == 900
     assert scheduler.get_job("scan_trade_rules").trigger.interval.total_seconds() == 600
 
 
@@ -118,3 +121,120 @@ def test_add_watch_with_trading_system_validates_required_params(client, db_sess
     assert response.status_code == 400
     assert "invalid_condition" in response.json()["detail"]
     assert db_session.query(WatchPool).count() == 0
+
+
+def test_uptrend_new_rules_created_by_seed(db_session):
+    SeedService(db_session).init_defaults()
+
+    rules = {
+        row.rule_code: row
+        for row in db_session.query(TradingRuleDefinition)
+        .filter(TradingRuleDefinition.rule_code.in_([
+            "uptrend_not_break_ma20",
+            "uptrend_break_ma20_consecutive_remove",
+        ]))
+        .all()
+    }
+
+    assert "uptrend_not_break_ma20" in rules
+    r = rules["uptrend_not_break_ma20"]
+    assert r.rule_type == "filter"
+    assert r.timeframe == "daily"
+    assert r.executor_key == "ma_trend"
+    assert r.enabled is True
+
+    assert "uptrend_break_ma20_consecutive_remove" in rules
+    r2 = rules["uptrend_break_ma20_consecutive_remove"]
+    assert r2.rule_type == "remove_signal"
+    assert r2.timeframe == "daily"
+    assert r2.executor_key == "break_ma"
+    assert r2.enabled is True
+
+
+def test_uptrend_bindings_created_by_seed(db_session):
+    SeedService(db_session).init_defaults()
+
+    bindings = {
+        row.rule_code: row
+        for row in db_session.query(TradingSystemRuleBinding)
+        .filter(
+            TradingSystemRuleBinding.system_code == "uptrend",
+            TradingSystemRuleBinding.stage == "observe",
+            TradingSystemRuleBinding.enabled.is_(True),
+        )
+        .all()
+    }
+
+    # New filter replaces near_ma20_pullback as required at sort_order=1
+    assert "uptrend_not_break_ma20" in bindings
+    b = bindings["uptrend_not_break_ma20"]
+    assert b.required is True
+    assert b.sort_order == 1
+    signal = (b.config_json or {}).get("signal", {})
+    assert signal.get("mode") == "price_not_below_ma"
+    assert signal.get("ma") == 20
+
+    # b5_divergence: sort_order=2, after_watch_added=True
+    assert "b5_divergence" in bindings
+    b5 = bindings["b5_divergence"]
+    assert b5.required is False
+    assert b5.sort_order == 2
+    b5_signal = (b5.config_json or {}).get("signal", {})
+    assert b5_signal.get("after_watch_added") is True
+
+    # b15_divergence: sort_order=3, after_watch_added=True
+    assert "b15_divergence" in bindings
+    b15 = bindings["b15_divergence"]
+    assert b15.required is False
+    assert b15.sort_order == 3
+    b15_signal = (b15.config_json or {}).get("signal", {})
+    assert b15_signal.get("after_watch_added") is True
+
+    # New remove_signal rule at sort_order=10
+    assert "uptrend_break_ma20_consecutive_remove" in bindings
+    rm = bindings["uptrend_break_ma20_consecutive_remove"]
+    assert rm.required is False
+    assert rm.sort_order == 10
+    rm_signal = (rm.config_json or {}).get("signal", {})
+    assert rm_signal.get("break_type") == "consecutive_below"
+    assert rm_signal.get("ma") == 20
+    assert rm_signal.get("consecutive_bars") == 3
+
+
+def test_seed_idempotent_does_not_duplicate_uptrend_rules(db_session):
+    first = SeedService(db_session).init_defaults()
+    second = SeedService(db_session).init_defaults()
+
+    created_second = second.get("created", 0)
+    # After first seed, second should not create new rule definitions or bindings
+    assert created_second == 0
+
+
+def test_seed_preserves_existing_non_target_config(db_session):
+    """Re-seeding does not overwrite user-modified fields on existing bindings."""
+    SeedService(db_session).init_defaults()
+
+    # Simulate a user customizing b5_divergence binding
+    binding = db_session.query(TradingSystemRuleBinding).filter_by(
+        system_code="uptrend", rule_code="b5_divergence", stage="observe"
+    ).first()
+    binding.required = True
+    binding.sort_order = 99
+    user_config = dict(binding.config_json or {})
+    user_signal = dict(user_config.get("signal", {}))
+    user_signal["custom_field"] = "user_value"
+    user_config["signal"] = user_signal
+    binding.config_json = user_config
+    db_session.commit()
+
+    # Re-seed
+    SeedService(db_session).init_defaults()
+    db_session.refresh(binding)
+
+    # User customizations preserved
+    assert binding.required is True
+    assert binding.sort_order == 99
+    # after_watch_added should still be True (seed adds it idempotently)
+    updated_signal = (binding.config_json or {}).get("signal", {})
+    assert updated_signal.get("after_watch_added") is True
+    assert updated_signal.get("custom_field") == "user_value"

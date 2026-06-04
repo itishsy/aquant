@@ -39,7 +39,7 @@ def build_scheduler() -> BackgroundScheduler:
     scheduler.add_job(
         run_watch_kline_prepare,
         trigger="interval",
-        minutes=5,
+        minutes=15,
         id="prepare_watch_kline_data",
         name="Prepare watch-pool trading system K-line data",
         replace_existing=True,
@@ -72,7 +72,7 @@ def build_scheduler() -> BackgroundScheduler:
     scheduler.add_job(
         run_watch_rule_scan,
         trigger="interval",
-        minutes=10,
+        minutes=15,
         id="scan_watch_rules",
         name="Scan watch-pool trading system rules",
         replace_existing=True,

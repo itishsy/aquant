@@ -20,6 +20,12 @@ class MaTrendExecutor(RuleExecutor):
         bars = (context.technical or {}).get("bars") or []
         latest_bar = bars[-1] if bars else None
         latest_close = self._bar_number(latest_bar, "close_price") if latest_bar is not None else None
+
+        if mode == "price_not_below_ma":
+            return self._evaluate_price_not_below_ma(
+                rule_code, rule_name, rule_type, signal, ma_data, latest_bar, latest_close
+            )
+
         ma5 = self._last(ma_data.get("ma5"))
         ma10 = self._last(ma_data.get("ma10"))
         ma20_values = ma_data.get("ma20") or []
@@ -59,12 +65,60 @@ class MaTrendExecutor(RuleExecutor):
             snapshot={"mode": mode, "ma5": ma5, "ma10": ma10, "ma20": ma20, "latest_close": latest_close, "executor_key": self.executor_key},
         )
 
+    def _evaluate_price_not_below_ma(
+        self,
+        rule_code: str,
+        rule_name: str,
+        rule_type: str,
+        signal: dict[str, Any],
+        ma_data: dict[str, Any],
+        latest_bar: object | None,
+        latest_close: float | None,
+    ) -> RuleResult:
+        mode = "price_not_below_ma"
+        ma = self._ma_window(signal.get("ma"), 20)
+        ma_key = f"ma{ma}"
+        ma_values = ma_data.get(ma_key) or []
+        latest_ma = self._last(ma_values)
+
+        if latest_close is None:
+            return self._not_ready(rule_code, rule_name, rule_type, mode, "Latest close is missing.")
+        if latest_ma is None:
+            return self._not_ready(rule_code, rule_name, rule_type, mode, f"MA{ma} data is insufficient.")
+
+        triggered = latest_close >= latest_ma
+        return RuleResult(
+            triggered=triggered,
+            rule_code=rule_code,
+            rule_name=rule_name,
+            rule_type=rule_type,
+            signal_level="B" if triggered else None,
+            trigger_price=latest_close,
+            trigger_time=self._bar_time(latest_bar) or datetime.utcnow(),
+            reason=f"Latest close {latest_close} is {'not below' if triggered else 'below'} MA{ma} {latest_ma}.",
+            snapshot={
+                "mode": mode,
+                "ma": ma,
+                "latest_close": latest_close,
+                "latest_ma": latest_ma,
+                "executor_key": self.executor_key,
+            },
+        )
+
     @staticmethod
     def _signal_config(rule_config: dict[str, Any]) -> dict[str, Any]:
         config_json = rule_config.get("config_json") if isinstance(rule_config, dict) else {}
         if isinstance(config_json, dict) and isinstance(config_json.get("signal"), dict):
             return config_json["signal"]
         return {}
+
+    @staticmethod
+    def _ma_window(value: Any, default: int) -> int:
+        try:
+            window = int(value or default)
+        except (TypeError, ValueError):
+            return default
+        return window if window in {5, 10, 20} else default
 
     @staticmethod
     def _last(values: Any) -> float | None:

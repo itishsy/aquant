@@ -20,6 +20,12 @@ class BreakMaExecutor(RuleExecutor):
         bars = ((context.technical or {}).get("bars") or [])
         ma_values = (((context.technical or {}).get("indicators") or {}).get("ma") or {}).get(f"ma{ma_window}") or []
 
+        if break_type == "consecutive_below":
+            consecutive_bars = self._consecutive_bars(signal_config.get("consecutive_bars"))
+            return self._evaluate_consecutive_below(
+                rule_code, rule_name, rule_type, ma_window, consecutive_bars, bars, ma_values
+            )
+
         if len(bars) < 2 or len(ma_values) < 2:
             return self._not_ready(rule_code, rule_name, rule_type, ma_window, break_type, "Need at least 2 bars and MA values.")
 
@@ -66,6 +72,116 @@ class BreakMaExecutor(RuleExecutor):
             },
         )
 
+    def _evaluate_consecutive_below(
+        self,
+        rule_code: str,
+        rule_name: str,
+        rule_type: str,
+        ma_window: int,
+        consecutive_bars: int,
+        bars: list,
+        ma_values: list,
+    ) -> RuleResult:
+        if len(bars) < consecutive_bars:
+            return RuleResult(
+                triggered=False,
+                rule_code=rule_code,
+                rule_name=rule_name,
+                rule_type=rule_type,
+                reason=f"MA{ma_window} data not ready for consecutive_below: need {consecutive_bars} bars, got {len(bars)}.",
+                snapshot={
+                    "ma": ma_window,
+                    "break_type": "consecutive_below",
+                    "consecutive_bars": consecutive_bars,
+                    "executor_key": self.executor_key,
+                },
+            )
+        if len(ma_values) < consecutive_bars:
+            return RuleResult(
+                triggered=False,
+                rule_code=rule_code,
+                rule_name=rule_name,
+                rule_type=rule_type,
+                reason=f"MA{ma_window} data not ready for consecutive_below: need {consecutive_bars} MA values, got {len(ma_values)}.",
+                snapshot={
+                    "ma": ma_window,
+                    "break_type": "consecutive_below",
+                    "consecutive_bars": consecutive_bars,
+                    "executor_key": self.executor_key,
+                },
+            )
+
+        recent_bars = bars[-consecutive_bars:]
+        recent_ma_vals = ma_values[-consecutive_bars:]
+
+        recent_closes = [self._float_or_none(getattr(b, "close_price", None)) for b in recent_bars]
+        recent_ma_floats = [self._float_or_none(v) for v in recent_ma_vals]
+
+        for i in range(consecutive_bars):
+            close_val = recent_closes[i]
+            ma_val = recent_ma_floats[i]
+            if close_val is None:
+                return RuleResult(
+                    triggered=False,
+                    rule_code=rule_code,
+                    rule_name=rule_name,
+                    rule_type=rule_type,
+                    reason=f"MA{ma_window} data not ready for consecutive_below: close price missing at offset -{consecutive_bars - i}.",
+                    snapshot={
+                        "ma": ma_window,
+                        "break_type": "consecutive_below",
+                        "consecutive_bars": consecutive_bars,
+                        "executor_key": self.executor_key,
+                    },
+                )
+            if ma_val is None:
+                return RuleResult(
+                    triggered=False,
+                    rule_code=rule_code,
+                    rule_name=rule_name,
+                    rule_type=rule_type,
+                    reason=f"MA{ma_window} data not ready for consecutive_below: MA value missing at offset -{consecutive_bars - i}.",
+                    snapshot={
+                        "ma": ma_window,
+                        "break_type": "consecutive_below",
+                        "consecutive_bars": consecutive_bars,
+                        "executor_key": self.executor_key,
+                    },
+                )
+
+        latest_close = recent_closes[-1]
+        latest_ma = recent_ma_floats[-1]
+        triggered = all(recent_closes[i] < recent_ma_floats[i] for i in range(consecutive_bars))
+
+        latest_bar = recent_bars[-1]
+        latest_time = getattr(latest_bar, "kline_time", None)
+
+        return RuleResult(
+            triggered=triggered,
+            rule_code=rule_code,
+            rule_name=rule_name,
+            rule_type=rule_type,
+            signal_level="S" if triggered else "B",
+            trigger_price=latest_close,
+            trigger_time=latest_time or datetime.utcnow(),
+            reason=(
+                f"All {consecutive_bars} recent closes {recent_closes} broke below MA{ma_window} values {recent_ma_floats}."
+                if triggered
+                else f"Not all {consecutive_bars} recent closes {recent_closes} are below MA{ma_window} values {recent_ma_floats}."
+            ),
+            risk_desc=f"Price consecutively broke below MA{ma_window} for {consecutive_bars} bars; manual confirmation is required." if triggered else "",
+            snapshot={
+                "ma": ma_window,
+                "break_type": "consecutive_below",
+                "consecutive_bars": consecutive_bars,
+                "latest_close": latest_close,
+                "latest_ma": latest_ma,
+                "recent_closes": recent_closes,
+                "recent_ma_values": recent_ma_floats,
+                "executor_key": self.executor_key,
+            },
+        )
+
     @staticmethod
     def _signal_config(rule_config: dict[str, Any]) -> dict[str, Any]:
         config_json = rule_config.get("config_json") if isinstance(rule_config, dict) else {}
@@ -80,6 +196,14 @@ class BreakMaExecutor(RuleExecutor):
         except (TypeError, ValueError):
             return 5
         return window if window in {5, 10, 20} else 5
+
+    @staticmethod
+    def _consecutive_bars(value: Any) -> int:
+        try:
+            n = int(value or 3)
+        except (TypeError, ValueError):
+            return 3
+        return n if n > 0 else 3
 
     @staticmethod
     def _float_or_none(value: Any) -> float | None:

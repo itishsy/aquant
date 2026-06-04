@@ -83,6 +83,24 @@ def _seed_intraday_bars(db_session, stock_code="603019.SH", timeframe="5m", dive
     )
 
 
+def _seed_daily_ma_bars(db_session, stock_code="603019.SH", latest_close=100.0, base_close=100.0, count=60, end_date=None):
+    repo = KlineRepository(db_session)
+    end_date = end_date or date(2026, 5, 24)
+    start = end_date - timedelta(days=count - 1)
+    rows = []
+    for idx in range(count):
+        close = latest_close if idx == count - 1 else base_close
+        rows.append({
+            "trade_date": start + timedelta(days=idx),
+            "open": close - 0.2,
+            "high": close + 0.2,
+            "low": close - 0.5,
+            "close": close,
+            "volume": 100000 + idx,
+        })
+    repo.upsert_rows(stock_code, "daily", rows, "test")
+
+
 def _add_uptrend_watch(db_session, stock_code="603019.SH"):
     return _add_watch(
         db_session,
@@ -315,6 +333,7 @@ def test_scan_watch_rules_does_not_generate_signal_when_kline_is_stale(db_sessio
 def test_uptrend_without_bottom_divergence_does_not_generate_buy_signal(db_session):
     SeedService(db_session).init_defaults()
     watch = _add_uptrend_watch(db_session)
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
     _seed_intraday_bars(db_session, timeframe="5m", divergent=False)
     _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
 
@@ -330,6 +349,9 @@ def test_uptrend_without_bottom_divergence_does_not_generate_buy_signal(db_sessi
 def test_uptrend_5m_bottom_divergence_generates_buy_signal_when_email_disabled(db_session):
     SeedService(db_session).init_defaults()
     watch = _add_uptrend_watch(db_session)
+    watch.created_at = datetime(2026, 5, 23, 23, 0)
+    db_session.commit()
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
     _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
     _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
 
@@ -355,6 +377,9 @@ def test_uptrend_5m_bottom_divergence_generates_buy_signal_when_email_disabled(d
 def test_uptrend_15m_bottom_divergence_generates_buy_signal(db_session):
     SeedService(db_session).init_defaults()
     watch = _add_uptrend_watch(db_session)
+    watch.created_at = datetime(2026, 5, 23, 23, 0)
+    db_session.commit()
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
     _seed_intraday_bars(db_session, timeframe="5m", divergent=False)
     _seed_intraday_bars(db_session, timeframe="15m", divergent=True)
 
@@ -552,4 +577,238 @@ def test_watch_rule_preview_is_dry_run(client, db_session):
     db_session.refresh(watch)
     assert watch.status == before_status
     assert watch.system_stage == before_stage
+
+
+# ---- after_watch_added gate tests ----
+
+def _enable_after_watch_added_on_uptrend(db_session):
+    """Set after_watch_added=True on all uptrend observe-stage bindings."""
+    for binding in db_session.query(TradingSystemRuleBinding).filter_by(
+        system_code="uptrend", stage="observe"
+    ).all():
+        config = dict(binding.config_json or {})
+        signal = dict(config.get("signal", {}))
+        signal["after_watch_added"] = True
+        config["signal"] = signal
+        binding.config_json = config
+    db_session.commit()
+
+
+def test_uptrend_divergence_before_watch_added_does_not_generate_buy_signal(db_session):
+    """Trigger time earlier than watch.created_at → signal suppressed."""
+    SeedService(db_session).init_defaults()
+    _enable_after_watch_added_on_uptrend(db_session)
+
+    watch = _add_uptrend_watch(db_session)
+    watch.created_at = datetime(2026, 5, 24, 11, 0)
+    db_session.commit()
+
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
+
+    log = _scan_uptrend(db_session, now=datetime(2026, 5, 24, 11, 5))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) == 0
+    db_session.refresh(watch)
+    assert watch.status == "watching"
+
+
+def test_uptrend_divergence_after_watch_added_generates_buy_signal(db_session):
+    """Trigger time later than watch.created_at → buy signal generated normally."""
+    SeedService(db_session).init_defaults()
+    _enable_after_watch_added_on_uptrend(db_session)
+
+    watch = _add_uptrend_watch(db_session)
+    watch.created_at = datetime(2026, 5, 23, 23, 0)
+    db_session.commit()
+
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
+
+    log = _scan_uptrend(db_session, now=datetime(2026, 5, 24, 10, 25))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) == 1
+    signal = signals[0]
+    assert signal.rule_code == "b5_divergence"
+    assert signal.signal_type == "buy"
+    snapshot = signal.snapshot_json
+    assert snapshot["after_watch_added"] is True
+    assert snapshot["after_watch_added_passed"] is True
+    assert snapshot["observe_start_time"] is not None
+    assert snapshot["original_trigger_time"] is not None
+    db_session.refresh(watch)
+    assert watch.status == "buy_pending_confirm"
+
+
+def test_platform_breakout_not_affected_by_after_watch_added(db_session):
+    """Platform breakout has no after_watch_added configured → behavior unchanged."""
+    SeedService(db_session).init_defaults()
+    db_session.add(MktStockQuote(
+        stock_code="603019.SH", stock_name="中科曙光",
+        latest_price=25.05, change_pct=1.2,
+        source_update_time=datetime(2026, 5, 24, 10, 20),
+    ))
+    watch = WatchPool(
+        stock_code="603019.SH", stock_name="中科曙光",
+        active=True, status="watching", monitor_enabled=True, signal_enabled=True,
+        system_stage="observe", trading_system_code="breakout", trading_system="breakout",
+        system_params_json={"platform_upper_price": 24.0, "platform_support_price": 23.0,
+                           "key_observe_price": 24.5, "invalid_condition": "跌破平台支撑"},
+    )
+    watch.created_at = datetime(2026, 5, 24, 11, 0)
+    db_session.add(watch)
+    for rule_code in ["b5_divergence", "b15_divergence"]:
+        binding = db_session.query(TradingSystemRuleBinding).filter_by(
+            system_code="breakout", rule_code=rule_code, stage="observe",
+        ).first()
+        binding.config_json = {"data": {"timeframe": "5m" if rule_code == "b5_divergence" else "15m",
+                                         "lookback_bars": 10, "indicators": ["macd"]}}
+    db_session.commit()
+    _seed_daily_bars(db_session)
+    _seed_divergence_bars(db_session, timeframe="5m")
+    _seed_divergence_bars(db_session, timeframe="15m")
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 10, 21)).scan_watch_rules(date(2026, 5, 24))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) >= 1
+    assert {s.signal_type for s in signals} == {"buy"}
+    for s in signals:
+        assert "after_watch_added" not in (s.snapshot_json or {})
+
+
+# ---- auto-remove tests ----
+
+def _add_remove_signal_system(db_session, system_code="remove_test", rule_code="remove_consecutive",
+                               consecutive_bars=3, ma=20):
+    db_session.add(TradingRuleDefinition(
+        rule_code=rule_code,
+        rule_name=f"Remove: {consecutive_bars} days below MA{ma}",
+        rule_type="remove_signal", timeframe="daily", executor_key="break_ma", enabled=True,
+    ))
+    db_session.add(TradingSystemRuleBinding(
+        system_code=system_code, rule_code=rule_code, stage="observe", required=False,
+        logic_group="remove", logic_operator="OR", enabled=True, sort_order=1,
+        config_json={
+            "data": {"timeframe": "daily", "lookback_bars": 30, "indicators": ["ma"]},
+            "signal": {"ma": ma, "break_type": "consecutive_below", "consecutive_bars": consecutive_bars},
+        },
+    ))
+    db_session.commit()
+
+
+def _seed_daily_bars_custom(db_session, stock_code="000007.SZ", closes=None, base_close=100.0, count=60):
+    repo = KlineRepository(db_session)
+    end_date = date(2026, 5, 24)
+    start = end_date - timedelta(days=count - 1)
+    closes = closes or []
+    rows = []
+    for idx in range(count):
+        day = start + timedelta(days=idx)
+        idx_from_end = count - 1 - idx
+        c = closes[len(closes) - 1 - idx_from_end] if idx_from_end < len(closes) else base_close
+        rows.append({"trade_date": day, "open": c - 0.2, "high": c + 0.2, "low": c - 0.5,
+                     "close": c, "volume": 100000 + idx})
+    repo.upsert_rows(stock_code, "daily", rows, "test")
+
+
+def test_auto_remove_when_3_consecutive_days_below_ma20(db_session):
+    """3 consecutive daily closes below MA20 → auto-remove triggered."""
+    system_code = "remove_3day_test"
+    _add_remove_signal_system(db_session, system_code=system_code, rule_code="rm_3day")
+    watch = _add_watch(db_session, stock_code="000007.SZ", stock_name="ThreeDayRemove",
+                       trading_system_code=system_code, trading_system=system_code)
+    _seed_daily_bars_custom(db_session, stock_code="000007.SZ", closes=[95.0, 95.0, 95.0])
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    signal = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).first()
+
+    assert log.run_status == "success"
+    assert signal is not None
+    assert signal.rule_code == "rm_3day"
+    assert signal.rule_type == "remove_signal"
+    assert signal.signal_status == "observe_remove_pending"
+    db_session.refresh(watch)
+    assert watch.status == "removed"
+    assert watch.active is False
+    assert watch.monitor_enabled is False
+    assert watch.signal_enabled is False
+    assert watch.removed_at is not None
+    assert "broke below MA20" in (watch.archive_reason or "")
+    assert watch.next_action == "已自动剔除观察"
+
+    from app.models import WatchPoolStatusLog
+    log_entry = db_session.query(WatchPoolStatusLog).filter_by(
+        watch_id=watch.id, to_status="removed", operation_type="auto_remove"
+    ).first()
+    assert log_entry is not None
+    assert log_entry.operator_type == "system"
+
+
+def test_no_auto_remove_when_only_2_days_below_ma20(db_session):
+    """Only 2 of last 3 closes below MA20 → no auto-remove."""
+    system_code = "remove_2day_test"
+    _add_remove_signal_system(db_session, system_code=system_code, rule_code="rm_2day")
+    watch = _add_watch(db_session, stock_code="000008.SZ", stock_name="TwoDayNoRemove",
+                       trading_system_code=system_code, trading_system=system_code)
+    _seed_daily_bars_custom(db_session, stock_code="000008.SZ", closes=[100.0, 95.0, 95.0])
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) == 0
+    db_session.refresh(watch)
+    assert watch.status == "watching"
+
+
+def test_auto_remove_skips_buy_signal(db_session):
+    """When remove_signal triggers, buy_signal is skipped."""
+    system_code = "remove_priority_test"
+    db_session.add(TradingRuleDefinition(
+        rule_code="rm_priority", rule_name="Remove priority",
+        rule_type="remove_signal", timeframe="daily", executor_key="break_ma", enabled=True,
+    ))
+    db_session.add(TradingSystemRuleBinding(
+        system_code=system_code, rule_code="rm_priority", stage="observe", required=False,
+        logic_group="remove", logic_operator="OR", enabled=True, sort_order=1,
+        config_json={
+            "data": {"timeframe": "daily", "lookback_bars": 30, "indicators": ["ma"]},
+            "signal": {"ma": 20, "break_type": "consecutive_below", "consecutive_bars": 3},
+        },
+    ))
+    db_session.add(TradingRuleDefinition(
+        rule_code="buy_also", rule_name="Buy also triggers",
+        rule_type="buy_signal", timeframe="daily", executor_key="break_ma", enabled=True,
+    ))
+    db_session.add(TradingSystemRuleBinding(
+        system_code=system_code, rule_code="buy_also", stage="observe", required=False,
+        logic_group="buy_group", logic_operator="OR", enabled=True, sort_order=2,
+        config_json={
+            "data": {"timeframe": "daily", "lookback_bars": 30, "indicators": ["ma"]},
+            "signal": {"ma": 20, "break_type": "below"},
+        },
+    ))
+    db_session.commit()
+    watch = _add_watch(db_session, stock_code="000009.SZ", stock_name="PriorityTest",
+                       trading_system_code=system_code, trading_system=system_code)
+    _seed_daily_bars_custom(db_session, stock_code="000009.SZ", closes=[95.0, 95.0, 95.0])
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) == 1
+    assert signals[0].rule_code == "rm_priority"
+    assert signals[0].rule_type == "remove_signal"
+    db_session.refresh(watch)
+    assert watch.status == "removed"
+    assert watch.next_action == "已自动剔除观察"
 
