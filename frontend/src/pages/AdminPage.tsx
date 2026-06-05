@@ -447,7 +447,15 @@ export function AdminPage() {
               rules={tradingRules}
               executors={registeredExecutors}
               onSaved={loadAll}
-              onSystemUpdated={setSelectedSystem}
+              onSystemUpdated={(data) => {
+                setSelectedSystem(data);
+                setTradingSystems((prev) => {
+                  const exists = prev.some((s) => s.system_code === data.system_code);
+                  return exists
+                    ? prev.map((s) => s.system_code === data.system_code ? data : s)
+                    : [...prev, data];
+                });
+              }}
             />
           )}
 
