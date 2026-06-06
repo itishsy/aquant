@@ -38,7 +38,7 @@ def test_platform_breakout_watch_requirements_include_daily_5m_15m(db_session):
     assert stock["15m"]["reasons"] == ["b15_divergence"]
 
 
-def test_uptrend_watch_requirements_include_5m_15m(db_session):
+def test_uptrend_watch_requirements_include_daily_5m_15m(db_session):
     SeedService(db_session).init_defaults()
     db_session.add(_platform_watch(trading_system_code="uptrend", trading_system="uptrend"))
     db_session.commit()
@@ -46,7 +46,13 @@ def test_uptrend_watch_requirements_include_5m_15m(db_session):
     requirements = RuleDataRequirementService(db_session).build_watch_requirements(date(2026, 5, 24))
 
     stock = requirements["603019.SH"]
-    assert set(stock) == {"5m", "15m"}
+    assert set(stock) == {"daily", "5m", "15m"}
+    assert stock["daily"]["lookback_bars"] == 60
+    assert stock["daily"]["indicators"] == ["ma"]
+    assert stock["daily"]["reasons"] == [
+        "uptrend_not_break_ma20",
+        "uptrend_break_ma20_consecutive_remove",
+    ]
     assert stock["5m"]["lookback_bars"] == 120
     assert stock["5m"]["indicators"] == ["macd"]
     assert stock["5m"]["reasons"] == ["b5_divergence"]

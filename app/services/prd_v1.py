@@ -141,6 +141,7 @@ class SeedService:
         ("update_watch_prices", "signal"),
         ("scan_watch_signals", "signal"),
         ("scan_watch_rules", "signal"),
+        ("scan_watch_remove_rules", "signal"),
         ("scan_trade_rules", "signal"),
         ("auto_remove_watch_pool", "signal"),
         ("scan_trade_risk_signals", "signal"),
@@ -171,6 +172,7 @@ class SeedService:
             "source_priority": ["mock"],
         },
         "scan_watch_rules": {"interval_minutes": 15, "quote_max_age_minutes": 10},
+        "scan_watch_remove_rules": {"hour": 20, "minute": 0},
         "scan_trade_rules": {"interval_minutes": 10, "quote_max_age_minutes": 10},
     }
     PLATFORM_BREAKOUT_PARAMS = [
@@ -475,8 +477,8 @@ class SeedService:
                 system_code="uptrend", rule_code=rule_code, stage="observe"
             ).first()
             if binding and isinstance(binding.config_json, dict):
-                signal = binding.config_json.get("signal")
-                if isinstance(signal, dict) and signal.get("after_watch_added") is not True:
+                signal = dict(binding.config_json.get("signal") or {})
+                if signal.get("after_watch_added") is not True:
                     signal["after_watch_added"] = True
                     binding.config_json = dict(binding.config_json, signal=signal)
                     created += 1
@@ -979,6 +981,8 @@ class PrdWatchPoolService:
         key_observe_price = payload.get("key_observe_price", payload.get("entry_price"))
         auto_remove_price = payload.get("auto_remove_price")
         trading_system = system_context["trading_system"] or payload["trading_system"]
+        if system_context["trading_system_code"] == "uptrend":
+            auto_remove_price = None
         system_params = system_context["system_params"]
         entity = WatchPool(
             stock_code=code,
@@ -1270,6 +1274,8 @@ class PrdWatchPoolService:
             params["invalid_condition"] = payload.get("invalid_condition")
         if "auto_remove_price" not in params and payload.get("auto_remove_price") not in (None, ""):
             params["auto_remove_price"] = payload.get("auto_remove_price")
+        if system_code == "uptrend":
+            params.pop("auto_remove_price", None)
 
         definitions = (
             self.db.query(TradingSystemParamDefinition)
@@ -1379,6 +1385,11 @@ class PrdWatchPoolService:
             entity.remark = val
         if "status" in payload:
             entity.status = payload["status"]
+        if (entity.trading_system_code or entity.trading_system) == "uptrend":
+            entity.auto_remove_price = None
+            params = dict(entity.system_params_json or {})
+            params.pop("auto_remove_price", None)
+            entity.system_params_json = params
 
     def _safe_payload(self, payload: dict) -> dict:
         return {key: value for key, value in payload.items() if key not in {"password", "token", "cookie", "secret"}}

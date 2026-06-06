@@ -29,12 +29,7 @@ def test_trading_system_seed_data_is_ready_for_platform_breakout(db_session):
         )
         .all()
     }
-    assert {
-        "platform_upper_price",
-        "platform_support_price",
-        "key_observe_price",
-        "invalid_condition",
-    } <= required_params
+    assert {"platform_support_price", "key_observe_price"} <= required_params
 
     stage_rules = {
         (row.stage, row.rule_code)
@@ -54,7 +49,7 @@ def test_trading_system_seed_data_is_ready_for_platform_breakout(db_session):
     } <= stage_rules
 
     task_names = {row.task_name for row in db_session.query(ConfigTask).all()}
-    assert {"scan_watch_rules", "scan_trade_rules"} <= task_names
+    assert {"scan_watch_rules", "scan_watch_remove_rules", "scan_trade_rules"} <= task_names
 
 
 def test_scheduler_registers_trading_system_rule_jobs():
@@ -69,11 +64,14 @@ def test_scheduler_registers_trading_system_rule_jobs():
         "auto_remove_watch_pool",
         "prepare_watch_kline_data",
         "scan_watch_rules",
+        "scan_watch_remove_rules",
         "scan_trade_rules",
     } <= job_ids
     assert scheduler.get_job("prepare_watch_kline_data").trigger.interval.total_seconds() == 900
     assert scheduler.get_job("scan_watch_rules").trigger.interval.total_seconds() == 900
     assert scheduler.get_job("scan_trade_rules").trigger.interval.total_seconds() == 600
+    assert "hour='20'" in str(scheduler.get_job("scan_watch_remove_rules").trigger)
+    assert "minute='0'" in str(scheduler.get_job("scan_watch_remove_rules").trigger)
 
 
 def test_watch_rule_preview_requires_trading_system_code(client, db_session):
@@ -100,7 +98,7 @@ def test_watch_rule_preview_requires_trading_system_code(client, db_session):
     assert watch.signal_enabled is True
 
 
-def test_add_watch_with_trading_system_validates_required_params(client, db_session):
+def test_add_watch_with_trading_system_accepts_current_required_params(client, db_session):
     SeedService(db_session).init_defaults()
 
     response = client.post(
@@ -118,9 +116,8 @@ def test_add_watch_with_trading_system_validates_required_params(client, db_sess
         },
     )
 
-    assert response.status_code == 400
-    assert "invalid_condition" in response.json()["detail"]
-    assert db_session.query(WatchPool).count() == 0
+    assert response.status_code == 200
+    assert db_session.query(WatchPool).count() == 1
 
 
 def test_uptrend_new_rules_created_by_seed(db_session):
@@ -238,3 +235,19 @@ def test_seed_preserves_existing_non_target_config(db_session):
     updated_signal = (binding.config_json or {}).get("signal", {})
     assert updated_signal.get("after_watch_added") is True
     assert updated_signal.get("custom_field") == "user_value"
+
+
+def test_seed_adds_after_watch_added_when_existing_binding_has_no_signal_config(db_session):
+    SeedService(db_session).init_defaults()
+    binding = db_session.query(TradingSystemRuleBinding).filter_by(
+        system_code="uptrend", rule_code="b5_divergence", stage="observe"
+    ).first()
+    binding.config_json = {
+        "data": {"timeframe": "5m", "lookback_bars": 120, "indicators": ["macd"]}
+    }
+    db_session.commit()
+
+    SeedService(db_session).init_defaults()
+    db_session.refresh(binding)
+
+    assert binding.config_json["signal"]["after_watch_added"] is True

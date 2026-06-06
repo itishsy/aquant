@@ -92,6 +92,18 @@ def build_scheduler() -> BackgroundScheduler:
         misfire_grace_time=300,
     )
     scheduler.add_job(
+        run_watch_remove_rule_scan,
+        trigger="cron",
+        hour=20,
+        minute=0,
+        id="scan_watch_remove_rules",
+        name="Scan watch-pool remove rules daily",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
+    )
+    scheduler.add_job(
         run_watch_auto_remove,
         trigger="interval",
         minutes=15,
@@ -128,6 +140,14 @@ def run_watch_rule_scan() -> None:
     db: Session = SystemSessionLocal()
     try:
         TaskService(db).scan_watch_rules(date.today())
+    finally:
+        db.close()
+
+
+def run_watch_remove_rule_scan() -> None:
+    db: Session = SystemSessionLocal()
+    try:
+        TaskService(db).scan_watch_remove_rules(date.today())
     finally:
         db.close()
 

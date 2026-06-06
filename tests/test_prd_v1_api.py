@@ -81,7 +81,7 @@ def test_trading_system_seed_data_is_idempotent(db_session):
     assert first["created"] > 0
     assert second["created"] == 0
     assert counts_after_first == counts_after_second
-    assert counts_after_first == {"systems": 4, "params": 5, "rules": 12, "bindings": 12}
+    assert counts_after_first == {"systems": 4, "params": 3, "rules": 17, "bindings": 15}
 
     systems = {row.system_code: row.system_name for row in db_session.query(TradingSystemDefinition).all()}
     assert systems == {
@@ -96,11 +96,9 @@ def test_trading_system_seed_data_is_idempotent(db_session):
         for row in db_session.query(TradingSystemParamDefinition).filter_by(system_code="breakout").all()
     }
     assert platform_params == {
-        "platform_upper_price": ("箱体上沿", "number", True),
-        "platform_support_price": ("平台支撑位", "number", True),
-        "key_observe_price": ("关键观察价", "number", True),
+        "platform_support_price": ("支撑位", "number", True),
+        "key_observe_price": ("目标价", "number", True),
         "auto_remove_price": ("自动剔除价", "number", False),
-        "invalid_condition": ("失效条件", "text", True),
     }
 
     rules = {
@@ -149,7 +147,7 @@ def test_admin_trading_system_readonly_endpoints(client):
     systems = systems_response.json()["data"]
     assert [row["system_code"] for row in systems] == ["breakout", "uptrend", "relay", "rebound"]
 
-    detail_response = client.get("/api/admin/trading-systems/platform_breakout", headers=headers)
+    detail_response = client.get("/api/admin/trading-systems/breakout", headers=headers)
     assert detail_response.status_code == 200
     assert detail_response.json()["data"]["system_name"] == "突破"
 
@@ -159,20 +157,18 @@ def test_admin_trading_system_readonly_endpoints(client):
     assert "b5_divergence" in rule_codes
     assert "break_platform_support" in rule_codes
 
-    params_response = client.get("/api/admin/trading-systems/platform_breakout/params", headers=headers)
+    params_response = client.get("/api/admin/trading-systems/breakout/params", headers=headers)
     assert params_response.status_code == 200
     assert [row["param_key"] for row in params_response.json()["data"]] == [
-        "platform_upper_price",
         "platform_support_price",
         "key_observe_price",
         "auto_remove_price",
-        "invalid_condition",
     ]
 
-    bindings_response = client.get("/api/admin/trading-systems/platform_breakout/rules", headers=headers)
+    bindings_response = client.get("/api/admin/trading-systems/breakout/rules", headers=headers)
     assert bindings_response.status_code == 200
     bindings = bindings_response.json()["data"]
-    assert len(bindings) == 12
+    assert len(bindings) == 11
     assert bindings[0]["rule"] is not None
     assert {row["rule_code"] for row in bindings} >= {"observe_break_key_price", "observe_break_ma5", "observe_pullback_recent_high"}
     assert {row["stage"] for row in bindings} == {"observe", "trading", "stop_loss"}
@@ -444,9 +440,11 @@ def test_watch_pool_add_with_trading_system_instance_params(client, db_session):
     assert data["trading_system_code"] == "breakout"
     assert data["trading_system_name"] == "突破"
     assert data["system_stage"] == "observe"
-    assert data["system_params_json"]["platform_upper_price"] == 20.5
+    assert "platform_upper_price" not in data["system_params_json"]
+    assert data["system_params_json"]["platform_support_price"] == 19.2
+    assert data["system_params_json"]["key_observe_price"] == 20.8
     assert data["key_observe_price"] == 20.8
-    assert data["invalid_condition"] == "close below platform support"
+    assert data["invalid_condition"] == ""
 
 
 def test_watch_pool_update_accepts_trading_system_instance_params(client, db_session):
@@ -488,7 +486,7 @@ def test_watch_pool_update_accepts_trading_system_instance_params(client, db_ses
     assert updated.status_code == 200
     data = updated.json()["data"]
     assert data["trading_system_code"] == "breakout"
-    assert data["system_params_json"]["platform_upper_price"] == 21.5
+    assert "platform_upper_price" not in data["system_params_json"]
     assert data["system_params_json"]["platform_support_price"] == 20.2
     assert data["system_params_json"]["key_observe_price"] == 21.8
     assert data["system_params_json"]["auto_remove_price"] == 19.9
@@ -497,6 +495,25 @@ def test_watch_pool_update_accepts_trading_system_instance_params(client, db_ses
     assert data["invalid_condition"] == "close below updated support"
     assert data["risk_tags"] == ["break_support"]
     assert data["user_remark"] == "updated from detail drawer"
+
+
+def test_uptrend_watch_ignores_fixed_auto_remove_price(client, db_session):
+    SeedService(db_session).init_defaults()
+
+    created = client.post("/api/h5/watch-pool", json={
+        "stock_code": "688019.SH",
+        "stock_name": "Uptrend Remove Rule Test",
+        "trading_system_code": "uptrend",
+        "entry_reason": "trend pullback",
+        "system_params_json": {"auto_remove_price": 18.5},
+        "auto_remove_price": 18.5,
+    })
+
+    assert created.status_code == 200
+    data = created.json()["data"]
+    assert data["trading_system_code"] == "uptrend"
+    assert data["auto_remove_price"] is None
+    assert "auto_remove_price" not in data["system_params_json"]
 
 
 def test_h5_signal_and_trade_return_rule_display_fields(client, db_session):

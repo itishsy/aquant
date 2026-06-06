@@ -566,7 +566,8 @@ export function WatchPoolPage() {
   function normalizeEditParams(item: any) {
     const params = { ...(item.system_params_json || {}) };
     if (params.key_observe_price == null && item.key_observe_price != null) params.key_observe_price = item.key_observe_price;
-    if (params.auto_remove_price == null && item.auto_remove_price != null) params.auto_remove_price = item.auto_remove_price;
+    if ((item.trading_system_code || item.trading_system) !== "uptrend" && params.auto_remove_price == null && item.auto_remove_price != null) params.auto_remove_price = item.auto_remove_price;
+    if ((item.trading_system_code || item.trading_system) === "uptrend") delete params.auto_remove_price;
     if (params.invalid_condition == null && item.invalid_condition) params.invalid_condition = item.invalid_condition;
     return Object.fromEntries(Object.entries(params).map(([key, value]) => [key, value == null ? "" : String(value)]));
   }
@@ -587,13 +588,14 @@ export function WatchPoolPage() {
     if (!editing) return;
     const nextParams: Record<string, string> = {};
     if (editing.key_observe_price) nextParams.key_observe_price = editing.key_observe_price;
-    if (editing.auto_remove_price) nextParams.auto_remove_price = editing.auto_remove_price;
+    if (systemCode !== "uptrend" && editing.auto_remove_price) nextParams.auto_remove_price = editing.auto_remove_price;
     if (editing.invalid_condition) nextParams.invalid_condition = editing.invalid_condition;
     setEditing({
       ...editing,
       trading_system: systemCode,
       trading_system_code: systemCode,
       system_params_json: nextParams,
+      auto_remove_price: systemCode === "uptrend" ? "" : editing.auto_remove_price,
     });
   }
 
@@ -690,13 +692,18 @@ export function WatchPoolPage() {
       const autoRemovePrice = editing.system_params_json?.auto_remove_price || editing.auto_remove_price;
       const invalidCondition = editing.system_params_json?.invalid_condition || editing.invalid_condition;
       const systemParams = buildEditSystemParams();
+      if ((editing.trading_system_code || editing.trading_system) === "uptrend") {
+        delete systemParams.auto_remove_price;
+      }
       const updated = await apiPut<any>(`/h5/watch-pool/${editing.watch_id}`, {
         trading_system_code: editing.trading_system_code || editing.trading_system,
         trading_system: editing.trading_system,
         system_params_json: systemParams,
         entry_reason: editing.entry_reason,
         key_observe_price: keyObservePrice && String(keyObservePrice).trim() ? Number(keyObservePrice) : null,
-        auto_remove_price: autoRemovePrice && String(autoRemovePrice).trim() ? Number(autoRemovePrice) : null,
+        auto_remove_price: (editing.trading_system_code || editing.trading_system) === "uptrend"
+          ? null
+          : autoRemovePrice && String(autoRemovePrice).trim() ? Number(autoRemovePrice) : null,
         invalid_condition: invalidCondition,
         risk_tags: editing.risk_tags,
         user_remark: editing.user_remark,
@@ -1251,10 +1258,12 @@ export function WatchPoolPage() {
                 <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>关键观察价</span>
                 <Input type="number" value={editing.key_observe_price} placeholder="12.00" onChange={(value) => updateEditParam("key_observe_price", value)} />
               </div>
-              <div style={{ display: "grid", gap: 4 }}>
-                <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>自动剔除价</span>
-                <Input type="number" value={editing.auto_remove_price} placeholder="跌破后软剔除" onChange={(value) => updateEditParam("auto_remove_price", value)} />
-              </div>
+              {(editing.trading_system_code || editing.trading_system) !== "uptrend" && (
+                <div style={{ display: "grid", gap: 4 }}>
+                  <span style={{ color: "#5b6d8a", fontSize: 12, fontWeight: 700 }}>自动剔除价</span>
+                  <Input type="number" value={editing.auto_remove_price} placeholder="跌破后软剔除" onChange={(value) => updateEditParam("auto_remove_price", value)} />
+                </div>
+              )}
             </div>
 
             <div style={{ display: "grid", gap: 10 }}>

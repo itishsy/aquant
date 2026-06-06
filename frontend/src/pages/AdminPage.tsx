@@ -150,7 +150,7 @@ export function AdminPage() {
     if (!watchForm.code || !watchForm.name) { Toast.show({ content: "请填写代码和名称" }); return; }
     if (!watchForm.observePrice || Number(watchForm.observePrice) <= 0) { Toast.show({ content: "请填写有效观察价" }); return; }
     if (!watchForm.invalidCond.trim()) { Toast.show({ content: "请填写失效条件" }); return; }
-    if (watchForm.removePrice && Number(watchForm.removePrice) <= 0) { Toast.show({ content: "自动剔除价必须大于0" }); return; }
+    if (watchForm.system !== "uptrend" && watchForm.removePrice && Number(watchForm.removePrice) <= 0) { Toast.show({ content: "自动剔除价必须大于0" }); return; }
     setWatchSubmitting(true);
     try {
       await apiPost("/admin/watch-pool", {
@@ -158,7 +158,7 @@ export function AdminPage() {
         trading_system: watchForm.system || "uptrend",
         entry_reason: watchForm.reason || "后台手动添加",
         key_observe_price: watchForm.observePrice ? Number(watchForm.observePrice) : undefined,
-        auto_remove_price: watchForm.removePrice ? Number(watchForm.removePrice) : undefined,
+        auto_remove_price: watchForm.system === "uptrend" ? undefined : watchForm.removePrice ? Number(watchForm.removePrice) : undefined,
         invalid_condition: watchForm.invalidCond,
       });
       Toast.show({ content: "观察股已添加" });
@@ -394,7 +394,7 @@ export function AdminPage() {
                       <FormLabel text="股票名称" /><Input placeholder="中科曙光" value={watchForm.name} onChange={(v) => setWatchForm({...watchForm, name: v})} />
                       <FormLabel text="交易体系" /><Input placeholder="uptrend" value={watchForm.system} onChange={(v) => setWatchForm({...watchForm, system: v})} />
                       <FormLabel text="观察价" /><Input placeholder="50" value={watchForm.observePrice} onChange={(v) => setWatchForm({...watchForm, observePrice: v})} />
-                      <FormLabel text="自动剔除价" /><Input placeholder="48" value={watchForm.removePrice} onChange={(v) => setWatchForm({...watchForm, removePrice: v})} />
+                      {watchForm.system !== "uptrend" && <><FormLabel text="自动剔除价" /><Input placeholder="48" value={watchForm.removePrice} onChange={(v) => setWatchForm({...watchForm, removePrice: v})} /></>}
                       <FormLabel text="失效条件" /><Input placeholder="跌破观察位" value={watchForm.invalidCond} onChange={(v) => setWatchForm({...watchForm, invalidCond: v})} />
                       <FormLabel text="入选理由" /><Input placeholder="后台手动添加" value={watchForm.reason} onChange={(v) => setWatchForm({...watchForm, reason: v})} />
                       <Button block color="primary" size="small" loading={watchSubmitting} onClick={addWatch}>添加观察股</Button>

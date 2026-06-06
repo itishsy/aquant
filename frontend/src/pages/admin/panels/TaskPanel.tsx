@@ -1,7 +1,7 @@
 import { Button, Toast } from "antd-mobile";
 import { taskConfigSummary, taskErrorText, taskTimeText } from "../utils";
 
-export const WATCH_MONITOR_TASKS = new Set(["scan_watch_rules", "scan_trade_rules", "prepare_watch_kline_data", "prepare_trade_kline_data", "auto_remove_watch_pool", "update_watch_prices"]);
+export const WATCH_MONITOR_TASKS = new Set(["scan_watch_rules", "scan_watch_remove_rules", "scan_trade_rules", "prepare_watch_kline_data", "prepare_trade_kline_data", "auto_remove_watch_pool", "update_watch_prices"]);
 
 export function TaskPanel({ tasks, onRun, onSaveConfig }: { tasks: any[]; onRun: (task: any) => void; onSaveConfig: (task: any, config: Record<string, any>) => void }) {
   const watchTasks = tasks.filter((task) => WATCH_MONITOR_TASKS.has(task.task_name));

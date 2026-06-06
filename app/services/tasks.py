@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -693,7 +693,13 @@ class TaskService:
 
         return self._run("scan_watch_signals", lambda: len(SignalEngine(self.db).scan()))
 
-    def scan_watch_rules(self, trade_date: date) -> ConfigTaskLog:
+    def scan_watch_rules(
+        self,
+        trade_date: date,
+        *,
+        rule_mode: str = "regular",
+        task_name: str = "scan_watch_rules",
+    ) -> ConfigTaskLog:
         def _do() -> int:
             from app.rule_executors import RuleContext, RuleResult, get_executor
             from app.services.notification import NotificationService
@@ -704,7 +710,7 @@ class TaskService:
             requirement_service = RuleDataRequirementService(self.db)
             technical_service = TechnicalContextService(self.db)
             scan_now = self._current_time()
-            config = self._task_config("scan_watch_rules")
+            config = self._task_config(task_name)
             quote_freshness = QuoteFreshnessService(config.get("quote_max_age_minutes") or 10)
             notification_errors: list[str] = []
             technical_warnings: list[str] = []
@@ -934,8 +940,8 @@ class TaskService:
                     trigger_price=result.trigger_price,
                     trigger_reason=result.reason,
                     risk_desc=result.risk_desc,
-                    signal_status=_observe_signal_status(rule.rule_type),
-                    user_action="pending",
+                    signal_status="observe_removed",
+                    user_action="auto_removed",
                     trigger_signature=f"observe-rule:{watch.id}:{rule.rule_code}:{trigger_date.isoformat()}",
                     raw_snapshot=snapshot,
                     snapshot_json=snapshot,
@@ -973,6 +979,17 @@ class TaskService:
                     return result
 
                 observe_start = watch.created_at
+                if observe_start is not None:
+                    observe_start_utc = (
+                        observe_start.replace(tzinfo=timezone.utc)
+                        if observe_start.tzinfo is None
+                        else observe_start.astimezone(timezone.utc)
+                    )
+                    observe_start = (
+                        observe_start_utc
+                        .astimezone(ZoneInfo(get_settings().timezone))
+                        .replace(tzinfo=None)
+                    )
                 if observe_start is None and watch.added_trade_date is not None:
                     observe_start = dt.combine(watch.added_trade_date, dt.min.time())
 
@@ -1028,6 +1045,10 @@ class TaskService:
                 )
                 results = []
                 for binding, rule in bindings:
+                    if rule_mode == "remove_only" and rule.rule_type != "remove_signal":
+                        continue
+                    if rule_mode != "remove_only" and rule.rule_type == "remove_signal":
+                        continue
                     if rule.executor_key not in self.SAFE_RULE_EXECUTORS:
                         continue
                     executor = get_executor(rule.executor_key)
@@ -1077,9 +1098,6 @@ class TaskService:
                     result = _after_watch_added_gate(binding, watch, result)
                     results.append((binding, rule, result, technical, quote_status))
                     affected += 1
-                required_ok = all(result.triggered for binding, _rule, result, _technical, _quote_status in results if binding.required)
-                if not required_ok:
-                    continue
                 # remove_signal takes priority: auto-remove watch and skip buy signals
                 remove_results = [
                     (binding, rule, result, technical, quote_status)
@@ -1089,6 +1107,9 @@ class TaskService:
                 if remove_results:
                     for _binding, rule, result, technical, quote_status in remove_results:
                         affected += _save_remove_signal(watch, rule, result, technical, quote_status)
+                    continue
+                required_ok = all(result.triggered for binding, _rule, result, _technical, _quote_status in results if binding.required)
+                if not required_ok:
                     continue
                 risk_results = [
                     (binding, rule, result, technical, quote_status)
@@ -1108,7 +1129,14 @@ class TaskService:
                     affected += _save_signal(watch, rule, result, technical, quote_status)
             return affected, "; ".join((notification_errors + technical_warnings)[:5])
 
-        return self._run("scan_watch_rules", _do)
+        return self._run(task_name, _do)
+
+    def scan_watch_remove_rules(self, trade_date: date) -> ConfigTaskLog:
+        return self.scan_watch_rules(
+            trade_date,
+            rule_mode="remove_only",
+            task_name="scan_watch_remove_rules",
+        )
 
     def scan_trade_rules(self, trade_date: date) -> ConfigTaskLog:
         def _do() -> int | tuple[int, str]:
@@ -1387,6 +1415,8 @@ class TaskService:
             )
             affected = 0
             for watch in rows:
+                if (watch.trading_system_code or watch.trading_system) == "uptrend":
+                    continue
                 has_buy_signal = (
                     self.db.query(WatchSignal.signal_id)
                     .filter(WatchSignal.watch_id == watch.id, WatchSignal.signal_type == "buy")

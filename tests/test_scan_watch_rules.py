@@ -582,10 +582,12 @@ def test_watch_rule_preview_is_dry_run(client, db_session):
 # ---- after_watch_added gate tests ----
 
 def _enable_after_watch_added_on_uptrend(db_session):
-    """Set after_watch_added=True on all uptrend observe-stage bindings."""
+    """Set after_watch_added=True on uptrend divergence bindings."""
     for binding in db_session.query(TradingSystemRuleBinding).filter_by(
         system_code="uptrend", stage="observe"
     ).all():
+        if binding.rule_code not in {"b5_divergence", "b15_divergence"}:
+            continue
         config = dict(binding.config_json or {})
         signal = dict(config.get("signal", {}))
         signal["after_watch_added"] = True
@@ -612,6 +614,26 @@ def test_uptrend_divergence_before_watch_added_does_not_generate_buy_signal(db_s
 
     assert log.run_status == "success"
     assert len(signals) == 0
+    db_session.refresh(watch)
+    assert watch.status == "watching"
+
+
+def test_uptrend_after_watch_added_gate_compares_utc_created_at_in_exchange_timezone(db_session):
+    """A 02:30 UTC watch add is 10:30 Asia/Shanghai, later than the 10:20 signal."""
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session)
+    watch.created_at = datetime(2026, 5, 24, 2, 30)
+    db_session.commit()
+
+    _seed_daily_ma_bars(db_session, latest_close=100.0, base_close=100.0)
+    _seed_intraday_bars(db_session, timeframe="5m", divergent=True)
+    _seed_intraday_bars(db_session, timeframe="15m", divergent=False)
+
+    log = _scan_uptrend(db_session, now=datetime(2026, 5, 24, 10, 25))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert signals == []
     db_session.refresh(watch)
     assert watch.status == "watching"
 
@@ -727,14 +749,15 @@ def test_auto_remove_when_3_consecutive_days_below_ma20(db_session):
                        trading_system_code=system_code, trading_system=system_code)
     _seed_daily_bars_custom(db_session, stock_code="000007.SZ", closes=[95.0, 95.0, 95.0])
 
-    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 20, 0)).scan_watch_remove_rules(date(2026, 5, 24))
     signal = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).first()
 
     assert log.run_status == "success"
     assert signal is not None
     assert signal.rule_code == "rm_3day"
     assert signal.rule_type == "remove_signal"
-    assert signal.signal_status == "observe_remove_pending"
+    assert signal.signal_status == "observe_removed"
+    assert signal.user_action == "auto_removed"
     db_session.refresh(watch)
     assert watch.status == "removed"
     assert watch.active is False
@@ -760,7 +783,7 @@ def test_no_auto_remove_when_only_2_days_below_ma20(db_session):
                        trading_system_code=system_code, trading_system=system_code)
     _seed_daily_bars_custom(db_session, stock_code="000008.SZ", closes=[100.0, 95.0, 95.0])
 
-    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 20, 0)).scan_watch_remove_rules(date(2026, 5, 24))
     signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
 
     assert log.run_status == "success"
@@ -801,7 +824,7 @@ def test_auto_remove_skips_buy_signal(db_session):
                        trading_system_code=system_code, trading_system=system_code)
     _seed_daily_bars_custom(db_session, stock_code="000009.SZ", closes=[95.0, 95.0, 95.0])
 
-    log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 20, 0)).scan_watch_remove_rules(date(2026, 5, 24))
     signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
 
     assert log.run_status == "success"
@@ -811,4 +834,28 @@ def test_auto_remove_skips_buy_signal(db_session):
     db_session.refresh(watch)
     assert watch.status == "removed"
     assert watch.next_action == "已自动剔除观察"
+
+
+def test_uptrend_auto_remove_is_not_blocked_by_required_ma20_filter(db_session):
+    """The required not-below-MA20 buy filter must not block uptrend auto-removal."""
+    SeedService(db_session).init_defaults()
+    watch = _add_uptrend_watch(db_session, stock_code="000010.SZ")
+    _seed_daily_bars_custom(db_session, stock_code="000010.SZ", closes=[95.0, 95.0, 95.0])
+
+    regular_log = TaskService(db_session, now=datetime(2026, 5, 24, 15, 10)).scan_watch_rules(date(2026, 5, 24))
+    db_session.refresh(watch)
+    assert regular_log.run_status == "success"
+    assert watch.status == "watching"
+
+    log = TaskService(db_session, now=datetime(2026, 5, 24, 20, 0)).scan_watch_remove_rules(date(2026, 5, 24))
+    signals = db_session.query(WatchSignal).filter(WatchSignal.watch_id == watch.id).all()
+
+    assert log.run_status == "success"
+    assert len(signals) == 1
+    assert signals[0].rule_code == "uptrend_break_ma20_consecutive_remove"
+    assert signals[0].signal_status == "observe_removed"
+    assert signals[0].user_action == "auto_removed"
+    db_session.refresh(watch)
+    assert watch.status == "removed"
+    assert watch.active is False
 

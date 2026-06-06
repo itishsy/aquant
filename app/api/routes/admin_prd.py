@@ -310,6 +310,7 @@ def run_config_task(task_id: int, db: Session = Depends(get_db), admin=Depends(r
         "update_watch_prices": svc.update_watch_prices,
         "scan_watch_signals": svc.scan_watch_signals,
         "scan_watch_rules": svc.scan_watch_rules,
+        "scan_watch_remove_rules": svc.scan_watch_remove_rules,
         "scan_trade_rules": svc.scan_trade_rules,
         "auto_remove_watch_pool": svc.auto_remove_watch_pool,
         "scan_trade_risk_signals": svc.scan_trade_risk_signals,
@@ -846,7 +847,8 @@ def admin_add_watch(payload: dict, db: Session = Depends(get_db), admin=Depends(
     stock_name = _required_text(payload, "stock_name", "股票名称")
     invalid_condition = _required_text(payload, "invalid_condition", "失效条件")
     key_observe_price = _required_positive_float(payload, "key_observe_price", "观察价")
-    auto_remove_price = _optional_positive_float(payload, "auto_remove_price", "自动剔除价")
+    system_code = payload.get("trading_system_code") or payload.get("trading_system") or "uptrend"
+    auto_remove_price = None if system_code == "uptrend" else _optional_positive_float(payload, "auto_remove_price", "自动剔除价")
     existing = db.query(WatchPool).filter(WatchPool.stock_code == code, WatchPool.active.is_(True)).first()
     if existing:
         raise HTTPException(status_code=409, detail="该股票已在观察池中")
