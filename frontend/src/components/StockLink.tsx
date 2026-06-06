@@ -56,6 +56,8 @@ function InfoRow({ label, value }: { label: string; value: any }) {
 }
 
 function DetailPanel({ ctx }: { ctx: Record<string, any> }) {
+  const isUptrend = ctx.trading_system_code === "uptrend"
+    || ["uptrend", "趋势", "上涨趋势"].includes(ctx.trading_system);
   const detailRows: Array<[string, any]> = [
     ["最新价", ctx.last_price ?? ctx.price],
     ["涨幅", ctx.change_pct != null ? formatPct(ctx.change_pct) : null],
@@ -72,7 +74,7 @@ function DetailPanel({ ctx }: { ctx: Record<string, any> }) {
     ["剩余数量", ctx.remaining_amount],
     ["盈亏", ctx.pnl_amount],
     ["观察价", ctx.key_observe_price],
-    ["自动剔除价", ctx.auto_remove_price],
+    ["自动剔除价", isUptrend ? null : ctx.auto_remove_price],
     ["止损价", ctx.stop_loss_price],
     ["目标价", ctx.target_price],
     ["封板时间", ctx.limit_time],

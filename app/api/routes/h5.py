@@ -62,6 +62,10 @@ def _quote_map(db: Session, stock_codes: list[str]) -> dict[str, MktStockQuote]:
 
 def _watch_dict(row: WatchPool, quote: MktStockQuote | None = None, system_name: str | None = None) -> dict:
     system_code = row.trading_system_code or row.trading_system
+    is_uptrend = row.trading_system_code == "uptrend" or row.trading_system in {"uptrend", "趋势", "上涨趋势"}
+    system_params = dict(row.system_params_json or {})
+    if is_uptrend:
+        system_params.pop("auto_remove_price", None)
     data = {
         "watch_id": row.id,
         "stock_code": row.stock_code,
@@ -75,12 +79,12 @@ def _watch_dict(row: WatchPool, quote: MktStockQuote | None = None, system_name:
         "trading_system_code": row.trading_system_code,
         "trading_system_name": system_name or system_code,
         "system_stage": row.system_stage or "observe",
-        "system_params_json": row.system_params_json or {},
+        "system_params_json": system_params,
         "active_rule_codes_json": row.active_rule_codes_json or [],
         "next_action": row.next_action,
         "system_recommendation": row.system_recommendation,
         "key_observe_price": row.key_observe_price,
-        "auto_remove_price": row.auto_remove_price,
+        "auto_remove_price": None if is_uptrend else row.auto_remove_price,
         "invalid_condition": row.invalid_condition,
         "risk_tags": row.risk_tags,
         "signal_enabled": row.signal_enabled,

@@ -516,6 +516,30 @@ def test_uptrend_watch_ignores_fixed_auto_remove_price(client, db_session):
     assert "auto_remove_price" not in data["system_params_json"]
 
 
+def test_h5_uptrend_watch_hides_legacy_fixed_auto_remove_price(client, db_session):
+    watch = WatchPool(
+        stock_code="688020.SH",
+        stock_name="Legacy Uptrend Test",
+        active=True,
+        status="watching",
+        monitor_enabled=True,
+        signal_enabled=True,
+        trading_system="上涨趋势",
+        system_stage="observe",
+        auto_remove_price=18.5,
+        system_params_json={"auto_remove_price": 18.5, "other": "kept"},
+    )
+    db_session.add(watch)
+    db_session.commit()
+
+    response = client.get("/api/h5/watch-pool")
+
+    assert response.status_code == 200
+    row = next(item for item in response.json()["data"] if item["stock_code"] == "688020.SH")
+    assert row["auto_remove_price"] is None
+    assert row["system_params_json"] == {"other": "kept"}
+
+
 def test_h5_signal_and_trade_return_rule_display_fields(client, db_session):
     SeedService(db_session).init_defaults()
     watch = WatchPool(

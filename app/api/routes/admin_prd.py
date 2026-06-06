@@ -848,7 +848,7 @@ def admin_add_watch(payload: dict, db: Session = Depends(get_db), admin=Depends(
     invalid_condition = _required_text(payload, "invalid_condition", "失效条件")
     key_observe_price = _required_positive_float(payload, "key_observe_price", "观察价")
     system_code = payload.get("trading_system_code") or payload.get("trading_system") or "uptrend"
-    auto_remove_price = None if system_code == "uptrend" else _optional_positive_float(payload, "auto_remove_price", "自动剔除价")
+    auto_remove_price = None if system_code in {"uptrend", "趋势", "上涨趋势"} else _optional_positive_float(payload, "auto_remove_price", "自动剔除价")
     existing = db.query(WatchPool).filter(WatchPool.stock_code == code, WatchPool.active.is_(True)).first()
     if existing:
         raise HTTPException(status_code=409, detail="该股票已在观察池中")

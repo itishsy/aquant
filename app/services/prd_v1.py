@@ -981,7 +981,7 @@ class PrdWatchPoolService:
         key_observe_price = payload.get("key_observe_price", payload.get("entry_price"))
         auto_remove_price = payload.get("auto_remove_price")
         trading_system = system_context["trading_system"] or payload["trading_system"]
-        if system_context["trading_system_code"] == "uptrend":
+        if system_context["trading_system_code"] == "uptrend" or trading_system in {"uptrend", "趋势", "上涨趋势"}:
             auto_remove_price = None
         system_params = system_context["system_params"]
         entity = WatchPool(
@@ -1385,7 +1385,7 @@ class PrdWatchPoolService:
             entity.remark = val
         if "status" in payload:
             entity.status = payload["status"]
-        if (entity.trading_system_code or entity.trading_system) == "uptrend":
+        if entity.trading_system_code == "uptrend" or entity.trading_system in {"uptrend", "趋势", "上涨趋势"}:
             entity.auto_remove_price = None
             params = dict(entity.system_params_json or {})
             params.pop("auto_remove_price", None)

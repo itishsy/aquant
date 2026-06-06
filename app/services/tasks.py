@@ -1415,7 +1415,7 @@ class TaskService:
             )
             affected = 0
             for watch in rows:
-                if (watch.trading_system_code or watch.trading_system) == "uptrend":
+                if watch.trading_system_code == "uptrend" or watch.trading_system in {"uptrend", "趋势", "上涨趋势"}:
                     continue
                 has_buy_signal = (
                     self.db.query(WatchSignal.signal_id)
