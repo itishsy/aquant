@@ -13,7 +13,7 @@ type Props = {
 
 export function StockDetailPopup({ visible, stockCode, stockName, info, onClose }: Props) {
   const [tab, setTab] = useState<"kline" | "reason">("kline");
-  const [klineData, setKlineData] = useState<any[]>([]);
+  const [klineData, setKlineData] = useState<KlineBar[]>([]);
   const [loading, setLoading] = useState(false);
   const xueqiuCode = (() => {
     const s = stockCode.trim().toUpperCase();
@@ -26,7 +26,7 @@ export function StockDetailPopup({ visible, stockCode, stockName, info, onClose 
   useEffect(() => {
     if (!visible || !stockCode) return;
     setLoading(true);
-    apiGet<any[]>(`/h5/market/stocks/${stockCode}/kline-daily?limit=100`)
+    apiGet<KlineBar[]>(`/h5/market/stocks/${stockCode}/kline-daily?limit=100`)
       .then((data) => setKlineData(data || []))
       .catch(() => setKlineData([]))
       .finally(() => setLoading(false));
@@ -108,8 +108,50 @@ function calculateMacd(closes: number[]) {
   return { dif, dea, hist };
 }
 
-export function KlineChart({ data, loading }: { data: any[]; loading: boolean }) {
+export type KlineLevelMarker = {
+  name: string;
+  price: number;
+  color?: string;
+};
+
+export type KlineBar = {
+  trade_date?: string | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  close?: number | null;
+  volume?: number | null;
+  amount?: number | null;
+  ma5?: number | null;
+  ma10?: number | null;
+  ma20?: number | null;
+  source?: string | null;
+};
+
+export type KlineChartProps = {
+  data: KlineBar[];
+  loading: boolean;
+  levels?: KlineLevelMarker[];
+};
+
+function normalizeLevelMarkers(levels: KlineLevelMarker[] | undefined): KlineLevelMarker[] {
+  const prices = new Set<number>();
+  return (levels || []).filter((level) => {
+    const price = Number(level.price);
+    if (!level.name?.trim() || !Number.isFinite(price) || price <= 0 || prices.has(price)) return false;
+    prices.add(price);
+    return true;
+  });
+}
+
+function markerLabel(level: KlineLevelMarker): string {
+  const price = level.price.toFixed(4).replace(/\.?0+$/, "");
+  return `${level.name} ${price}`;
+}
+
+export function KlineChart({ data, loading, levels }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const levelMarkers = useMemo(() => normalizeLevelMarkers(levels), [levels]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -123,6 +165,15 @@ export function KlineChart({ data, loading }: { data: any[]; loading: boolean })
     const ma20 = data.map((d) => d.ma20 ?? null);
     const closes = data.map((d) => Number(d.close || 0));
     const macd = calculateMacd(closes);
+    const mainAxisValues = [
+      ...data.flatMap((item) => [Number(item.low), Number(item.high)]),
+      ...levelMarkers.map((level) => level.price),
+    ].filter((value) => Number.isFinite(value) && value > 0);
+    const mainAxisMin = mainAxisValues.length ? Math.min(...mainAxisValues) : null;
+    const mainAxisMax = mainAxisValues.length ? Math.max(...mainAxisValues) : null;
+    const mainAxisPadding = mainAxisMin !== null && mainAxisMax !== null
+      ? Math.max((mainAxisMax - mainAxisMin) * 0.06, mainAxisMax * 0.002)
+      : null;
 
     chart.setOption({
       animation: false,
@@ -139,21 +190,50 @@ export function KlineChart({ data, loading }: { data: any[]; loading: boolean })
         { type: "category", data: dates, gridIndex: 2, axisLabel: { fontSize: 10, interval: Math.max(1, Math.floor(data.length / 6)) } },
       ],
       yAxis: [
-        { type: "value", scale: true, axisLabel: { fontSize: 10 } },
+        {
+          type: "value",
+          scale: true,
+          min: mainAxisMin !== null && mainAxisPadding !== null ? Math.max(0, mainAxisMin - mainAxisPadding) : undefined,
+          max: mainAxisMax !== null && mainAxisPadding !== null ? mainAxisMax + mainAxisPadding : undefined,
+          axisLabel: { fontSize: 10 },
+        },
         { type: "value", gridIndex: 1, axisLabel: { fontSize: 10 } },
         { type: "value", gridIndex: 2, scale: true, axisLabel: { fontSize: 10 } },
       ],
       dataZoom: [{ type: "inside", xAxisIndex: [0, 1, 2] }],
       series: [
         { name: "日K", type: "candlestick", data: values,
-          itemStyle: { color: "#e34d59", color0: "#00b578", borderColor: "#e34d59", borderColor0: "#00b578" } },
+          itemStyle: { color: "#e34d59", color0: "#00b578", borderColor: "#e34d59", borderColor0: "#00b578" },
+          markLine: levelMarkers.length ? {
+            silent: true,
+            symbol: "none",
+            animation: false,
+            data: levelMarkers.map((level) => {
+              const color = level.color || "#3b82a0";
+              return {
+                name: markerLabel(level),
+                yAxis: level.price,
+                lineStyle: { color, type: "dashed", width: 1.2, opacity: 0.9 },
+                label: {
+                  show: true,
+                  position: "insideEndTop",
+                  formatter: "{b}",
+                  color,
+                  fontSize: 10,
+                  padding: [2, 4],
+                  borderRadius: 3,
+                  backgroundColor: "rgba(255,255,255,0.88)",
+                },
+              };
+            }),
+          } : undefined },
         { name: "MA5", type: "line", data: ma5, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#f59e0b" } },
         { name: "MA10", type: "line", data: ma10, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#4b63ee" } },
         { name: "MA20", type: "line", data: ma20, smooth: true, symbol: "none", lineStyle: { width: 1, color: "#64748b" } },
         { name: "量", type: "bar", data: volumes, xAxisIndex: 1, yAxisIndex: 1,
-          itemStyle: { color: (params: any) => { const d = data[params.dataIndex]; return d.close >= d.open ? "#e34d59" : "#00b578"; } } },
+          itemStyle: { color: (params: { dataIndex: number }) => { const d = data[params.dataIndex]; return Number(d.close) >= Number(d.open) ? "#e34d59" : "#00b578"; } } },
         { name: "MACD", type: "bar", data: macd.hist, xAxisIndex: 2, yAxisIndex: 2,
-          itemStyle: { color: (params: any) => (params.data >= 0 ? "#e34d59" : "#00b578") } },
+          itemStyle: { color: (params: { data: number }) => (params.data >= 0 ? "#e34d59" : "#00b578") } },
         { name: "DIF", type: "line", data: macd.dif, xAxisIndex: 2, yAxisIndex: 2, symbol: "none", lineStyle: { width: 1, color: "#4b63ee" } },
         { name: "DEA", type: "line", data: macd.dea, xAxisIndex: 2, yAxisIndex: 2, symbol: "none", lineStyle: { width: 1, color: "#f59e0b" } },
       ],
@@ -162,7 +242,7 @@ export function KlineChart({ data, loading }: { data: any[]; loading: boolean })
     const handleResize = () => chart.resize();
     window.addEventListener("resize", handleResize);
     return () => { window.removeEventListener("resize", handleResize); chart.dispose(); };
-  }, [data]);
+  }, [data, levelMarkers]);
 
   if (loading) return <div style={{ height: 350, display: "grid", placeItems: "center" }}><SpinLoading /></div>;
   if (!data.length) return <div style={{ height: 120, display: "grid", placeItems: "center", color: "#888" }}>暂无K线数据</div>;

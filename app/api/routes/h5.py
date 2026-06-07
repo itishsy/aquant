@@ -37,6 +37,7 @@ from app.models import (
 )
 from app.services.normalization import xueqiu_link
 from app.services.prd_v1 import ASSISTANT_NOTE, PrdMarketDataService, PrdWatchPoolService, SeedService
+from app.services.watch_overview import WatchOverviewService
 
 router = APIRouter(prefix="/h5", tags=["h5"])
 
@@ -661,6 +662,25 @@ def watch_summary(db: Session = Depends(get_db), user=Depends(require_login)):
     return ok(PrdWatchPoolService(db).summary())
 
 
+@router.get("/watch-pool/overview")
+def watch_overview(
+    keyword: str | None = None,
+    trading_system: str | None = None,
+    status: str | None = None,
+    include_terminal: bool = True,
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    return ok(
+        WatchOverviewService(db).overview(
+            keyword=keyword,
+            trading_system=trading_system,
+            status=status,
+            include_terminal=include_terminal,
+        )
+    )
+
+
 @router.get("/watch-pool/{watch_id}")
 def get_watch(watch_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
     row = PrdWatchPoolService(db).get_watch(watch_id)
@@ -759,6 +779,36 @@ def watch_logs(watch_id: int, db: Session = Depends(get_db), user=Depends(requir
         }
         for row in PrdWatchPoolService(db).logs(watch_id)
     ])
+
+
+@router.get("/watch-pool/{watch_id}/signals")
+def watch_signal_history(watch_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    service = WatchOverviewService(db)
+    watch = service.get_watch(watch_id)
+    if not watch:
+        raise HTTPException(status_code=404, detail="watch not found")
+    rows = service.signal_rows(watch)
+    quotes = _quote_map(db, [watch.stock_code])
+    rules = _rule_map(db, [row.rule_code or row.buy_point_type for row in rows])
+    systems = _system_name_map(db, [row.trading_system_code or row.trading_system for row in rows])
+    return ok([
+        _signal_dict(
+            row,
+            quotes.get(row.stock_code),
+            rules.get(row.rule_code or row.buy_point_type),
+            systems.get(row.trading_system_code or row.trading_system),
+        )
+        for row in rows
+    ])
+
+
+@router.get("/watch-pool/{watch_id}/trade-records")
+def watch_trade_history(watch_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    service = WatchOverviewService(db)
+    watch = service.get_watch(watch_id)
+    if not watch:
+        raise HTTPException(status_code=404, detail="watch not found")
+    return ok(service.trade_records(watch))
 
 
 @router.get("/watch-signals")
