@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     data_provider_mode: str = "real"
     admin_token: str = "dev-admin-token"
     enable_scheduler: bool = False
+    enable_auto_trading_scheduler: bool = False
+    auto_trading_paper_cash_per_trade: float = 10000.0
     daily_collection_hour: int = 16
     daily_collection_minute: int = 10
     timezone: str = "Asia/Shanghai"

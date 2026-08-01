@@ -15,7 +15,7 @@ from app.services.rule_data_requirements import RequirementMap, RuleDataRequirem
 class KlineFreshnessService:
     """Determine whether local unified K-line data is fresh enough to skip collection."""
 
-    SUPPORTED_TIMEFRAMES = {"daily", "5m", "15m", "30m"}
+    SUPPORTED_TIMEFRAMES = {"daily", "1m", "5m", "15m", "30m", "60m", "120m"}
 
     def __init__(self, repository: KlineRepository):
         self.repository = repository

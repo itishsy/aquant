@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { BottomTabs } from "./components/BottomTabs";
 import { AdminPage } from "./pages/AdminPage";
+import { AutoTradingPage } from "./pages/AutoTradingPage";
 import { MarketPage } from "./pages/MarketPage";
 import { ReviewsPage } from "./pages/ReviewsPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -25,6 +26,7 @@ function AppRoutes() {
           <Route path="/" element={<Navigate to="/market" replace />} />
           <Route path="/market" element={<MarketPage />} />
           <Route path="/watch-pool" element={<WatchPoolPage />} />
+          <Route path="/auto-trading" element={<AutoTradingPage />} />
           <Route path="/stocks/:stockCode" element={<StockDetailPage />} />
           <Route path="/trades/:tradeId/review" element={<TradeReviewDetailPage />} />
           <Route path="/reviews" element={<ReviewsPage />} />

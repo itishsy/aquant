@@ -98,7 +98,7 @@ class KlineRepository:
         value = (timeframe or "").strip().lower()
         if value == "1d":
             return "daily"
-        if value not in {"5m", "15m", "30m", "60m", "daily"}:
+        if value not in {"1m", "5m", "15m", "30m", "60m", "120m", "daily"}:
             raise ValueError(f"unsupported timeframe: {timeframe}")
         return value
 

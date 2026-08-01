@@ -71,3 +71,23 @@ def test_kline_repository_accepts_daily_rows_with_trade_date(db_session):
     bar = repo.get_recent_bars("000001.SZ", "daily", 1)[0]
     assert bar.kline_time == datetime(2026, 5, 22)
     assert bar.trade_date.isoformat() == "2026-05-22"
+
+
+def test_kline_repository_accepts_auto_trading_timeframes(db_session):
+    repo = KlineRepository(db_session)
+
+    assert repo.upsert_rows(
+        "000001.SZ",
+        "1m",
+        [{"kline_time": datetime(2026, 5, 22, 9, 31), "open": 10, "high": 11, "low": 9, "close": 10.5}],
+        "mock",
+    ) == 1
+    assert repo.upsert_rows(
+        "000001.SZ",
+        "120m",
+        [{"kline_time": datetime(2026, 5, 22, 11, 30), "open": 10, "high": 11, "low": 9, "close": 10.5}],
+        "mock",
+    ) == 1
+
+    assert repo.latest_time("000001.SZ", "1m") == datetime(2026, 5, 22, 9, 31)
+    assert repo.latest_time("000001.SZ", "120m") == datetime(2026, 5, 22, 11, 30)

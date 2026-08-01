@@ -288,6 +288,100 @@ class MktStockKline(TimestampMixin, SystemBase):
     source_update_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class AutoStrategyRun(SystemBase):
+    __tablename__ = "auto_strategy_run"
+    __table_args__ = (
+        Index("ix_auto_strategy_run_code_type_started", "strategy_code", "run_type", "started_at"),
+        Index("ix_auto_strategy_run_status_started", "status", "started_at"),
+    )
+
+    run_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    run_type: Mapped[str] = mapped_column(String(32), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="running", index=True)
+    message: Mapped[str] = mapped_column(Text, default="")
+    stats_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class AutoCandidate(TimestampMixin, SystemBase):
+    __tablename__ = "auto_candidate"
+    __table_args__ = (
+        Index("ix_auto_candidate_strategy_stock", "strategy_code", "stock_code"),
+        Index("ix_auto_candidate_strategy_status", "strategy_code", "status"),
+        Index("ix_auto_candidate_strategy_selected_date", "strategy_code", "selected_trade_date"),
+        Index("ix_auto_candidate_strategy_hot_rank_date", "strategy_code", "hot_rank_date"),
+    )
+
+    candidate_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    stock_name: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(32), default="watching", index=True)
+    selected_trade_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    hot_rank_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    hot_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hot_snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    filter_snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    latest_signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AutoSignal(SystemBase):
+    __tablename__ = "auto_signal"
+    __table_args__ = (
+        Index("ix_auto_signal_candidate_type_time", "candidate_id", "signal_type", "timeframe", "trigger_time"),
+        Index("ix_auto_signal_strategy_stock", "strategy_code", "stock_code"),
+        Index("ix_auto_signal_position", "position_id"),
+        Index("ix_auto_signal_status_created", "signal_status", "created_at"),
+    )
+
+    signal_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    stock_name: Mapped[str] = mapped_column(String(64), default="")
+    signal_type: Mapped[str] = mapped_column(String(32), index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), index=True)
+    trigger_time: Mapped[datetime] = mapped_column(DateTime, index=True)
+    trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    signal_status: Mapped[str] = mapped_column(String(32), default="generated", index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AutoPaperPosition(TimestampMixin, SystemBase):
+    __tablename__ = "auto_paper_position"
+    __table_args__ = (
+        Index("ix_auto_position_strategy_stock_status", "strategy_code", "stock_code", "status"),
+        Index("ix_auto_position_candidate", "candidate_id"),
+        Index("ix_auto_position_status_created", "status", "created_at"),
+    )
+
+    position_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(Integer, index=True)
+    strategy_code: Mapped[str] = mapped_column(String(64), index=True)
+    stock_code: Mapped[str] = mapped_column(String(16), index=True)
+    stock_name: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    entry_signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    entry_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_amount_cash: Mapped[float] = mapped_column(Float, default=10000.0)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    stop_loss_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    exit_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    pnl_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pnl_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class WatchPool(TimestampMixin, SystemBase):
     __tablename__ = "watch_pool"
     __table_args__ = (

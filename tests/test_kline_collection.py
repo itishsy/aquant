@@ -115,6 +115,19 @@ def test_expected_latest_time_uses_shanghai_timezone_for_intraday(db_session):
     assert freshness.expected_latest_time("5m", datetime(2026, 5, 27, 8, 0, tzinfo=shanghai)) is None
 
 
+def test_expected_latest_time_supports_auto_trading_timeframes(db_session):
+    repo = KlineRepository(db_session)
+    freshness = KlineFreshnessService(repo)
+    shanghai = ZoneInfo("Asia/Shanghai")
+
+    assert freshness.expected_latest_time("1m", datetime(2026, 5, 27, 10, 17, tzinfo=shanghai)) == datetime(
+        2026, 5, 27, 10, 16
+    )
+    assert freshness.expected_latest_time("120m", datetime(2026, 5, 27, 14, 46, tzinfo=shanghai)) == datetime(
+        2026, 5, 27, 13, 30
+    )
+
+
 def test_daily_expected_latest_time_uses_shanghai_timezone(db_session):
     repo = KlineRepository(db_session)
     freshness = KlineFreshnessService(repo)
